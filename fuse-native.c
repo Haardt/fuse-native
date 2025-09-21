@@ -1,4 +1,10 @@
-#define FUSE_USE_VERSION 29
+#if !defined(FUSE_USE_VERSION)
+#  if defined(FUSE_NATIVE_USE_FUSE3)
+#    define FUSE_USE_VERSION 35
+#  else
+#    define FUSE_USE_VERSION 29
+#  endif
+#endif
 
 #include <uv.h>
 #include <node_api.h>
@@ -132,6 +138,7 @@ enum fuse_opcode {
   op_read_buf,
   op_flock,
   op_fallocate,
+  op_copy_file_range,
   op_lseek,
   op_max = op_lseek
 };
@@ -171,8 +178,10 @@ typedef struct {
   const char *dest;
   char *linkname;
   struct fuse_file_info *info;
+  struct fuse_file_info *info_out;
   const void *buf;
   off_t offset;
+  off_t offset_out;
   size_t len;
   mode_t mode;
   dev_t dev;
@@ -189,6 +198,7 @@ typedef struct {
   size_t size;
   uint32_t position;
   int flags;
+  unsigned int readdir_flags;
   unsigned int cmd;
 
   struct flock *flock;
@@ -302,6 +312,18 @@ FUSE_METHOD(statfs, 1, 1, (const char * path, struct statvfs *statvfs), {
   populate_statvfs(ints, l->statvfs);
 })
 
+#if FUSE_USE_VERSION >= 30
+FUSE_METHOD(getattr, 1, 1, (const char *path, struct stat *stat, struct fuse_file_info *info), {
+  l->path = path;
+  l->stat = stat;
+  l->info = info;
+}, {
+  napi_create_string_utf8(env, l->path, NAPI_AUTO_LENGTH, &(argv[2]));
+}, {
+  NAPI_ARGV_BUFFER_CAST(uint32_t*, ints, 2)
+  populate_stat(ints, l->stat);
+})
+#else
 FUSE_METHOD(getattr, 1, 1, (const char *path, struct stat *stat), {
   l->path = path;
   l->stat = stat;
@@ -311,7 +333,9 @@ FUSE_METHOD(getattr, 1, 1, (const char *path, struct stat *stat), {
   NAPI_ARGV_BUFFER_CAST(uint32_t*, ints, 2)
   populate_stat(ints, l->stat);
 })
+#endif
 
+#if FUSE_USE_VERSION < 30
 FUSE_METHOD(fgetattr, 2, 1, (const char *path, struct stat *stat, struct fuse_file_info *info), {
   l->path = path;
   l->stat = stat;
@@ -327,6 +351,7 @@ FUSE_METHOD(fgetattr, 2, 1, (const char *path, struct stat *stat, struct fuse_fi
   NAPI_ARGV_BUFFER_CAST(uint32_t*, ints, 2)
   populate_stat(ints, l->stat);
 })
+#endif
 
 FUSE_METHOD_VOID(access, 2, 0, (const char *path, int mode), {
   l->path = path;
@@ -386,6 +411,18 @@ FUSE_METHOD(create, 2, 1, (const char *path, mode_t mode, struct fuse_file_info 
   }
 })
 
+#if FUSE_USE_VERSION >= 30
+FUSE_METHOD_VOID(utimens, 5, 0, (const char *path, const struct timespec tv[2], struct fuse_file_info *info), {
+  l->path = path;
+  l->atime = timespec_to_uint64(&tv[0]);
+  l->mtime = timespec_to_uint64(&tv[1]);
+  l->info = info;
+}, {
+  napi_create_string_utf8(env, l->path, NAPI_AUTO_LENGTH, &(argv[2]));
+  FUSE_UINT64_TO_INTS_ARGV(l->atime, 3)
+  FUSE_UINT64_TO_INTS_ARGV(l->atime, 5)
+})
+#else
 FUSE_METHOD_VOID(utimens, 5, 0, (const char *path, const struct timespec tv[2]), {
   l->path = path;
   l->atime = timespec_to_uint64(&tv[0]);
@@ -395,6 +432,7 @@ FUSE_METHOD_VOID(utimens, 5, 0, (const char *path, const struct timespec tv[2]),
   FUSE_UINT64_TO_INTS_ARGV(l->atime, 3)
   FUSE_UINT64_TO_INTS_ARGV(l->atime, 5)
 })
+#endif
 
 FUSE_METHOD_VOID(release, 2, 0, (const char *path, struct fuse_file_info *info), {
   l->path = path;
@@ -452,15 +490,31 @@ FUSE_METHOD(write, 6, 2, (const char *path, const char *buf, size_t len, off_t o
   if (IS_ARRAY_BUFFER_DETACH_SUPPORTED == 1) assert(napi_detach_arraybuffer(env, argv[3]) == napi_ok);
 })
 
-FUSE_METHOD(readdir, 1, 2, (const char *path, void *buf, fuse_fill_dir_t filler, off_t offset, struct fuse_file_info *info), {
+#if FUSE_USE_VERSION >= 30
+FUSE_METHOD(readdir, 2, 2, (const char *path, void *buf, fuse_fill_dir_t filler, off_t offset, struct fuse_file_info *info, enum fuse_readdir_flags flags), {
   l->buf = buf;
   l->path = path;
   l->offset = offset;
   l->info = info;
   l->readdir_filler = filler;
+  l->readdir_flags = (unsigned int) flags;
 }, {
   napi_create_string_utf8(env, l->path, NAPI_AUTO_LENGTH, &(argv[2]));
+  napi_create_uint32(env, l->readdir_flags, &(argv[3]));
 }, {
+#else
+FUSE_METHOD(readdir, 2, 2, (const char *path, void *buf, fuse_fill_dir_t filler, off_t offset, struct fuse_file_info *info), {
+  l->buf = buf;
+  l->path = path;
+  l->offset = offset;
+  l->info = info;
+  l->readdir_filler = filler;
+  l->readdir_flags = 0;
+}, {
+  napi_create_string_utf8(env, l->path, NAPI_AUTO_LENGTH, &(argv[2]));
+  napi_create_uint32(env, 0, &(argv[3]));
+}, {
+#endif
   uint32_t stats_length;
   uint32_t names_length;
   napi_get_array_length(env, argv[3], &stats_length);
@@ -472,7 +526,11 @@ FUSE_METHOD(readdir, 1, 2, (const char *path, void *buf, fuse_fill_dir_t filler,
   if (names_length != stats_length) {
     NAPI_FOR_EACH(raw_names, raw_name) {
       NAPI_UTF8(name, 1024, raw_name)
-      int err = l->readdir_filler((char *) l->buf, name, NULL, 0);
+      int err = l->readdir_filler((char *) l->buf, name, NULL, 0
+#if FUSE_USE_VERSION >= 30
+        , 0
+#endif
+      );
       if (err == 1) {
         break;
       }
@@ -489,7 +547,11 @@ FUSE_METHOD(readdir, 1, 2, (const char *path, void *buf, fuse_fill_dir_t filler,
 
       // TODO: It turns out readdirplus likely won't work with FUSE 29...
       // Metadata caching between readdir/getattr will be enabled when we upgrade fuse-shared-library
-      int err = l->readdir_filler((char *) l->buf, name, (struct stat *) &st, 0);
+      int err = l->readdir_filler((char *) l->buf, name, (struct stat *) &st, 0
+#if FUSE_USE_VERSION >= 30
+        , FUSE_FILL_DIR_PLUS
+#endif
+      );
       if (err == 1) {
         break;
       }
@@ -625,6 +687,16 @@ FUSE_METHOD_VOID(fsyncdir, 3, 0, (const char *path, int datasync, struct fuse_fi
 })
 
 
+#if FUSE_USE_VERSION >= 30
+FUSE_METHOD_VOID(truncate, 3, 0, (const char *path, off_t size, struct fuse_file_info *info), {
+  l->path = path;
+  l->offset = size;
+  l->info = info;
+}, {
+  napi_create_string_utf8(env, l->path, NAPI_AUTO_LENGTH, &(argv[2]));
+  FUSE_UINT64_TO_INTS_ARGV(l->offset, 3)
+})
+#else
 FUSE_METHOD_VOID(truncate, 3, 0, (const char *path, off_t size), {
   l->path = path;
   l->offset = size;
@@ -632,7 +704,9 @@ FUSE_METHOD_VOID(truncate, 3, 0, (const char *path, off_t size), {
   napi_create_string_utf8(env, l->path, NAPI_AUTO_LENGTH, &(argv[2]));
   FUSE_UINT64_TO_INTS_ARGV(l->offset, 3)
 })
+#endif
 
+#if FUSE_USE_VERSION < 30
 FUSE_METHOD_VOID(ftruncate, 4, 0, (const char *path, off_t size, struct fuse_file_info *info), {
   l->path = path;
   l->offset = size;
@@ -646,6 +720,7 @@ FUSE_METHOD_VOID(ftruncate, 4, 0, (const char *path, off_t size, struct fuse_fil
   }
   FUSE_UINT64_TO_INTS_ARGV(l->offset, 4)
 })
+#endif
 
 FUSE_METHOD(readlink, 1, 1, (const char *path, char *linkname, size_t len), {
   l->path = path;
@@ -658,6 +733,18 @@ FUSE_METHOD(readlink, 1, 1, (const char *path, char *linkname, size_t len), {
   strncpy(l->linkname, linkname, l->len);
 })
 
+#if FUSE_USE_VERSION >= 30
+FUSE_METHOD_VOID(chown, 3, 0, (const char *path, uid_t uid, gid_t gid, struct fuse_file_info *info), {
+  l->path = path;
+  l->uid = uid;
+  l->gid = gid;
+  l->info = info;
+}, {
+  napi_create_string_utf8(env, l->path, NAPI_AUTO_LENGTH, &(argv[2]));
+  napi_create_uint32(env, l->uid, &(argv[3]));
+  napi_create_uint32(env, l->gid, &(argv[4]));
+})
+#else
 FUSE_METHOD_VOID(chown, 3, 0, (const char *path, uid_t uid, gid_t gid), {
   l->path = path;
   l->uid = uid;
@@ -667,7 +754,18 @@ FUSE_METHOD_VOID(chown, 3, 0, (const char *path, uid_t uid, gid_t gid), {
   napi_create_uint32(env, l->uid, &(argv[3]));
   napi_create_uint32(env, l->gid, &(argv[4]));
 })
+#endif
 
+#if FUSE_USE_VERSION >= 30
+FUSE_METHOD_VOID(chmod, 2, 0, (const char *path, mode_t mode, struct fuse_file_info *info), {
+  l->path = path;
+  l->mode = mode;
+  l->info = info;
+}, {
+  napi_create_string_utf8(env, l->path, NAPI_AUTO_LENGTH, &(argv[2]));
+  napi_create_uint32(env, l->mode, &(argv[3]));
+})
+#else
 FUSE_METHOD_VOID(chmod, 2, 0, (const char *path, mode_t mode), {
   l->path = path;
   l->mode = mode;
@@ -675,6 +773,7 @@ FUSE_METHOD_VOID(chmod, 2, 0, (const char *path, mode_t mode), {
   napi_create_string_utf8(env, l->path, NAPI_AUTO_LENGTH, &(argv[2]));
   napi_create_uint32(env, l->mode, &(argv[3]));
 })
+#endif
 
 FUSE_METHOD_VOID(mknod, 3, 0, (const char *path, mode_t mode, dev_t dev), {
   l->path = path;
@@ -692,13 +791,27 @@ FUSE_METHOD_VOID(unlink, 1, 0, (const char *path), {
   napi_create_string_utf8(env, l->path, NAPI_AUTO_LENGTH, &(argv[2]));
 })
 
-FUSE_METHOD_VOID(rename, 2, 0, (const char *path, const char *dest), {
+#if FUSE_USE_VERSION >= 30
+FUSE_METHOD_VOID(rename, 3, 0, (const char *path, const char *dest, unsigned int flags), {
   l->path = path;
   l->dest = dest;
+  l->flags = (int) flags;
 }, {
   napi_create_string_utf8(env, l->path, NAPI_AUTO_LENGTH, &(argv[2]));
   napi_create_string_utf8(env, l->dest, NAPI_AUTO_LENGTH, &(argv[3]));
+  napi_create_uint32(env, (uint32_t) l->flags, &(argv[4]));
 })
+#else
+FUSE_METHOD_VOID(rename, 3, 0, (const char *path, const char *dest), {
+  l->path = path;
+  l->dest = dest;
+  l->flags = 0;
+}, {
+  napi_create_string_utf8(env, l->path, NAPI_AUTO_LENGTH, &(argv[2]));
+  napi_create_string_utf8(env, l->dest, NAPI_AUTO_LENGTH, &(argv[3]));
+  napi_create_uint32(env, 0, &(argv[4]));
+})
+#endif
 
 FUSE_METHOD_VOID(link, 2, 0, (const char *path, const char *dest), {
   l->path = path;
@@ -839,6 +952,36 @@ FUSE_METHOD(bmap, 3, 1, (const char *path, size_t blocksize, uint64_t *idx), {
   }
 })
 
+#if FUSE_USE_VERSION >= 35
+FUSE_METHOD(ioctl, 6, 0, (const char *path, unsigned int cmd, void *arg, struct fuse_file_info *info, unsigned int flags, void *data), {
+  l->path = path;
+  l->info = info;
+  l->cmd = cmd;
+  l->arg = arg;
+  l->flags = (int) flags;
+  l->data = data;
+#ifdef _IOC_SIZE
+  size_t data_len = _IOC_SIZE(l->cmd);
+#else
+  size_t data_len = 0;
+#endif
+  if (l->data == NULL) data_len = 0;
+  l->size = data_len;
+}, {
+  napi_create_string_utf8(env, l->path, NAPI_AUTO_LENGTH, &(argv[2]));
+  uint32_t fh = (l->info != NULL) ? (uint32_t) l->info->fh : 0;
+  napi_create_uint32(env, fh, &(argv[3]));
+  napi_create_uint32(env, (uint32_t) l->cmd, &(argv[4]));
+  create_uintptr_buffer(env, (uintptr_t) l->arg, &(argv[5]));
+  napi_create_uint32(env, (uint32_t) l->flags, &(argv[6]));
+  if (l->data != NULL && l->size > 0) {
+    napi_create_external_buffer(env, l->size, (char *) l->data, NULL, NULL, &(argv[7]));
+  } else {
+    void *tmp;
+    napi_create_buffer(env, 0, &tmp, &(argv[7]));
+  }
+}, {})
+#else
 FUSE_METHOD(ioctl, 6, 0, (const char *path, int cmd, void *arg, struct fuse_file_info *info, unsigned int flags, void *data), {
   l->path = path;
   l->info = info;
@@ -867,6 +1010,7 @@ FUSE_METHOD(ioctl, 6, 0, (const char *path, int cmd, void *arg, struct fuse_file
     napi_create_buffer(env, 0, &tmp, &(argv[7]));
   }
 }, {})
+#endif
 
 FUSE_METHOD(poll, 4, 1, (const char *path, struct fuse_file_info *info, struct fuse_pollhandle *ph, unsigned *reventsp), {
   l->path = path;
@@ -1023,6 +1167,35 @@ FUSE_METHOD(fallocate, 7, 0, (const char *path, int mode, off_t offset, off_t le
   FUSE_UINT64_TO_INTS_ARGV(l->len, 7)
 }, {})
 
+FUSE_METHOD_RET(ssize_t, copy_file_range, 10, 1, (const char *path_in, struct fuse_file_info *fi_in, off_t offset_in, const char *path_out, struct fuse_file_info *fi_out, off_t offset_out, size_t size, int flags), {
+  l->path = path_in;
+  l->dest = path_out;
+  l->info = fi_in;
+  l->info_out = fi_out;
+  l->offset = offset_in;
+  l->offset_out = offset_out;
+  l->size = size;
+  l->flags = flags;
+}, {
+  napi_create_string_utf8(env, l->path, NAPI_AUTO_LENGTH, &(argv[2]));
+  uint32_t fh_in = (l->info != NULL) ? (uint32_t) l->info->fh : 0;
+  napi_create_uint32(env, fh_in, &(argv[3]));
+  FUSE_UINT64_TO_INTS_ARGV(l->offset, 4)
+  napi_create_string_utf8(env, l->dest, NAPI_AUTO_LENGTH, &(argv[6]));
+  uint32_t fh_out = (l->info_out != NULL) ? (uint32_t) l->info_out->fh : 0;
+  napi_create_uint32(env, fh_out, &(argv[7]));
+  FUSE_UINT64_TO_INTS_ARGV(l->offset_out, 8)
+  napi_create_uint32(env, (uint32_t) l->size, &(argv[10]));
+  napi_create_int32(env, (int32_t) l->flags, &(argv[11]));
+}, {
+  if (res >= 0 && argc >= 3) {
+    int64_t copied = 0;
+    if (napi_get_value_int64(env, argv[2], &copied) == napi_ok) {
+      res = copied;
+    }
+  }
+})
+
 FUSE_METHOD_RET(off_t, lseek, 5, 2, (const char *path, off_t off, int whence, struct fuse_file_info *info), {
   l->path = path;
   l->info = info;
@@ -1064,7 +1237,12 @@ NAPI_METHOD(fuse_native_signal_init) {
   return NULL;
 }
 
+#if FUSE_USE_VERSION >= 30
+static void * fuse_native_init (struct fuse_conn_info *conn, struct fuse_config *cfg) {
+  (void) cfg;
+#else
 static void * fuse_native_init (struct fuse_conn_info *conn) {
+#endif
   fuse_thread_locals_t *l = get_thread_locals();
 
   l->op = op_init;
@@ -1145,11 +1323,24 @@ static fuse_thread_locals_t* get_thread_locals () {
 
 static void* start_fuse_thread (void *data) {
   fuse_thread_t *ft = (fuse_thread_t *) data;
+#if FUSE_USE_VERSION >= 30
+  struct fuse_loop_config *config = fuse_loop_cfg_create();
+  if (config != NULL) {
+    fuse_loop_mt(ft->fuse, config);
+    fuse_loop_cfg_destroy(config);
+  } else {
+    fuse_loop(ft->fuse);
+  }
+
+  fuse_unmount(ft->fuse);
+  fuse_destroy(ft->fuse);
+#else
   fuse_loop_mt(ft->fuse);
 
   fuse_unmount(ft->mnt, ft->ch);
   fuse_session_remove_chan(ft->ch);
   fuse_destroy(ft->fuse);
+#endif
 
   return NULL;
 }
@@ -1178,9 +1369,13 @@ NAPI_METHOD(fuse_native_mount) {
   struct fuse_operations ops = { };
   if (implemented[op_access]) ops.access = fuse_native_access;
   if (implemented[op_truncate]) ops.truncate = fuse_native_truncate;
+#if FUSE_USE_VERSION < 30
   if (implemented[op_ftruncate]) ops.ftruncate = fuse_native_ftruncate;
+#endif
   if (implemented[op_getattr]) ops.getattr = fuse_native_getattr;
+#if FUSE_USE_VERSION < 30
   if (implemented[op_fgetattr]) ops.fgetattr = fuse_native_fgetattr;
+#endif
   if (implemented[op_flush]) ops.flush = fuse_native_flush;
   if (implemented[op_fsync]) ops.fsync = fuse_native_fsync;
   if (implemented[op_fsyncdir]) ops.fsyncdir = fuse_native_fsyncdir;
@@ -1217,6 +1412,7 @@ NAPI_METHOD(fuse_native_mount) {
   if (implemented[op_flock]) ops.flock = fuse_native_flock;
   if (implemented[op_fallocate]) ops.fallocate = fuse_native_fallocate;
 #if FUSE_MAJOR_VERSION >= 3
+  if (implemented[op_copy_file_range]) ops.copy_file_range = fuse_native_copy_file_range;
   if (implemented[op_lseek]) ops.lseek = fuse_native_lseek;
 #endif
   if (implemented[op_init]) ops.init = fuse_native_init;
@@ -1227,6 +1423,30 @@ NAPI_METHOD(fuse_native_mount) {
     (char *) mntopts
   };
 
+#if FUSE_USE_VERSION >= 30
+  struct fuse_args args = FUSE_ARGS_INIT(_argc, _argv);
+  struct fuse *fuse = fuse_new(&args, &ops, sizeof(struct fuse_operations), ft);
+
+  if (fuse == NULL) {
+    napi_throw_error(env, "fuse failed", "fuse failed");
+    return NULL;
+  }
+
+  if (fuse_mount(fuse, mnt) != 0) {
+    fuse_destroy(fuse);
+    napi_throw_error(env, "fuse failed", "fuse failed");
+    return NULL;
+  }
+
+  uv_mutex_init(&(ft->mut));
+  uv_sem_init(&(ft->sem), 0);
+
+  strncpy(ft->mnt, mnt, 1024);
+  strncpy(ft->mntopts, mntopts, 1024);
+  ft->fuse = fuse;
+  ft->ch = NULL;
+  ft->mounted++;
+#else
   struct fuse_args args = FUSE_ARGS_INIT(_argc, _argv);
   struct fuse_chan *ch = fuse_mount(mnt, &args);
 
@@ -1245,6 +1465,7 @@ NAPI_METHOD(fuse_native_mount) {
   ft->fuse = fuse;
   ft->ch = ch;
   ft->mounted++;
+#endif
 
   int err = uv_async_init(uv_default_loop(), &(ft->async), (uv_async_cb) fuse_native_async_init);
 
@@ -1295,14 +1516,18 @@ NAPI_INIT() {
   NAPI_EXPORT_FUNCTION(fuse_native_signal_init)
   NAPI_EXPORT_FUNCTION(fuse_native_signal_access)
   NAPI_EXPORT_FUNCTION(fuse_native_signal_statfs)
+#if FUSE_USE_VERSION < 30
   NAPI_EXPORT_FUNCTION(fuse_native_signal_fgetattr)
+#endif
   NAPI_EXPORT_FUNCTION(fuse_native_signal_getattr)
   NAPI_EXPORT_FUNCTION(fuse_native_signal_flush)
   NAPI_EXPORT_FUNCTION(fuse_native_signal_fsync)
   NAPI_EXPORT_FUNCTION(fuse_native_signal_fsyncdir)
   NAPI_EXPORT_FUNCTION(fuse_native_signal_readdir)
   NAPI_EXPORT_FUNCTION(fuse_native_signal_truncate)
+#if FUSE_USE_VERSION < 30
   NAPI_EXPORT_FUNCTION(fuse_native_signal_ftruncate)
+#endif
   NAPI_EXPORT_FUNCTION(fuse_native_signal_utimens)
   NAPI_EXPORT_FUNCTION(fuse_native_signal_readlink)
   NAPI_EXPORT_FUNCTION(fuse_native_signal_chown)
@@ -1333,6 +1558,7 @@ NAPI_INIT() {
   NAPI_EXPORT_FUNCTION(fuse_native_signal_read_buf)
   NAPI_EXPORT_FUNCTION(fuse_native_signal_flock)
   NAPI_EXPORT_FUNCTION(fuse_native_signal_fallocate)
+  NAPI_EXPORT_FUNCTION(fuse_native_signal_copy_file_range)
   NAPI_EXPORT_FUNCTION(fuse_native_signal_lseek)
 
   NAPI_EXPORT_UINT32(op_getattr)
@@ -1340,14 +1566,18 @@ NAPI_INIT() {
   NAPI_EXPORT_UINT32(op_error)
   NAPI_EXPORT_UINT32(op_access)
   NAPI_EXPORT_UINT32(op_statfs)
+#if FUSE_USE_VERSION < 30
   NAPI_EXPORT_UINT32(op_fgetattr)
+#endif
   NAPI_EXPORT_UINT32(op_getattr)
   NAPI_EXPORT_UINT32(op_flush)
   NAPI_EXPORT_UINT32(op_fsync)
   NAPI_EXPORT_UINT32(op_fsyncdir)
   NAPI_EXPORT_UINT32(op_readdir)
   NAPI_EXPORT_UINT32(op_truncate)
+#if FUSE_USE_VERSION < 30
   NAPI_EXPORT_UINT32(op_ftruncate)
+#endif
   NAPI_EXPORT_UINT32(op_utimens)
   NAPI_EXPORT_UINT32(op_readlink)
   NAPI_EXPORT_UINT32(op_chown)
@@ -1378,5 +1608,6 @@ NAPI_INIT() {
   NAPI_EXPORT_UINT32(op_read_buf)
   NAPI_EXPORT_UINT32(op_flock)
   NAPI_EXPORT_UINT32(op_fallocate)
+  NAPI_EXPORT_UINT32(op_copy_file_range)
   NAPI_EXPORT_UINT32(op_lseek)
 }

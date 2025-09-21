@@ -155,6 +155,10 @@ const OpcodesAndDefaults = new Map([
   ['fallocate', {
     op: binding.op_fallocate
   }],
+  ['copy_file_range', {
+    op: binding.op_copy_file_range,
+    defaults: [0]
+  }],
   ['lseek', {
     op: binding.op_lseek,
     defaults: [0, 0]
@@ -516,8 +520,12 @@ class Fuse extends Nanoresource {
     })
   }
 
-  _op_readdir (signal, path) {
-    this.ops.readdir(path, (err, names, stats) => {
+  _op_readdir (signal, path, flags) {
+    const handler = this.ops.readdir
+    const invoke = handler.length >= 3
+      ? cb => handler(path, flags, cb)
+      : cb => handler(path, cb)
+    invoke((err, names, stats) => {
       if (err) return signal(err)
       if (stats) stats = stats.map(getStatArray)
       return signal(0, names, stats || [])
@@ -632,8 +640,12 @@ class Fuse extends Nanoresource {
     })
   }
 
-  _op_rename (signal, src, dest) {
-    this.ops.rename(src, dest, err => {
+  _op_rename (signal, src, dest, flags) {
+    const handler = this.ops.rename
+    const invoke = handler.length >= 4
+      ? cb => handler(src, dest, flags, cb)
+      : cb => handler(src, dest, cb)
+    invoke(err => {
       return signal(err)
     })
   }
@@ -740,6 +752,17 @@ class Fuse extends Nanoresource {
     const length = getDoubleArg(lenLow, lenHigh)
     this.ops.fallocate(path, fd, mode, offset, length, err => {
       return signal(err)
+    })
+  }
+
+  _op_copy_file_range (signal, pathIn, fdIn, offsetInLow, offsetInHigh, pathOut, fdOut, offsetOutLow, offsetOutHigh, size, flags) {
+    if (!this.ops.copy_file_range) return signal(Fuse.ENOSYS, 0)
+    const offsetIn = getDoubleArg(offsetInLow, offsetInHigh)
+    const offsetOut = getDoubleArg(offsetOutLow, offsetOutHigh)
+    this.ops.copy_file_range(pathIn, fdIn, offsetIn, pathOut, fdOut, offsetOut, size, flags, (err, copied) => {
+      const bytes = Number(copied) || 0
+      if (err) return signal(err, bytes)
+      return signal(0, bytes)
     })
   }
 

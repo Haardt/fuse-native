@@ -2,13 +2,16 @@
   "targets": [{
     "target_name": "fuse",
     'variables': {
-                    'fuse__include_dirs%': '<!(pkg-config fuse --cflags-only-I | sed s/-I//g)',
                     'fuse__library_dirs%': '',
-                    'fuse__libraries%': '<!(pkg-config --libs-only-L --libs-only-l fuse)'
+                    'fuse__libraries%': '<!(sh -c "pkg-config --libs-only-L --libs-only-l fuse3 2>/dev/null || pkg-config --libs-only-L --libs-only-l fuse")',
+                    'fuse__defines%': '<!(sh -c "pkg-config fuse3 --modversion >/dev/null 2>&1 && echo FUSE_NATIVE_USE_FUSE3=1")',
+                    'fuse__cflags%': '<!(pkg-config fuse3 --cflags 2>/dev/null || pkg-config fuse --cflags)'
                 },
     "include_dirs": [
       "<!(node -e \"require('napi-macros')\")",
-      "<@(fuse__include_dirs)"
+    ],
+    'defines': [
+      '<@(fuse__defines)'
     ],
     'library_dirs': [
                   '<@(fuse__library_dirs)',
@@ -29,7 +32,8 @@
     'cflags': [
       '-g',
       '-O3',
-      '-Wall'
+      '-Wall',
+      '<@(fuse__cflags)'
     ],
   }, {
     "target_name": "postinstall",

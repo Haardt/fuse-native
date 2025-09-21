@@ -65,7 +65,11 @@ declare namespace Fuse {
     flush?: (path: string, fd: number, cb: (err: number) => void) => void;
     fsync?: (path: string, dataSync: boolean, fd: number, cb: (err: number) => void) => void;
     fsyncdir?: (path: string, dataSync: boolean, fd: number, cb: (err: number) => void) => void;
-    readdir?: (path: string, cb: (err: number, names?: string[], stats?: Stats[]) => void) => void;
+    readdir?: (
+        path: string,
+        flagsOrCallback: number | ((err: number, names?: string[], stats?: Stats[]) => void),
+        cb?: (err: number, names?: string[], stats?: Stats[]) => void
+    ) => void;
     truncate?: (path: string, size: number, cb: (err: number) => void) => void;
     ftruncate?: (path: string, fd: number, size: number, cb: (err: number) => void) => void;
     utimens?: (path: string, atime: Date, mtime: Date, cb: (err: number) => void) => void;
@@ -118,7 +122,12 @@ declare namespace Fuse {
         cb: (err: number, fd?: number, modePassedOn?: number) => void
     ) => void;
     unlink?: (path: string, cb: (err: number) => void) => void;
-    rename?: (src: string, dest: string, cb: (err: number) => void) => void;
+    rename?: (
+        src: string,
+        dest: string,
+        flagsOrCallback: number | ((err: number) => void),
+        cb?: (err: number) => void
+    ) => void;
     link?: (src: string, dest: string, cb: (err: number) => void) => void;
     symlink?: (src: string, dest: string, cb: (err: number) => void) => void;
     mkdir?: (path: string, mode: number, cb: (err: number) => void) => void;
@@ -175,6 +184,17 @@ declare namespace Fuse {
         offset: number,
         length: number,
         cb: (err: number) => void
+    ) => void;
+    copy_file_range?: (
+        pathIn: string,
+        fdIn: number,
+        offsetIn: number,
+        pathOut: string,
+        fdOut: number,
+        offsetOut: number,
+        size: number,
+        flags: number,
+        cb: (err: number, bytesCopied?: number) => void
     ) => void;
     lseek?: (
         path: string,

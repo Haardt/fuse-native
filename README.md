@@ -136,12 +136,16 @@ Called when a file descriptor is being fsync'ed.
 
 Same as above but on a directory
 
-#### `ops.readdir(path, cb)`
+#### `ops.readdir(path[, flags], cb)`
 
-Called when a directory is being listed. Accepts an array of file/directory names after the return code in the callback
+Called when a directory is being listed. The optional `flags` parameter exposes
+the raw `enum fuse_readdir_flags` bits provided by libfuse 3. Pass your callback
+as either the second argument (legacy signature) or the third argument. Accepts
+an array of file/directory names after the return code in the callback.
 
 ``` js
-ops.readdir = function (path, cb) {
+ops.readdir = function (path, flags, cb) {
+  if (typeof flags === 'function') return ops.readdir(path, 0, flags)
   cb(0, ['file-1.txt', 'dir'])
 }
 ```
@@ -276,9 +280,11 @@ Called when the atime/mtime of a file is being changed.
 
 Called when a file is being unlinked.
 
-#### `ops.rename(src, dest, cb)`
+#### `ops.rename(src, dest[, flags], cb)`
 
-Called when a file is being renamed.
+Called when a file is being renamed. On libfuse 3 the optional `flags` argument
+contains the rename mask (`RENAME_NOREPLACE`, `RENAME_EXCHANGE`, ...). Pass your
+callback as either the third or fourth argument.
 
 #### `ops.link(src, dest, cb)`
 
@@ -340,6 +346,12 @@ kernel-provided lock owner identifier.
 #### `ops.fallocate(path, fd, mode, offset, length, cb)`
 
 Allocate space for a file range.
+
+#### `ops.copy_file_range(pathIn, fdIn, offsetIn, pathOut, fdOut, offsetOut, size, flags, cb)`
+
+Handle in-kernel `copy_file_range` operations. Use the provided offsets and
+length to copy data between open file handles without routing it through user
+space. Invoke the callback with the number of bytes copied.
 
 #### `ops.lseek(path, fd, offset, whence, cb)`
 
