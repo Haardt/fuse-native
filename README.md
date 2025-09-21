@@ -296,6 +296,56 @@ Called when a new directory is being created
 
 Called when a directory is being removed
 
+#### `ops.lock(path, fd, cmd, lock, cb)`
+
+Called for POSIX record locking operations. `lock` is an object with the
+properties `type`, `whence`, `start`, `len`, `pid`, and `owner` (a `BigInt`).
+Update the fields of this object or return a partial replacement to control the
+lock state reported back to the kernel. The callback should be invoked with
+`cb(err, updatedLock?)`.
+
+#### `ops.bmap(path, blockSize, idx, cb)`
+
+Translate a file-relative block index to a device block index. Invoke the
+callback with the mapped block number.
+
+#### `ops.ioctl(path, fd, cmd, arg, flags, data, cb)`
+
+Handle FUSE `ioctl` requests. `arg` is exposed as a `BigInt` representing the
+raw pointer passed by the kernel. `data` is a `Buffer` backed directly by the
+kernel-provided memory region whose size is derived from `_IOC_SIZE(cmd)`.
+Mutating this buffer updates the memory returned to the caller.
+
+#### `ops.poll(path, fd, events, handle, cb)`
+
+Handle poll notifications. `handle.value` is the raw poll handle as a `BigInt`
+and `handle.buffer` is the underlying `Buffer`. Return the ready event mask via
+the callback.
+
+#### `ops.write_buf(path, fd, buffer, length, position, cb)`
+
+Zero-copy variant of `write`. `buffer` contains the kernel data to persist.
+Invoke the callback with the number of bytes written.
+
+#### `ops.read_buf(path, fd, size, position, cb)`
+
+Zero-copy variant of `read`. Provide a `Buffer` in the callback containing the
+requested data.
+
+#### `ops.flock(path, fd, op, owner, cb)`
+
+Handle BSD `flock` operations. `owner` is exposed as a `BigInt` mirroring the
+kernel-provided lock owner identifier.
+
+#### `ops.fallocate(path, fd, mode, offset, length, cb)`
+
+Allocate space for a file range.
+
+#### `ops.lseek(path, fd, offset, whence, cb)`
+
+Process `lseek` requests and return the resulting file offset (number or
+`BigInt`) via the callback.
+
 ## License
 
 MIT for these bindings.

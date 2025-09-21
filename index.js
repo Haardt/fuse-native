@@ -12,6 +12,7 @@ const HAS_FOLDER_ICON = IS_OSX && fs.existsSync(OSX_FOLDER_ICON)
 const DEFAULT_TIMEOUT = 15 * 1000
 const TIMEOUT_ERRNO = IS_OSX ? -60 : -110
 const ENOTCONN = IS_OSX ? -57 : -107
+const EMPTY_BUFFER = Buffer.alloc(0)
 
 const OpcodesAndDefaults = new Map([
   ['init', {
@@ -126,6 +127,37 @@ const OpcodesAndDefaults = new Map([
   }],
   ['rmdir', {
     op: binding.op_rmdir
+  }],
+  ['lock', {
+    op: binding.op_lock
+  }],
+  ['bmap', {
+    op: binding.op_bmap
+  }],
+  ['ioctl', {
+    op: binding.op_ioctl
+  }],
+  ['poll', {
+    op: binding.op_poll,
+    defaults: [0]
+  }],
+  ['write_buf', {
+    op: binding.op_write_buf,
+    defaults: [0, EMPTY_BUFFER.buffer]
+  }],
+  ['read_buf', {
+    op: binding.op_read_buf,
+    defaults: [EMPTY_BUFFER]
+  }],
+  ['flock', {
+    op: binding.op_flock
+  }],
+  ['fallocate', {
+    op: binding.op_fallocate
+  }],
+  ['lseek', {
+    op: binding.op_lseek,
+    defaults: [0, 0]
   }]
 ])
 
@@ -157,7 +189,7 @@ class Fuse extends Nanoresource {
   }
 
   _getImplementedArray () {
-    const implemented = new Uint32Array(35)
+    const implemented = new Uint32Array(binding.op_lseek + 1)
     for (const impl of this._implemented) {
       implemented[impl] = 1
     }
@@ -208,7 +240,7 @@ class Fuse extends Nanoresource {
 
   _makeHandlerArray () {
     const self = this
-    const handlers = new Array(OpcodesAndDefaults.size)
+    const handlers = new Array(binding.op_lseek + 1)
 
     for (const [name, { op, defaults }] of OpcodesAndDefaults) {
       const nativeSignal = binding[`fuse_native_signal_${name}`]
@@ -630,6 +662,98 @@ class Fuse extends Nanoresource {
     })
   }
 
+  _op_lock (signal, path, fd, cmd, nativeLock) {
+    if (!this.ops.lock) return signal(Fuse.ENOSYS)
+    const lock = normalizeLock(nativeLock)
+    this.ops.lock(path, fd, cmd, lock, (err, updated) => {
+      if (err) return signal(err)
+      if (updated && typeof updated === 'object') applyLockUpdate(lock, updated)
+      return signal(0, lock)
+    })
+  }
+
+  _op_bmap (signal, path, blockSize, idx) {
+    if (!this.ops.bmap) return signal(Fuse.ENOSYS, idx)
+    this.ops.bmap(path, blockSize, idx, (err, newIdx) => {
+      if (err) return signal(err, idx)
+      const next = newIdx === undefined ? idx : Number(newIdx)
+      return signal(0, next)
+    })
+  }
+
+  _op_ioctl (signal, path, fd, cmd, argBuf, flags, dataBuf) {
+    if (!this.ops.ioctl) return signal(Fuse.ENOSYS)
+    const arg = readPointer(argBuf)
+    this.ops.ioctl(path, fd, cmd, arg, flags, dataBuf, (err, result) => {
+      if (err) return signal(err)
+      const value = result === undefined ? 0 : Number(result)
+      return signal(value)
+    })
+  }
+
+  _op_poll (signal, path, fd, events, handleBuf) {
+    if (!this.ops.poll) return signal(Fuse.ENOSYS, 0)
+    const pollHandle = {
+      buffer: handleBuf,
+      value: readPointer(handleBuf)
+    }
+    this.ops.poll(path, fd, events, pollHandle, (err, revents) => {
+      if (err) return signal(err, 0)
+      return signal(0, Number(revents) || 0)
+    })
+  }
+
+  _op_write_buf (signal, path, fd, buf, len, offsetLow, offsetHigh) {
+    if (!this.ops.write_buf) return signal(Fuse.ENOSYS, 0, buf.buffer)
+    const offset = getDoubleArg(offsetLow, offsetHigh)
+    this.ops.write_buf(path, fd, buf, len, offset, (err, bytesWritten) => {
+      const written = Number(bytesWritten) || 0
+      if (err) return signal(err, written, buf.buffer)
+      return signal(0, written, buf.buffer)
+    })
+  }
+
+  _op_read_buf (signal, path, fd, size, offsetLow, offsetHigh) {
+    if (!this.ops.read_buf) return signal(Fuse.ENOSYS, EMPTY_BUFFER)
+    const offset = getDoubleArg(offsetLow, offsetHigh)
+    this.ops.read_buf(path, fd, size, offset, (err, data) => {
+      let output = data
+      if (!Buffer.isBuffer(output)) output = EMPTY_BUFFER
+      if (err) return signal(err, output)
+      return signal(0, output)
+    })
+  }
+
+  _op_flock (signal, path, fd, op, owner) {
+    if (!this.ops.flock) return signal(Fuse.ENOSYS)
+    let ownerId = owner
+    if (typeof ownerId === 'number') ownerId = BigInt(Math.trunc(ownerId) || 0)
+    if (typeof ownerId !== 'bigint') ownerId = 0n
+    this.ops.flock(path, fd, op, ownerId, err => {
+      return signal(err)
+    })
+  }
+
+  _op_fallocate (signal, path, fd, mode, offsetLow, offsetHigh, lenLow, lenHigh) {
+    if (!this.ops.fallocate) return signal(Fuse.ENOSYS)
+    const offset = getDoubleArg(offsetLow, offsetHigh)
+    const length = getDoubleArg(lenLow, lenHigh)
+    this.ops.fallocate(path, fd, mode, offset, length, err => {
+      return signal(err)
+    })
+  }
+
+  _op_lseek (signal, path, fd, offsetLow, offsetHigh, whence) {
+    if (!this.ops.lseek) return signal(Fuse.ENOSYS, 0, 0)
+    const offset = getDoubleArg(offsetLow, offsetHigh)
+    this.ops.lseek(path, fd, offset, whence, (err, newOffset) => {
+      if (err) return signal(err, 0, 0)
+      const offsetValue = newOffset === undefined ? 0 : newOffset
+      const [low, high] = toLowHigh(offsetValue)
+      return signal(0, low, high)
+    })
+  }
+
   // Public API
 
   mount (cb) {
@@ -797,6 +921,64 @@ function setDoubleInt (arr, idx, num) {
 
 function getDoubleArg (a, b) {
   return a + b * 4294967296
+}
+
+function readPointer (buf) {
+  if (!Buffer.isBuffer(buf) || buf.length === 0) return 0n
+  const length = buf.length
+  let result = 0n
+  for (let i = 0; i < length; i++) {
+    result |= BigInt(buf[i]) << BigInt(8 * i)
+  }
+  return result
+}
+
+function normalizeLock (lock) {
+  const normalized = {
+    type: 0,
+    whence: 0,
+    start: 0,
+    len: 0,
+    pid: 0,
+    owner: 0n
+  }
+
+  if (!lock || typeof lock !== 'object') return normalized
+
+  if (lock.type !== undefined) normalized.type = lock.type | 0
+  if (lock.whence !== undefined) normalized.whence = lock.whence | 0
+  if (lock.start !== undefined) normalized.start = Number(lock.start) || 0
+  if (lock.len !== undefined) normalized.len = Number(lock.len) || 0
+  if (lock.pid !== undefined) normalized.pid = lock.pid | 0
+  if (lock.owner !== undefined) {
+    if (typeof lock.owner === 'bigint') normalized.owner = lock.owner
+    else normalized.owner = BigInt(Math.trunc(Number(lock.owner) || 0))
+  }
+
+  return normalized
+}
+
+function applyLockUpdate (target, update) {
+  if (!update || typeof update !== 'object') return
+  if (update.type !== undefined) target.type = update.type | 0
+  if (update.whence !== undefined) target.whence = update.whence | 0
+  if (update.start !== undefined) target.start = Number(update.start) || 0
+  if (update.len !== undefined) target.len = Number(update.len) || 0
+  if (update.pid !== undefined) target.pid = update.pid | 0
+  if (update.owner !== undefined) {
+    if (typeof update.owner === 'bigint') target.owner = update.owner
+    else target.owner = BigInt(Math.trunc(Number(update.owner) || 0))
+  }
+}
+
+function toLowHigh (value) {
+  let big = typeof value === 'bigint' ? value : BigInt(Math.trunc(value || 0))
+  const mod = 1n << 64n
+  big = ((big % mod) + mod) % mod
+  const mask = 0xffffffffn
+  const low = Number(big & mask)
+  const high = Number((big >> 32n) & mask)
+  return [low, high]
 }
 
 function toDateMS (st) {
