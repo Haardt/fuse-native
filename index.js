@@ -126,6 +126,39 @@ const OpcodesAndDefaults = new Map([
   }],
   ['rmdir', {
     op: binding.op_rmdir
+  }],
+  ['lock', {
+    op: binding.op_lock
+  }],
+  ['bmap', {
+    op: binding.op_bmap,
+    defaults: [0, 0]
+  }],
+  ['ioctl', {
+    op: binding.op_ioctl
+  }],
+  ['poll', {
+    op: binding.op_poll
+  }],
+  ['write_buf', {
+    op: binding.op_write_buf
+  }],
+  ['read_buf', {
+    op: binding.op_read_buf
+  }],
+  ['flock', {
+    op: binding.op_flock
+  }],
+  ['fallocate', {
+    op: binding.op_fallocate
+  }],
+  ['lseek', {
+    op: binding.op_lseek,
+    defaults: [0, 0]
+  }],
+  ['copy_file_range', {
+    op: binding.op_copy_file_range,
+    defaults: [0]
   }]
 ])
 
@@ -157,7 +190,7 @@ class Fuse extends Nanoresource {
   }
 
   _getImplementedArray () {
-    const implemented = new Uint32Array(35)
+    const implemented = new Uint32Array(45)
     for (const impl of this._implemented) {
       implemented[impl] = 1
     }
@@ -627,6 +660,79 @@ class Fuse extends Nanoresource {
   _op_rmdir (signal, path) {
     this.ops.rmdir(path, err => {
       return signal(err)
+    })
+  }
+
+  _op_flock (signal, path, fd, op) {
+    this.ops.flock(path, fd, op, err => {
+      return signal(err)
+    })
+  }
+
+  _op_fallocate (signal, path, mode, offsetLow, offsetHigh, lengthLow, lengthHigh, fd) {
+    const offset = getDoubleArg(offsetLow, offsetHigh)
+    const length = getDoubleArg(lengthLow, lengthHigh)
+    this.ops.fallocate(path, mode, offset, length, fd, err => {
+      return signal(err)
+    })
+  }
+
+  _op_lseek (signal, path, offsetLow, offsetHigh, whence, fd) {
+    const offset = getDoubleArg(offsetLow, offsetHigh)
+    this.ops.lseek(path, offset, whence, fd, (err, offset) => {
+      if (err) return signal(err)
+      const offsetArr = new Uint32Array(2)
+      setDoubleInt(offsetArr, 0, offset)
+      return signal(0, offsetArr[0], offsetArr[1])
+    })
+  }
+
+  _op_lock (signal, path, fd, cmd, flock) {
+    this.ops.lock(path, fd, cmd, flock, err => {
+      return signal(err)
+    })
+  }
+
+  _op_bmap (signal, path, blocksize) {
+    this.ops.bmap(path, blocksize, (err, idx) => {
+      if (err) return signal(err)
+      const idxArr = new Uint32Array(2)
+      setDoubleInt(idxArr, 0, idx)
+      return signal(0, idxArr[0], idxArr[1])
+    })
+  }
+
+  _op_ioctl (signal, path, cmd, arg, fd, flags, data) {
+    this.ops.ioctl(path, cmd, arg, fd, flags, data, err => {
+      return signal(err)
+    })
+  }
+
+  _op_poll (signal, path, fd, ph, reventsp) {
+    this.ops.poll(path, fd, ph, reventsp, err => {
+      return signal(err)
+    })
+  }
+
+  _op_write_buf (signal, path, buf, offsetLow, offsetHigh, fd) {
+    const offset = getDoubleArg(offsetLow, offsetHigh)
+    this.ops.write_buf(path, buf, offset, fd, err => {
+      return signal(err)
+    })
+  }
+
+  _op_read_buf (signal, path, bufp, len, offsetLow, offsetHigh, fd) {
+    const offset = getDoubleArg(offsetLow, offsetHigh)
+    this.ops.read_buf(path, bufp, len, offset, fd, err => {
+      return signal(err)
+    })
+  }
+
+  _op_copy_file_range (signal, path, fd, offsetInLow, offsetInHigh, pathOut, fdOut, offsetOutLow, offsetOutHigh, len, flags) {
+    const offsetIn = getDoubleArg(offsetInLow, offsetInHigh)
+    const offsetOut = getDoubleArg(offsetOutLow, offsetOutHigh)
+    this.ops.copy_file_range(path, fd, offsetIn, pathOut, fdOut, offsetOut, len, flags, (err, bytes) => {
+      return signal(err, bytes)
     })
   }
 

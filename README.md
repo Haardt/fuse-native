@@ -296,6 +296,60 @@ Called when a new directory is being created
 
 Called when a directory is being removed
 
+### Newly Added Operations
+
+The following operations have been recently added and are available for use:
+
+#### `ops.lock(path, fd, cmd, flock, cb)`
+
+Called to perform POSIX file locking. `flock` is an object with the following properties:
+
+```js
+{
+  l_type: 0, // F_RDLCK, F_WRLCK, F_UNLCK
+  l_whence: 0, // SEEK_SET, SEEK_CUR, SEEK_END
+  l_start: 0,
+  l_len: 0,
+  l_pid: 0
+}
+```
+
+#### `ops.bmap(path, blocksize, cb)`
+
+Called to map a block in the file to a block on the device.
+
+#### `ops.ioctl(path, cmd, arg, fd, flags, data, cb)`
+
+Called to perform an ioctl on a file descriptor. `arg` and `data` are buffers.
+
+#### `ops.poll(path, fd, ph, reventsp, cb)`
+
+Called to poll for I/O readiness. `ph` and `reventsp` are buffers.
+
+#### `ops.write_buf(path, buf, offset, fd, cb)`
+
+Called to write the contents of a buffer to a file. `buf` is a `fuse_bufvec` structure, passed as a buffer.
+
+#### `ops.read_buf(path, bufp, len, offset, fd, cb)`
+
+Called to read the contents of a file into a buffer. `bufp` is a `fuse_bufvec` structure, passed as a buffer.
+
+#### `ops.flock(path, fd, op, cb)`
+
+Called to perform BSD file locking.
+
+#### `ops.fallocate(path, mode, offset, length, fd, cb)`
+
+Called to allocate space for a file.
+
+#### `ops.lseek(path, offset, whence, fd, cb)`
+
+Called to find the next data or hole in a file.
+
+#### `ops.copy_file_range(path, fd, offsetIn, pathOut, fdOut, offsetOut, len, flags, cb)`
+
+Called to copy a range of data from one file to another.
+
 ## License
 
 MIT for these bindings.

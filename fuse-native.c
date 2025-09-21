@@ -66,6 +66,54 @@ napi_status napi_detach_arraybuffer(napi_env env, napi_value buf);
     FUSE_NATIVE_HANDLER(name, callBlk)\
   }
 
+#define FUSE_METHOD_OFFSET(name, callbackArgs, signalArgs, signature, callBlk, callbackBlk, signalBlk)\
+  static void fuse_native_dispatch_##name (uv_async_t* handle, fuse_thread_locals_t* l, fuse_thread_t* ft) {\
+    uint32_t op = op_##name;\
+    FUSE_NATIVE_CALLBACK(ft->handlers[op], {\
+      napi_value argv[callbackArgs + 2];\
+      napi_get_reference_value(env, l->self, &(argv[0]));\
+      napi_create_uint32(env, l->op, &(argv[1]));\
+      callbackBlk\
+      NAPI_MAKE_CALLBACK(env, NULL, ctx, callback, callbackArgs + 2, argv, NULL)\
+    })\
+  }\
+  NAPI_METHOD(fuse_native_signal_##name) {\
+    NAPI_ARGV(signalArgs + 2)\
+    NAPI_ARGV_BUFFER_CAST(fuse_thread_locals_t *, l, 0);\
+    NAPI_ARGV_INT32(res, 1);\
+    signalBlk\
+    l->res = res;\
+    uv_sem_post(&(l->sem));\
+    return NULL;\
+  }\
+  static off_t fuse_native_##name signature {\
+    FUSE_NATIVE_HANDLER(name, callBlk)\
+  }
+
+#define FUSE_METHOD_SSIZE(name, callbackArgs, signalArgs, signature, callBlk, callbackBlk, signalBlk)\
+  static void fuse_native_dispatch_##name (uv_async_t* handle, fuse_thread_locals_t* l, fuse_thread_t* ft) {\
+    uint32_t op = op_##name;\
+    FUSE_NATIVE_CALLBACK(ft->handlers[op], {\
+      napi_value argv[callbackArgs + 2];\
+      napi_get_reference_value(env, l->self, &(argv[0]));\
+      napi_create_uint32(env, l->op, &(argv[1]));\
+      callbackBlk\
+      NAPI_MAKE_CALLBACK(env, NULL, ctx, callback, callbackArgs + 2, argv, NULL)\
+    })\
+  }\
+  NAPI_METHOD(fuse_native_signal_##name) {\
+    NAPI_ARGV(signalArgs + 2)\
+    NAPI_ARGV_BUFFER_CAST(fuse_thread_locals_t *, l, 0);\
+    NAPI_ARGV_INT32(res, 1);\
+    signalBlk\
+    l->res = res;\
+    uv_sem_post(&(l->sem));\
+    return NULL;\
+  }\
+  static ssize_t fuse_native_##name signature {\
+    FUSE_NATIVE_HANDLER(name, callBlk)\
+  }
+
 #define FUSE_METHOD_VOID(name, callbackArgs, signalArgs, signature, callBlk, callbackBlk)\
   FUSE_METHOD(name, callbackArgs, signalArgs, signature, callBlk, callbackBlk, {})
 
@@ -112,6 +160,16 @@ static const uint32_t op_link = 30;
 static const uint32_t op_symlink = 31;
 static const uint32_t op_mkdir = 32;
 static const uint32_t op_rmdir = 33;
+static const uint32_t op_lock = 34;
+static const uint32_t op_bmap = 35;
+static const uint32_t op_ioctl = 36;
+static const uint32_t op_poll = 37;
+static const uint32_t op_write_buf = 38;
+static const uint32_t op_read_buf = 39;
+static const uint32_t op_flock = 40;
+static const uint32_t op_fallocate = 41;
+static const uint32_t op_lseek = 42;
+static const uint32_t op_copy_file_range = 43;
 
 // Data structures
 
@@ -123,7 +181,7 @@ typedef struct {
   napi_ref malloc;
 
   // Operation handlers
-  napi_ref handlers[35];
+  napi_ref handlers[45];
 
   struct fuse *fuse;
   struct fuse_chan *ch;
@@ -173,6 +231,27 @@ typedef struct {
 
   // Readdir
   fuse_fill_dir_t readdir_filler;
+
+  // lock
+  struct flock *flock;
+
+  // ioctl
+  void *arg;
+  unsigned int cmd;
+
+  // poll
+  struct fuse_pollhandle *ph;
+  unsigned *reventsp;
+
+  // read_buf
+  struct fuse_bufvec **bufp;
+
+  // copy_file_range
+  struct fuse_file_info *fi_in;
+  off_t offset_in;
+  const char *path_out;
+  struct fuse_file_info *fi_out;
+  off_t offset_out;
 
   // Internal bookkeeping
   fuse_thread_t *fuse;
@@ -680,6 +759,188 @@ FUSE_METHOD_VOID(rmdir, 1, 0, (const char *path), {
   napi_create_string_utf8(env, l->path, NAPI_AUTO_LENGTH, &(argv[2]));
 })
 
+FUSE_METHOD_VOID(flock, 2, 0, (const char *path, struct fuse_file_info *info, int op), {
+  l->path = path;
+  l->info = info;
+  l->mode = op;
+}, {
+  napi_create_string_utf8(env, l->path, NAPI_AUTO_LENGTH, &(argv[2]));
+  if (l->info != NULL) {
+    napi_create_uint32(env, l->info->fh, &(argv[3]));
+  } else {
+    napi_create_uint32(env, 0, &(argv[3]));
+  }
+  napi_create_uint32(env, l->mode, &(argv[4]));
+})
+
+FUSE_METHOD_OFFSET(lseek, 4, 1, (const char *path, off_t off, int whence, struct fuse_file_info *info), {
+  l->path = path;
+  l->offset = off;
+  l->mode = whence;
+  l->info = info;
+}, {
+  napi_create_string_utf8(env, l->path, NAPI_AUTO_LENGTH, &(argv[2]));
+  FUSE_UINT64_TO_INTS_ARGV(l->offset, 3)
+  napi_create_uint32(env, l->mode, &(argv[5]));
+  if (l->info != NULL) {
+    napi_create_uint32(env, l->info->fh, &(argv[6]));
+  } else {
+    napi_create_uint32(env, 0, &(argv[6]));
+  }
+}, {
+  NAPI_ARGV_INT32(offset_low, 2)
+  NAPI_ARGV_INT32(offset_high, 3)
+  l->res = (off_t) uint32s_to_uint64((uint32_t *[]){(uint32_t *) &offset_low, (uint32_t *) &offset_high});
+})
+
+FUSE_METHOD_VOID(lock, 3, 0, (const char *path, struct fuse_file_info *info, int cmd, struct flock *flock), {
+  l->path = path;
+  l->info = info;
+  l->cmd = cmd;
+  l->flock = flock;
+}, {
+  napi_create_string_utf8(env, l->path, NAPI_AUTO_LENGTH, &(argv[2]));
+  if (l->info != NULL) {
+    napi_create_uint32(env, l->info->fh, &(argv[3]));
+  } else {
+    napi_create_uint32(env, 0, &(argv[3]));
+  }
+  napi_create_uint32(env, l->cmd, &(argv[4]));
+  napi_create_buffer(env, sizeof(struct flock), (void **) &l->flock, &(argv[5]));
+})
+
+FUSE_METHOD(bmap, 2, 1, (const char *path, size_t blocksize, uint64_t *idx), {
+  l->path = path;
+  l->len = blocksize;
+  l->linkname = (char *) idx;
+}, {
+  napi_create_string_utf8(env, l->path, NAPI_AUTO_LENGTH, &(argv[2]));
+  napi_create_uint32(env, l->len, &(argv[3]));
+}, {
+  NAPI_ARGV_UINT32(idx_low, 2)
+  NAPI_ARGV_UINT32(idx_high, 3)
+  *((uint64_t *) l->linkname) = uint32s_to_uint64((uint32_t *[]){(uint32_t *) &idx_low, (uint32_t *) &idx_high});
+})
+
+FUSE_METHOD_VOID(ioctl, 5, 0, (const char *path, unsigned int cmd, void *arg, struct fuse_file_info *info, unsigned int flags, void *data), {
+  l->path = path;
+  l->cmd = cmd;
+  l->arg = arg;
+  l->info = info;
+  l->flags = flags;
+  l->buf = data;
+}, {
+  napi_create_string_utf8(env, l->path, NAPI_AUTO_LENGTH, &(argv[2]));
+  napi_create_uint32(env, l->cmd, &(argv[3]));
+  napi_create_buffer(env, sizeof(void *), &l->arg, &(argv[4]));
+  if (l->info != NULL) {
+    napi_create_uint32(env, l->info->fh, &(argv[5]));
+  } else {
+    napi_create_uint32(env, 0, &(argv[5]));
+  }
+  napi_create_uint32(env, l->flags, &(argv[6]));
+  napi_create_buffer(env, sizeof(void *), (void **) &l->buf, &(argv[7]));
+})
+
+FUSE_METHOD_VOID(poll, 3, 0, (const char *path, struct fuse_file_info *info, struct fuse_pollhandle *ph, unsigned *reventsp), {
+  l->path = path;
+  l->info = info;
+  l->ph = ph;
+  l->reventsp = reventsp;
+}, {
+  napi_create_string_utf8(env, l->path, NAPI_AUTO_LENGTH, &(argv[2]));
+  if (l->info != NULL) {
+    napi_create_uint32(env, l->info->fh, &(argv[3]));
+  } else {
+    napi_create_uint32(env, 0, &(argv[3]));
+  }
+  napi_create_buffer(env, sizeof(struct fuse_pollhandle), (void **) &l->ph, &(argv[4]));
+  napi_create_buffer(env, sizeof(unsigned), (void **) &l->reventsp, &(argv[5]));
+})
+
+FUSE_METHOD_VOID(write_buf, 4, 0, (const char *path, struct fuse_bufvec *buf, off_t off, struct fuse_file_info *info), {
+  l->path = path;
+  l->buf = (void *) buf;
+  l->offset = off;
+  l->info = info;
+}, {
+  napi_create_string_utf8(env, l->path, NAPI_AUTO_LENGTH, &(argv[2]));
+  napi_create_buffer(env, sizeof(struct fuse_bufvec), (void **) &l->buf, &(argv[3]));
+  FUSE_UINT64_TO_INTS_ARGV(l->offset, 4)
+  if (l->info != NULL) {
+    napi_create_uint32(env, l->info->fh, &(argv[6]));
+  } else {
+    napi_create_uint32(env, 0, &(argv[6]));
+  }
+})
+
+FUSE_METHOD_VOID(read_buf, 5, 0, (const char *path, struct fuse_bufvec **bufp, size_t size, off_t off, struct fuse_file_info *info), {
+  l->path = path;
+  l->bufp = bufp;
+  l->len = size;
+  l->offset = off;
+  l->info = info;
+}, {
+  napi_create_string_utf8(env, l->path, NAPI_AUTO_LENGTH, &(argv[2]));
+  napi_create_buffer(env, sizeof(struct fuse_bufvec *), (void **) &l->bufp, &(argv[3]));
+  napi_create_uint32(env, l->len, &(argv[4]));
+  FUSE_UINT64_TO_INTS_ARGV(l->offset, 5)
+  if (l->info != NULL) {
+    napi_create_uint32(env, l->info->fh, &(argv[7]));
+  } else {
+    napi_create_uint32(env, 0, &(argv[7]));
+  }
+})
+
+FUSE_METHOD_SSIZE(copy_file_range, 8, 1, (const char *path_in, struct fuse_file_info *fi_in, off_t offset_in, const char *path_out, struct fuse_file_info *fi_out, off_t offset_out, size_t size, int flags), {
+  l->path = path_in;
+  l->fi_in = fi_in;
+  l->offset_in = offset_in;
+  l->path_out = path_out;
+  l->fi_out = fi_out;
+  l->offset_out = offset_out;
+  l->len = size;
+  l->flags = flags;
+}, {
+  napi_create_string_utf8(env, l->path, NAPI_AUTO_LENGTH, &(argv[2]));
+  if (l->fi_in != NULL) {
+    napi_create_uint32(env, l->fi_in->fh, &(argv[3]));
+  } else {
+    napi_create_uint32(env, 0, &(argv[3]));
+  }
+  FUSE_UINT64_TO_INTS_ARGV(l->offset_in, 4)
+  napi_create_string_utf8(env, l->path_out, NAPI_AUTO_LENGTH, &(argv[6]));
+  if (l->fi_out != NULL) {
+    napi_create_uint32(env, l->fi_out->fh, &(argv[7]));
+  } else {
+    napi_create_uint32(env, 0, &(argv[7]));
+  }
+  FUSE_UINT64_TO_INTS_ARGV(l->offset_out, 8)
+  napi_create_uint32(env, l->len, &(argv[10]));
+  napi_create_uint32(env, l->flags, &(argv[11]));
+}, {
+  NAPI_ARGV_INT32(bytes, 2)
+  l->res = bytes;
+})
+
+FUSE_METHOD_VOID(fallocate, 5, 0, (const char *path, int mode, off_t off, off_t len, struct fuse_file_info *info), {
+  l->path = path;
+  l->mode = mode;
+  l->offset = off;
+  l->len = len;
+  l->info = info;
+}, {
+  napi_create_string_utf8(env, l->path, NAPI_AUTO_LENGTH, &(argv[2]));
+  napi_create_uint32(env, l->mode, &(argv[3]));
+  FUSE_UINT64_TO_INTS_ARGV(l->offset, 4)
+  FUSE_UINT64_TO_INTS_ARGV(l->len, 6)
+  if (l->info != NULL) {
+    napi_create_uint32(env, l->info->fh, &(argv[8]));
+  } else {
+    napi_create_uint32(env, 0, &(argv[8]));
+  }
+})
+
 static void fuse_native_dispatch_init (uv_async_t* handle, fuse_thread_locals_t* l, fuse_thread_t* ft) {\
   FUSE_NATIVE_CALLBACK(ft->handlers[op_init], {
     napi_value argv[2];
@@ -801,7 +1062,7 @@ NAPI_METHOD(fuse_native_mount) {
   napi_value handlers = argv[5];
   NAPI_ARGV_BUFFER_CAST(uint32_t *, implemented, 6)
 
-  for (int i = 0; i < 35; i++) {
+  for (int i = 0; i < 45; i++) {
     ft->handlers[i] = NULL;
   }
 
@@ -845,6 +1106,16 @@ NAPI_METHOD(fuse_native_mount) {
   if (implemented[op_mkdir]) ops.mkdir = fuse_native_mkdir;
   if (implemented[op_rmdir]) ops.rmdir = fuse_native_rmdir;
   if (implemented[op_init]) ops.init = fuse_native_init;
+  if (implemented[op_lock]) ops.lock = fuse_native_lock;
+  if (implemented[op_bmap]) ops.bmap = fuse_native_bmap;
+  if (implemented[op_ioctl]) ops.ioctl = fuse_native_ioctl;
+  if (implemented[op_poll]) ops.poll = fuse_native_poll;
+  if (implemented[op_write_buf]) ops.write_buf = fuse_native_write_buf;
+  if (implemented[op_read_buf]) ops.read_buf = fuse_native_read_buf;
+  if (implemented[op_flock]) ops.flock = fuse_native_flock;
+  if (implemented[op_fallocate]) ops.fallocate = fuse_native_fallocate;
+  if (implemented[op_lseek]) ops.lseek = fuse_native_lseek;
+  if (implemented[op_copy_file_range]) ops.copy_file_range = fuse_native_copy_file_range;
 
   int _argc = (strcmp(mntopts, "-o") <= 0) ? 1 : 2;
   char *_argv[] = {
@@ -950,6 +1221,16 @@ NAPI_INIT() {
   NAPI_EXPORT_FUNCTION(fuse_native_signal_symlink)
   NAPI_EXPORT_FUNCTION(fuse_native_signal_mkdir)
   NAPI_EXPORT_FUNCTION(fuse_native_signal_rmdir)
+  NAPI_EXPORT_FUNCTION(fuse_native_signal_lock)
+  NAPI_EXPORT_FUNCTION(fuse_native_signal_bmap)
+  NAPI_EXPORT_FUNCTION(fuse_native_signal_ioctl)
+  NAPI_EXPORT_FUNCTION(fuse_native_signal_poll)
+  NAPI_EXPORT_FUNCTION(fuse_native_signal_write_buf)
+  NAPI_EXPORT_FUNCTION(fuse_native_signal_read_buf)
+  NAPI_EXPORT_FUNCTION(fuse_native_signal_flock)
+  NAPI_EXPORT_FUNCTION(fuse_native_signal_fallocate)
+  NAPI_EXPORT_FUNCTION(fuse_native_signal_lseek)
+  NAPI_EXPORT_FUNCTION(fuse_native_signal_copy_file_range)
 
   NAPI_EXPORT_UINT32(op_getattr)
   NAPI_EXPORT_UINT32(op_init)
@@ -986,4 +1267,14 @@ NAPI_INIT() {
   NAPI_EXPORT_UINT32(op_symlink)
   NAPI_EXPORT_UINT32(op_mkdir)
   NAPI_EXPORT_UINT32(op_rmdir)
+  NAPI_EXPORT_UINT32(op_lock)
+  NAPI_EXPORT_UINT32(op_bmap)
+  NAPI_EXPORT_UINT32(op_ioctl)
+  NAPI_EXPORT_UINT32(op_poll)
+  NAPI_EXPORT_UINT32(op_write_buf)
+  NAPI_EXPORT_UINT32(op_read_buf)
+  NAPI_EXPORT_UINT32(op_flock)
+  NAPI_EXPORT_UINT32(op_fallocate)
+  NAPI_EXPORT_UINT32(op_lseek)
+  NAPI_EXPORT_UINT32(op_copy_file_range)
 }

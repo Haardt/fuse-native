@@ -1,4 +1,12 @@
 declare namespace Fuse {
+  export interface Flock {
+    l_type: number,
+    l_whence: number,
+    l_start: number,
+    l_len: number,
+    l_pid: number
+  }
+
   // Stats object produced by fuse-native index.js function getStatArray
   export interface Stats {
     mode: number;
@@ -109,6 +117,16 @@ declare namespace Fuse {
     symlink?: (src: string, dest: string, cb: (err: number) => void) => void;
     mkdir?: (path: string, mode: number, cb: (err: number) => void) => void;
     rmdir?: (path: string, cb: (err: number) => void) => void;
+    lock?: (path: string, fd: number, cmd: number, flock: Flock, cb: (err: number) => void) => void;
+    bmap?: (path: string, blocksize: number, cb: (err: number, idx?: number) => void) => void;
+    ioctl?: (path: string, cmd: number, arg: Buffer, fd: number, flags: number, data: Buffer, cb: (err: number) => void) => void;
+    poll?: (path: string, fd: number, ph: Buffer, reventsp: Buffer, cb: (err: number) => void) => void;
+    write_buf?: (path: string, buf: Buffer, offset: number, fd: number, cb: (err: number) => void) => void;
+    read_buf?: (path: string, bufp: Buffer, len: number, offset: number, fd: number, cb: (err: number) => void) => void;
+    flock?: (path: string, fd: number, op: number, cb: (err: number) => void) => void;
+    fallocate?: (path: string, mode: number, offset: number, length: number, fd: number, cb: (err: number) => void) => void;
+    lseek?: (path: string, offset: number, whence: number, fd: number, cb: (err: number, offset?: number) => void) => void;
+    copy_file_range?: (path: string, fd: number, offsetIn: number, pathOut: string, fdOut: number, offsetOut: number, len: number, flags: number, cb: (err: number, bytes?: number) => void) => void;
   }
 
   // See https://github.com/refinio/fuse-native
