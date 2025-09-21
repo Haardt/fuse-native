@@ -839,15 +839,15 @@ FUSE_METHOD(bmap, 3, 1, (const char *path, size_t blocksize, uint64_t *idx), {
   }
 })
 
-FUSE_METHOD(ioctl, 6, 0, (const char *path, unsigned int cmd, void *arg, struct fuse_file_info *info, unsigned int flags, void *data), {
+FUSE_METHOD(ioctl, 6, 0, (const char *path, int cmd, void *arg, struct fuse_file_info *info, unsigned int flags, void *data), {
   l->path = path;
   l->info = info;
-  l->cmd = cmd;
+  l->cmd = (unsigned int) cmd;
   l->arg = arg;
   l->flags = (int) flags;
   l->data = data;
 #ifdef _IOC_SIZE
-  size_t data_len = _IOC_SIZE(cmd);
+  size_t data_len = _IOC_SIZE(l->cmd);
 #else
   size_t data_len = 0;
 #endif
