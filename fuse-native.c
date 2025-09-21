@@ -1324,6 +1324,7 @@ static fuse_thread_locals_t* get_thread_locals () {
 static void* start_fuse_thread (void *data) {
   fuse_thread_t *ft = (fuse_thread_t *) data;
 #ifdef FUSE_NATIVE_USE_FUSE3
+#  if defined(FUSE_VERSION) && FUSE_VERSION >= FUSE_MAKE_VERSION(3, 12)
   struct fuse_loop_config *config = fuse_loop_cfg_create();
   if (config != NULL) {
     fuse_loop_mt(ft->fuse, config);
@@ -1331,6 +1332,9 @@ static void* start_fuse_thread (void *data) {
   } else {
     fuse_loop(ft->fuse);
   }
+#  else
+  fuse_loop(ft->fuse);
+#  endif
 
   fuse_unmount(ft->fuse);
   fuse_destroy(ft->fuse);
