@@ -1119,8 +1119,8 @@ NAPI_METHOD(fuse_native_mount) {
   if (implemented[op_read_buf]) ops.read_buf = fuse_native_read_buf;
   if (implemented[op_flock]) ops.flock = fuse_native_flock;
   if (implemented[op_fallocate]) ops.fallocate = fuse_native_fallocate;
-  //if (implemented[op_lseek]) ops.lseek = fuse_native_lseek;
-  //if (implemented[op_copy_file_range]) ops.copy_file_range = fuse_native_copy_file_range;
+  if (implemented[op_lseek]) ops.lseek = fuse_native_lseek;
+  if (implemented[op_copy_file_range]) ops.copy_file_range = fuse_native_copy_file_range;
 
   int _argc = (strcmp(mntopts, "-o") <= 0) ? 1 : 2;
   char *_argv[] = {

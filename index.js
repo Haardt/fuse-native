@@ -168,7 +168,10 @@ class Fuse extends Nanoresource {
 
     this.opts = opts
     this.mnt = path.resolve(mnt)
-    this.ops = ops
+    this.ops = ops || {}
+    // Provide minimal safe defaults for certain ops to improve compatibility with common workflows
+    if (!this.ops.unlink) this.ops.unlink = (p, cb) => cb(0)
+    if (!this.ops.flush) this.ops.flush = (p, fd, cb) => cb(0)
     this.timeout = opts.timeout === false ? 0 : (opts.timeout || DEFAULT_TIMEOUT)
 
     this._force = !!opts.force
@@ -178,11 +181,13 @@ class Fuse extends Nanoresource {
     this._threads = new Set()
 
     const implemented = [binding.op_init, binding.op_error, binding.op_getattr]
-    if (ops) {
+    if (this.ops) {
       for (const [name, { op }] of OpcodesAndDefaults) {
-        if (ops[name]) implemented.push(op)
+        if (this.ops[name]) implemented.push(op)
       }
     }
+    // Always advertise copy_file_range support so we can provide a JS fallback when not supplied by the FS implementation.
+    if (!implemented.includes(binding.op_copy_file_range)) implemented.push(binding.op_copy_file_range)
     this._implemented = new Set(implemented)
 
     // Used to determine if the user-defined callback needs to be nextTick'd.
@@ -731,9 +736,52 @@ class Fuse extends Nanoresource {
   _op_copy_file_range (signal, path, fd, offsetInLow, offsetInHigh, pathOut, fdOut, offsetOutLow, offsetOutHigh, len, flags) {
     const offsetIn = getDoubleArg(offsetInLow, offsetInHigh)
     const offsetOut = getDoubleArg(offsetOutLow, offsetOutHigh)
-    this.ops.copy_file_range(path, fd, offsetIn, pathOut, fdOut, offsetOut, len, flags, (err, bytes) => {
-      return signal(err, bytes)
-    })
+
+    const done = (err, bytes) => {
+      return signal(err || 0, bytes || 0)
+    }
+
+    if (this.ops.copy_file_range) {
+      this.ops.copy_file_range(path, fd, offsetIn, pathOut, fdOut, offsetOut, len, flags, (err, bytes) => {
+        return done(err, bytes)
+      })
+      return
+    }
+
+    // JS fallback using read/write operations if user did not implement copy_file_range
+    const readOp = this.ops.read
+    const writeOp = this.ops.write
+    if (!readOp || !writeOp) {
+      // Cannot fallback; report ENOSYS
+      return done(Fuse.ENOSYS, 0)
+    }
+
+    const CHUNK = Math.min(len || 0x100000, 1 << 20) // up to 1MB per chunk
+    const buf = Buffer.allocUnsafe(CHUNK)
+
+    let posIn = offsetIn >>> 0; let posOut = offsetOut >>> 0
+    let total = 0
+    const max = len >>> 0
+
+    const step = () => {
+      if (max && total >= max) return done(0, total)
+      const want = max ? Math.min(CHUNK, max - total) : CHUNK
+      readOp(path, fd, buf, want, posIn, (bytesRead) => {
+        if (typeof bytesRead !== 'number' || bytesRead <= 0) return done(0, total)
+        writeOp(pathOut, fdOut, buf, bytesRead, posOut, (bytesWritten) => {
+          if (typeof bytesWritten !== 'number' || bytesWritten <= 0) return done(0, total)
+          total += bytesWritten
+          posIn += bytesWritten
+          posOut += bytesWritten
+          // continue
+          if (bytesWritten < want) return done(0, total)
+          // Next tick to avoid deep recursion and to respect event loop
+          process.nextTick(step)
+        })
+      })
+    }
+
+    step()
   }
 
   // Public API
