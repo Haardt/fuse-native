@@ -89,50 +89,52 @@ napi_status napi_detach_arraybuffer(napi_env env, napi_value buf);
 
 // Opcodes
 
-static const uint32_t op_init = 0;
-static const uint32_t op_error = 1;
-static const uint32_t op_access = 2;
-static const uint32_t op_statfs = 3;
-static const uint32_t op_fgetattr = 4;
-static const uint32_t op_getattr = 5;
-static const uint32_t op_flush = 6;
-static const uint32_t op_fsync = 7;
-static const uint32_t op_fsyncdir = 8;
-static const uint32_t op_readdir = 9;
-static const uint32_t op_truncate = 10;
-static const uint32_t op_ftruncate = 11;
-static const uint32_t op_utimens = 12;
-static const uint32_t op_readlink = 13;
-static const uint32_t op_chown = 14;
-static const uint32_t op_chmod = 15;
-static const uint32_t op_mknod = 16;
-static const uint32_t op_setxattr = 17;
-static const uint32_t op_getxattr = 18;
-static const uint32_t op_listxattr = 19;
-static const uint32_t op_removexattr = 20;
-static const uint32_t op_open = 21;
-static const uint32_t op_opendir = 22;
-static const uint32_t op_read = 23;
-static const uint32_t op_write = 24;
-static const uint32_t op_release = 25;
-static const uint32_t op_releasedir = 26;
-static const uint32_t op_create = 27;
-static const uint32_t op_unlink = 28;
-static const uint32_t op_rename = 29;
-static const uint32_t op_link = 30;
-static const uint32_t op_symlink = 31;
-static const uint32_t op_mkdir = 32;
-static const uint32_t op_rmdir = 33;
-static const uint32_t op_lock = 34;
-static const uint32_t op_bmap = 35;
-static const uint32_t op_ioctl = 36;
-static const uint32_t op_poll = 37;
-static const uint32_t op_write_buf = 38;
-static const uint32_t op_read_buf = 39;
-static const uint32_t op_flock = 40;
-static const uint32_t op_fallocate = 41;
-static const uint32_t op_lseek = 42;
-static const uint32_t op_max = op_lseek;
+enum fuse_opcode {
+  op_init = 0,
+  op_error,
+  op_access,
+  op_statfs,
+  op_fgetattr,
+  op_getattr,
+  op_flush,
+  op_fsync,
+  op_fsyncdir,
+  op_readdir,
+  op_truncate,
+  op_ftruncate,
+  op_utimens,
+  op_readlink,
+  op_chown,
+  op_chmod,
+  op_mknod,
+  op_setxattr,
+  op_getxattr,
+  op_listxattr,
+  op_removexattr,
+  op_open,
+  op_opendir,
+  op_read,
+  op_write,
+  op_release,
+  op_releasedir,
+  op_create,
+  op_unlink,
+  op_rename,
+  op_link,
+  op_symlink,
+  op_mkdir,
+  op_rmdir,
+  op_lock,
+  op_bmap,
+  op_ioctl,
+  op_poll,
+  op_write_buf,
+  op_read_buf,
+  op_flock,
+  op_fallocate,
+  op_lseek,
+  op_max = op_lseek
+};
 
 // Data structures
 
@@ -864,7 +866,7 @@ FUSE_METHOD(ioctl, 6, 0, (const char *path, unsigned int cmd, void *arg, struct 
     void *tmp;
     napi_create_buffer(env, 0, &tmp, &(argv[7]));
   }
-})
+}, {})
 
 FUSE_METHOD(poll, 4, 1, (const char *path, struct fuse_file_info *info, struct fuse_pollhandle *ph, unsigned *reventsp), {
   l->path = path;
@@ -875,7 +877,11 @@ FUSE_METHOD(poll, 4, 1, (const char *path, struct fuse_file_info *info, struct f
   napi_create_string_utf8(env, l->path, NAPI_AUTO_LENGTH, &(argv[2]));
   uint32_t fh = (l->info != NULL) ? (uint32_t) l->info->fh : 0;
   napi_create_uint32(env, fh, &(argv[3]));
-  uint32_t events = (l->info != NULL) ? l->info->poll_events : 0;
+#if FUSE_MAJOR_VERSION >= 3
+  uint32_t events = (l->info != NULL) ? (uint32_t) l->info->poll_events : 0;
+#else
+  uint32_t events = 0;
+#endif
   napi_create_uint32(env, events, &(argv[4]));
   create_uintptr_buffer(env, (uintptr_t) l->pollhandle, &(argv[5]));
 }, {
@@ -1000,7 +1006,7 @@ FUSE_METHOD(flock, 4, 0, (const char *path, struct fuse_file_info *info, int op)
   napi_create_double(env, (double) ((l->info != NULL) ? l->info->lock_owner : 0), &owner);
 #endif
   argv[5] = owner;
-})
+}, {})
 
 FUSE_METHOD(fallocate, 7, 0, (const char *path, int mode, off_t offset, off_t length, struct fuse_file_info *info), {
   l->path = path;
@@ -1015,7 +1021,7 @@ FUSE_METHOD(fallocate, 7, 0, (const char *path, int mode, off_t offset, off_t le
   napi_create_int32(env, (int32_t) l->mode, &(argv[4]));
   FUSE_UINT64_TO_INTS_ARGV(l->offset, 5)
   FUSE_UINT64_TO_INTS_ARGV(l->len, 7)
-})
+}, {})
 
 FUSE_METHOD_RET(off_t, lseek, 5, 2, (const char *path, off_t off, int whence, struct fuse_file_info *info), {
   l->path = path;
@@ -1210,7 +1216,9 @@ NAPI_METHOD(fuse_native_mount) {
   if (implemented[op_read_buf]) ops.read_buf = fuse_native_read_buf;
   if (implemented[op_flock]) ops.flock = fuse_native_flock;
   if (implemented[op_fallocate]) ops.fallocate = fuse_native_fallocate;
+#if FUSE_MAJOR_VERSION >= 3
   if (implemented[op_lseek]) ops.lseek = fuse_native_lseek;
+#endif
   if (implemented[op_init]) ops.init = fuse_native_init;
 
   int _argc = (strcmp(mntopts, "-o") <= 0) ? 1 : 2;
