@@ -2,9 +2,9 @@
   "targets": [{
     "target_name": "fuse",
     'variables': {
-                    'fuse__include_dirs%': '<!(pkg-config fuse --cflags-only-I | sed s/-I//g)',
+                    'fuse__include_dirs%': '<!(pkg-config fuse3 --cflags-only-I | sed s/-I//g)',
                     'fuse__library_dirs%': '',
-                    'fuse__libraries%': '<!(pkg-config --libs-only-L --libs-only-l fuse)'
+                    'fuse__libraries%': '<!(pkg-config --libs-only-L --libs-only-l fuse3)'
                 },
     "include_dirs": [
       "<!(node -e \"require('napi-macros')\")",
