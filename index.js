@@ -761,7 +761,15 @@ class Fuse extends Nanoresource {
 
     let posIn = offsetIn >>> 0; let posOut = offsetOut >>> 0
     let total = 0
-    const max = len >>> 0
+    let max = len >>> 0
+
+    if (!this._implemented.has(binding.op_copy_file_range_64)) {
+      if (max === 0) {
+        max = 0xFFFFFFFF - 4096
+      } else {
+        max = Math.min(max, 0xFFFFFFFF - 4096)
+      }
+    }
 
     const step = () => {
       if (max && total >= max) return done(0, total)

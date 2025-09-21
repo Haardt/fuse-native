@@ -43,9 +43,9 @@ tape('file copy', function (t) {
       if (!file) return process.nextTick(cb, Fuse.ENOENT)
       const slice = file.content.slice(pos, pos + len)
       slice.copy(buf)
-      return process.nextTick(cb, slice.length)
+      return process.nextTick(cb, 0, slice.length)
     },
-    create: function (path, flags, cb) {
+    create: function (path, mode, cb) {
       files[path] = {
         content: Buffer.alloc(0),
         stat: stat({ mode: 'file', size: 0 })
@@ -58,7 +58,7 @@ tape('file copy', function (t) {
       const newContent = Buffer.concat([file.content.slice(0, pos), buf.slice(0, len), file.content.slice(pos + len)])
       file.content = newContent
       file.stat.size = newContent.length
-      return process.nextTick(cb, len)
+      return process.nextTick(cb, 0, len)
     },
     truncate: function (path, size, cb) {
       const file = files[path]
@@ -66,6 +66,9 @@ tape('file copy', function (t) {
       file.content = file.content.slice(0, size)
       file.stat.size = size
       return process.nextTick(cb, 0)
+    },
+    lseek: function (path, off, whence, fd, cb) {
+      return process.nextTick(cb, 0, off)
     }
   }
 
