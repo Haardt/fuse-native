@@ -202,6 +202,7 @@ declare namespace Fuse {
       cb: (err: number, fd?: number) => void,
     ) => void;
     read?: (
+      path: string,
       fd: number,
       buffer: Buffer,
       length: number,
