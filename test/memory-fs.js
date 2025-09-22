@@ -663,7 +663,7 @@ class MemoryFileSystem {
 
   copy_file_range(fd_in, offset_in, fd_out, offset_out, len, flags, cb) {
     console.log(
-      `MemoryFS: copy_file_range fd_in=${fd_in} fd_out=${fd_out} len=${len}`,
+      `MemoryFS: copy_file_range fd_in=${fd_in} fd_out=${fd_out} len=${len} flags=${flags}`,
     );
 
     const inDesc = this.fileDescriptors.get(fd_in);
@@ -680,7 +680,31 @@ class MemoryFileSystem {
       return process.nextTick(() => cb(-2)); // ENOENT
     }
 
-    const actualLen = Math.min(len, inNode.content.length - offset_in);
+    // Handle zero-length copy
+    if (len === 0) {
+      return process.nextTick(() => cb(0, 0));
+    }
+
+    // Check for overlapping ranges in the same file
+    if (fd_in === fd_out && inDesc.path === outDesc.path) {
+      const sourceEnd = offset_in + len;
+      const destEnd = offset_out + len;
+
+      // Check if ranges overlap
+      if (
+        (offset_in < destEnd && offset_in >= offset_out) ||
+        (sourceEnd > offset_out && sourceEnd <= destEnd) ||
+        (offset_in <= offset_out && sourceEnd >= destEnd) ||
+        (offset_out <= offset_in && destEnd >= sourceEnd)
+      ) {
+        return process.nextTick(() => cb(-22)); // EINVAL - overlapping ranges
+      }
+    }
+
+    // Calculate actual length to copy (don't go beyond source file end)
+    const availableBytes = Math.max(0, inNode.content.length - offset_in);
+    const actualLen = Math.min(len, availableBytes);
+
     if (actualLen <= 0) {
       return process.nextTick(() => cb(0, 0));
     }

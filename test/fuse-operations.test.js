@@ -1133,6 +1133,184 @@ describe("FUSE Operations Test Suite", () => {
           done();
         });
       });
+
+      test("should handle overlapping ranges in same file", (done) => {
+        const sourceData = Buffer.from("Hello, World! This is a test.");
+
+        fs.create("/samefile.txt", 0o644, (err, fd) => {
+          expect(err).toBe(0);
+
+          fs.write(fd, sourceData, sourceData.length, 0, (bytesWritten) => {
+            expect(bytesWritten).toBe(sourceData.length);
+
+            // Try to copy overlapping ranges within the same file
+            // This should return an error (EINVAL)
+            fs.copy_file_range(fd, 0, fd, 5, 10, 0, (err, bytesCopied) => {
+              expect(err).toBe(-22); // EINVAL - overlapping ranges in same file
+              done();
+            });
+          });
+        });
+      });
+
+      test("should handle zero-length copy", (done) => {
+        fs.create("/source.txt", 0o644, (err1, sourceFd) => {
+          expect(err1).toBe(0);
+          fs.create("/dest.txt", 0o644, (err2, destFd) => {
+            expect(err2).toBe(0);
+
+            // Copy zero bytes should succeed and return 0
+            fs.copy_file_range(
+              sourceFd,
+              0,
+              destFd,
+              0,
+              0,
+              0,
+              (err, bytesCopied) => {
+                expect(err).toBe(0);
+                expect(bytesCopied).toBe(0);
+                done();
+              },
+            );
+          });
+        });
+      });
+
+      test("should handle copy with different flags", (done) => {
+        const sourceData = Buffer.from("Test data for flags");
+
+        fs.create("/source.txt", 0o644, (err1, sourceFd) => {
+          expect(err1).toBe(0);
+          fs.create("/dest.txt", 0o644, (err2, destFd) => {
+            expect(err2).toBe(0);
+
+            fs.write(
+              sourceFd,
+              sourceData,
+              sourceData.length,
+              0,
+              (bytesWritten) => {
+                expect(bytesWritten).toBe(sourceData.length);
+
+                // Test with flags = 1 (should work for now, but may be extended later)
+                fs.copy_file_range(
+                  sourceFd,
+                  0,
+                  destFd,
+                  0,
+                  10,
+                  1,
+                  (err, bytesCopied) => {
+                    expect(err).toBe(0);
+                    expect(bytesCopied).toBe(10);
+                    done();
+                  },
+                );
+              },
+            );
+          });
+        });
+      });
+
+      test("should handle large offset copy", (done) => {
+        const sourceData = Buffer.from(
+          "This is test data for large offset copying",
+        );
+
+        fs.create("/source.txt", 0o644, (err1, sourceFd) => {
+          expect(err1).toBe(0);
+          fs.create("/dest.txt", 0o644, (err2, destFd) => {
+            expect(err2).toBe(0);
+
+            fs.write(
+              sourceFd,
+              sourceData,
+              sourceData.length,
+              0,
+              (bytesWritten) => {
+                expect(bytesWritten).toBe(sourceData.length);
+
+                // Copy from offset 20 to dest offset 0
+                fs.copy_file_range(
+                  sourceFd,
+                  20,
+                  destFd,
+                  0,
+                  15,
+                  0,
+                  (err, bytesCopied) => {
+                    expect(err).toBe(0);
+                    expect(bytesCopied).toBe(15);
+
+                    // Verify the copied content
+                    const readBuffer = Buffer.alloc(15);
+                    fs.read(destFd, readBuffer, 15, 0, (bytesRead) => {
+                      expect(bytesRead).toBe(15);
+                      const expectedContent = sourceData
+                        .slice(20, 35)
+                        .toString();
+                      expect(readBuffer.toString()).toBe(expectedContent);
+                      done();
+                    });
+                  },
+                );
+              },
+            );
+          });
+        });
+      });
+
+      test("should handle partial copy when destination is smaller", (done) => {
+        const sourceData = Buffer.from(
+          "Very long source data that will be partially copied",
+        );
+        const destData = Buffer.from("Short dest");
+
+        fs.create("/source.txt", 0o644, (err1, sourceFd) => {
+          expect(err1).toBe(0);
+          fs.create("/dest.txt", 0o644, (err2, destFd) => {
+            expect(err2).toBe(0);
+
+            fs.write(
+              sourceFd,
+              sourceData,
+              sourceData.length,
+              0,
+              (bytesWritten1) => {
+                expect(bytesWritten1).toBe(sourceData.length);
+
+                fs.write(
+                  destFd,
+                  destData,
+                  destData.length,
+                  0,
+                  (bytesWritten2) => {
+                    expect(bytesWritten2).toBe(destData.length);
+
+                    // Copy more data than what exists in source beyond offset
+                    fs.copy_file_range(
+                      sourceFd,
+                      40,
+                      destFd,
+                      5,
+                      50,
+                      0,
+                      (err, bytesCopied) => {
+                        expect(err).toBe(0);
+                        // Should only copy what's available from source
+                        const availableBytes = sourceData.length - 40;
+                        expect(bytesCopied).toBe(availableBytes);
+                        done();
+                      },
+                    );
+                  },
+                );
+              },
+            );
+          });
+        });
+      });
     });
   });
 
