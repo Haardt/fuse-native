@@ -80,7 +80,9 @@ describe("FUSE Operations Test Suite", () => {
           expect(stats).toHaveProperty("bfree");
           expect(stats).toHaveProperty("files");
           expect(stats).toHaveProperty("ffree");
-          expect(stats.blocks).toBe(1000);
+          expect(stats.blocks).toBeGreaterThan(1000000); // Should be ~3.5M blocks for ~14GB
+          expect(stats.bfree).toBeGreaterThan(0);
+          expect(stats.bavail).toBeGreaterThan(0);
           done();
         });
       });

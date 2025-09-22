@@ -8,6 +8,7 @@
 
 const fs = require("fs");
 const path = require("path");
+const os = require("os");
 
 class MemoryFileSystem {
   constructor() {
@@ -16,12 +17,43 @@ class MemoryFileSystem {
     this.fileDescriptors = new Map(); // fd -> {path, flags, pos}
     this.dirDescriptors = new Map(); // fd -> {path}
     this.nextFd = 1;
+
+    // Calculate filesystem size as half of available RAM
+    const totalMemory = os.totalmem();
+    const freeMemory = os.freemem();
+    const availableMemory = Math.min(
+      totalMemory,
+      freeMemory + totalMemory * 0.1,
+    ); // Allow some buffer
+    const fsSize = Math.floor(availableMemory / 2); // Half of available RAM
+    const blockSize = 4096; // Standard 4KB blocks
+    const totalBlocks = Math.floor(fsSize / blockSize);
+    const usedBlocks = 0; // Start with no used blocks
+    const freeBlocks = totalBlocks - usedBlocks;
+
+    console.log(
+      `MemoryFS: Configuring filesystem with ${Math.round((fsSize / 1024 / 1024 / 1024) * 100) / 100}GB capacity`,
+    );
+    console.log(
+      `MemoryFS: Total blocks: ${totalBlocks}, Block size: ${blockSize} bytes`,
+    );
+
+    this.blockSize = blockSize;
+    this.maxSize = fsSize;
+    this.currentSize = 0;
+
     this.stats = {
-      blocks: 1000,
-      bavail: 900,
-      bfree: 900,
+      bsize: blockSize,
+      frsize: blockSize,
+      blocks: totalBlocks,
+      bfree: freeBlocks,
+      bavail: freeBlocks,
       files: 0,
-      ffree: 1000000,
+      ffree: Math.floor(totalBlocks / 10), // Estimate ~10 blocks per file on average
+      favail: Math.floor(totalBlocks / 10),
+      fsid: 0,
+      flag: 0,
+      namemax: 255,
     };
 
     // Create root directory
@@ -30,7 +62,11 @@ class MemoryFileSystem {
 
   // Helper methods
   _getNextFd() {
-    return this.nextFd++;
+    const fd = this.nextFd++;
+    console.log(
+      `MemoryFS: Allocating FD=${fd}, Total open FDs: ${this.fileDescriptors.size + this.dirDescriptors.size + 1}`,
+    );
+    return fd;
   }
 
   _normalizePath(path) {
@@ -63,13 +99,27 @@ class MemoryFileSystem {
     const node = new FileNode(normalized, type, mode, content);
     this.files.set(normalized, node);
     this.stats.files++;
+
+    // Track filesystem size for files
+    if (type === "file" && content.length > 0) {
+      this.currentSize += content.length;
+    }
+
     return node;
   }
 
   _deleteNode(filePath) {
     const normalized = this._normalizePath(filePath);
+    const node = this.files.get(normalized);
+
     if (this.files.delete(normalized)) {
       this.stats.files--;
+
+      // Reduce filesystem size for files
+      if (node && node.type === "file") {
+        this.currentSize -= node.content.length;
+      }
+
       return true;
     }
     return false;
@@ -113,7 +163,27 @@ class MemoryFileSystem {
 
   statfs(path, cb) {
     console.log(`MemoryFS: statfs ${path}`);
-    process.nextTick(() => cb(0, this.stats));
+
+    // Update stats dynamically based on current usage
+    const usedBlocks = Math.ceil(this.currentSize / this.blockSize);
+    const freeBlocks = this.stats.blocks - usedBlocks;
+    const fileCount = this.files.size;
+
+    const dynamicStats = {
+      bsize: this.stats.bsize,
+      frsize: this.stats.frsize,
+      blocks: this.stats.blocks,
+      bfree: freeBlocks,
+      bavail: freeBlocks,
+      files: fileCount,
+      ffree: Math.max(0, this.stats.ffree - fileCount),
+      favail: Math.max(0, this.stats.favail - fileCount),
+      fsid: this.stats.fsid,
+      flag: this.stats.flag,
+      namemax: this.stats.namemax,
+    };
+
+    process.nextTick(() => cb(0, dynamicStats));
   }
 
   getattr(path, cb) {
@@ -200,7 +270,10 @@ class MemoryFileSystem {
       return process.nextTick(() => cb(-21)); // EISDIR
     }
 
-    node.truncate(size);
+    const result = node.truncate(size, this);
+    if (result < 0) {
+      return process.nextTick(() => cb(result));
+    }
     process.nextTick(() => cb(0));
   }
 
@@ -216,7 +289,10 @@ class MemoryFileSystem {
       return process.nextTick(() => cb(-2)); // ENOENT
     }
 
-    node.truncate(size);
+    const result = node.truncate(size, this);
+    if (result < 0) {
+      return process.nextTick(() => cb(result));
+    }
     process.nextTick(() => cb(0));
   }
 
@@ -350,6 +426,7 @@ class MemoryFileSystem {
     if (!node) {
       return process.nextTick(() => cb(-2)); // ENOENT
     }
+
     if (node.type === "directory") {
       return process.nextTick(() => cb(-21)); // EISDIR
     }
@@ -357,10 +434,13 @@ class MemoryFileSystem {
     const fd = this._getNextFd();
     this.fileDescriptors.set(fd, {
       path: this._normalizePath(path),
-      flags: flags,
+      flags,
       pos: 0,
     });
 
+    console.log(
+      `MemoryFS: Opened ${path} with fd=${fd}, Total file FDs: ${this.fileDescriptors.size}`,
+    );
     process.nextTick(() => cb(0, fd));
   }
 
@@ -370,6 +450,7 @@ class MemoryFileSystem {
     if (!node) {
       return process.nextTick(() => cb(-2)); // ENOENT
     }
+
     if (node.type !== "directory") {
       return process.nextTick(() => cb(-20)); // ENOTDIR
     }
@@ -379,13 +460,55 @@ class MemoryFileSystem {
       path: this._normalizePath(path),
     });
 
+    console.log(
+      `MemoryFS: Opened dir ${path} with fd=${fd}, Total dir FDs: ${this.dirDescriptors.size}`,
+    );
     process.nextTick(() => cb(0, fd));
   }
 
-  read(fd, buffer, length, position, cb) {
-    console.log(
-      `MemoryFS: read fd=${fd} length=${length} position=${position}`,
-    );
+  // Auto-detect parameter order to support both FUSE and test interfaces
+  read(...args) {
+    // FUSE: read(path, fd, buffer, length, position, cb)
+    // Test: read(fd, buffer, length, position, cb)
+    if (args.length === 6 && typeof args[0] === "string") {
+      const [path, fd, buffer, length, position, cb] = args;
+      console.log(
+        `MemoryFS: read path=${path} fd=${fd} length=${length} position=${position}`,
+      );
+      return this._read(fd, buffer, length, position, cb);
+    } else if (args.length === 5 && typeof args[0] === "number") {
+      const [fd, buffer, length, position, cb] = args;
+      console.log(
+        `MemoryFS: read fd=${fd} length=${length} position=${position}`,
+      );
+      return this._read(fd, buffer, length, position, cb);
+    } else {
+      throw new Error("Invalid read() parameters");
+    }
+  }
+
+  write(...args) {
+    // FUSE: write(path, fd, buffer, length, position, cb)
+    // Test: write(fd, buffer, length, position, cb)
+    if (args.length === 6 && typeof args[0] === "string") {
+      const [path, fd, buffer, length, position, cb] = args;
+      console.log(
+        `MemoryFS: write path=${path} fd=${fd} length=${length} position=${position}`,
+      );
+      return this._write(fd, buffer, length, position, cb);
+    } else if (args.length === 5 && typeof args[0] === "number") {
+      const [fd, buffer, length, position, cb] = args;
+      console.log(
+        `MemoryFS: write fd=${fd} length=${length} position=${position}`,
+      );
+      return this._write(fd, buffer, length, position, cb);
+    } else {
+      throw new Error("Invalid write() parameters");
+    }
+  }
+
+  // Internal methods used by both FUSE and test interfaces
+  _read(fd, buffer, length, position, cb) {
     const descriptor = this.fileDescriptors.get(fd);
     if (!descriptor) {
       return process.nextTick(() => cb(-9)); // EBADF
@@ -400,37 +523,68 @@ class MemoryFileSystem {
     process.nextTick(() => cb(bytesRead));
   }
 
-  write(fd, buffer, length, position, cb) {
+  _write(fd, buffer, length, position, cb) {
     console.log(
-      `MemoryFS: write fd=${fd} length=${length} position=${position}`,
+      `MemoryFS._write: fd=${fd}, length=${length}, position=${position}`,
     );
+
     const descriptor = this.fileDescriptors.get(fd);
     if (!descriptor) {
+      console.log(`MemoryFS._write: ERROR - EBADF, no descriptor for fd=${fd}`);
       return process.nextTick(() => cb(-9)); // EBADF
     }
 
     const node = this._getNode(descriptor.path);
     if (!node) {
+      console.log(
+        `MemoryFS._write: ERROR - ENOENT, no node for path=${descriptor.path}`,
+      );
       return process.nextTick(() => cb(-2)); // ENOENT
     }
 
-    const bytesWritten = node.write(buffer, length, position);
-    process.nextTick(() => cb(bytesWritten));
+    const bytesWritten = node.write(buffer, length, position, this);
+    console.log(
+      `MemoryFS._write: node.write returned bytesWritten=${bytesWritten}`,
+    );
+
+    if (bytesWritten < 0) {
+      console.log(`MemoryFS._write: ERROR - calling cb(${bytesWritten})`);
+      return process.nextTick(() => cb(bytesWritten)); // Error code
+    }
+
+    console.log(`MemoryFS._write: SUCCESS - calling cb(null, ${bytesWritten})`);
+    process.nextTick(() => cb(null, bytesWritten));
   }
 
   release(fd, cb) {
-    console.log(`MemoryFS: release fd=${fd}`);
+    console.log(
+      `MemoryFS: release fd=${fd}, Open file FDs: ${this.fileDescriptors.size}, Open dir FDs: ${this.dirDescriptors.size}`,
+    );
     if (!this.fileDescriptors.delete(fd)) {
+      console.log(
+        `MemoryFS: ERROR - Failed to release fd=${fd} (not found in fileDescriptors)`,
+      );
       return process.nextTick(() => cb(-9)); // EBADF
     }
+    console.log(
+      `MemoryFS: Successfully released fd=${fd}, Remaining file FDs: ${this.fileDescriptors.size}`,
+    );
     process.nextTick(() => cb(0));
   }
 
   releasedir(fd, cb) {
-    console.log(`MemoryFS: releasedir fd=${fd}`);
+    console.log(
+      `MemoryFS: releasedir fd=${fd}, Open file FDs: ${this.fileDescriptors.size}, Open dir FDs: ${this.dirDescriptors.size}`,
+    );
     if (!this.dirDescriptors.delete(fd)) {
+      console.log(
+        `MemoryFS: ERROR - Failed to release dir fd=${fd} (not found in dirDescriptors)`,
+      );
       return process.nextTick(() => cb(-9)); // EBADF
     }
+    console.log(
+      `MemoryFS: Successfully released dir fd=${fd}, Remaining dir FDs: ${this.dirDescriptors.size}`,
+    );
     process.nextTick(() => cb(0));
   }
 
@@ -582,18 +736,39 @@ class MemoryFileSystem {
     process.nextTick(() => cb(0, 1)); // POLLIN - ready for reading
   }
 
-  write_buf(fd, buffer, length, position, cb) {
+  write_buf(path, fd, buffer, offset, cb) {
     console.log(
-      `MemoryFS: write_buf fd=${fd} length=${length} position=${position}`,
+      `MemoryFS: write_buf path=${path} fd=${fd} length=${buffer ? buffer.length : 0} offset=${offset}`,
     );
-    return this.write(fd, buffer, length, position, cb);
+    return this._write(fd, buffer, buffer ? buffer.length : 0, offset, cb);
   }
 
-  read_buf(fd, buffer, length, position, cb) {
-    console.log(
-      `MemoryFS: read_buf fd=${fd} length=${length} position=${position}`,
-    );
-    return this.read(fd, buffer, length, position, cb);
+  read_buf(...args) {
+    // FUSE: read_buf(path, fd, bufp, size, offset, cb)
+    // Test: read_buf(fd, buffer, length, position, cb)
+    if (args.length === 6 && typeof args[0] === "string") {
+      const [path, fd, bufp, size, offset, cb] = args;
+      console.log(
+        `MemoryFS: read_buf path=${path} fd=${fd} size=${size} offset=${offset}`,
+      );
+      // For FUSE read_buf, we need to allocate a buffer and return it
+      const buffer = Buffer.alloc(size);
+      this._read(fd, buffer, size, offset, (bytesRead) => {
+        if (bytesRead < 0) {
+          return cb(bytesRead);
+        }
+        // For read_buf, we need to return the buffer data
+        cb(bytesRead, buffer.slice(0, bytesRead));
+      });
+    } else if (args.length === 5 && typeof args[0] === "number") {
+      const [fd, buffer, length, position, cb] = args;
+      console.log(
+        `MemoryFS: read_buf fd=${fd} length=${length} position=${position}`,
+      );
+      return this._read(fd, buffer, length, position, cb);
+    } else {
+      throw new Error("Invalid read_buf() parameters");
+    }
   }
 
   flock(fd, op, cb) {
@@ -710,7 +885,11 @@ class MemoryFileSystem {
     }
 
     const chunk = inNode.content.slice(offset_in, offset_in + actualLen);
-    const bytesWritten = outNode.write(chunk, actualLen, offset_out);
+    const bytesWritten = outNode.write(chunk, actualLen, offset_out, this);
+
+    if (bytesWritten < 0) {
+      return process.nextTick(() => cb(bytesWritten));
+    }
 
     process.nextTick(() => cb(0, bytesWritten));
   }
@@ -766,11 +945,36 @@ class FileNode {
     return actualLength;
   }
 
-  write(buffer, length, position) {
-    if (this.type !== "file") return 0;
+  write(buffer, length, position, memoryFs = null) {
+    console.log(
+      `FileNode.write: type=${this.type}, buffer=${buffer ? buffer.length : "null"}, length=${length}, position=${position}`,
+    );
+
+    if (this.type !== "file") {
+      console.log(`FileNode.write: ERROR - not a file, type=${this.type}`);
+      return 0;
+    }
 
     const requiredSize = position + length;
-    if (this.content.length < requiredSize) {
+    const currentSize = this.content.length;
+    const sizeIncrease = Math.max(0, requiredSize - currentSize);
+
+    console.log(
+      `FileNode.write: requiredSize=${requiredSize}, currentSize=${currentSize}, sizeIncrease=${sizeIncrease}`,
+    );
+    console.log(
+      `FileNode.write: memoryFs.currentSize=${memoryFs ? memoryFs.currentSize : "no memoryFs"}, maxSize=${memoryFs ? memoryFs.maxSize : "no memoryFs"}`,
+    );
+
+    // Check filesystem size limit if memoryFs is provided
+    if (memoryFs && sizeIncrease > 0) {
+      if (memoryFs.currentSize + sizeIncrease > memoryFs.maxSize) {
+        console.log(`FileNode.write: ERROR - ENOSPC, would exceed maxSize`);
+        return -28; // ENOSPC - No space left on device
+      }
+    }
+
+    if (currentSize < requiredSize) {
       const newBuffer = Buffer.alloc(requiredSize);
       this.content.copy(newBuffer);
       this.content = newBuffer;
@@ -778,11 +982,27 @@ class FileNode {
 
     buffer.copy(this.content, position, 0, length);
     this.mtime = new Date();
+
+    // Update filesystem current size if memoryFs is provided
+    if (memoryFs && sizeIncrease > 0) {
+      memoryFs.currentSize += sizeIncrease;
+    }
+
     return length;
   }
 
-  truncate(size) {
+  truncate(size, memoryFs = null) {
     if (this.type !== "file") return;
+
+    const currentSize = this.content.length;
+    const sizeChange = size - currentSize;
+
+    // Check filesystem size limit if growing the file
+    if (memoryFs && sizeChange > 0) {
+      if (memoryFs.currentSize + sizeChange > memoryFs.maxSize) {
+        return -28; // ENOSPC - No space left on device
+      }
+    }
 
     if (size === 0) {
       this.content = Buffer.alloc(0);
@@ -794,7 +1014,13 @@ class FileNode {
       this.content = newBuffer;
     }
 
+    // Update filesystem current size if memoryFs is provided
+    if (memoryFs) {
+      memoryFs.currentSize += sizeChange;
+    }
+
     this.mtime = new Date();
+    return 0;
   }
 
   clone() {

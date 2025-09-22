@@ -112,7 +112,8 @@ const fuseOps = {
   create: (path, mode, cb) => memoryFs.create(path, mode, cb),
   release: (path, fd, cb) => memoryFs.release(fd, cb),
   read: (fd, buf, len, pos, cb) => memoryFs.read(fd, buf, len, pos, cb),
-  write: (fd, buf, len, pos, cb) => memoryFs.write(fd, buf, len, pos, cb),
+  write: (path, fd, buf, len, offset, cb) =>
+    memoryFs.write(path, fd, buf, len, offset, cb),
   flush: (path, fd, cb) => memoryFs.flush(fd, cb),
   fsync: (path, datasync, fd, cb) => memoryFs.fsync(fd, datasync, cb),
   truncate: (path, size, cb) => memoryFs.truncate(path, size, cb),
@@ -151,8 +152,8 @@ const fuseOps = {
   ioctl: (path, cmd, arg, fd, flags, data, cb) =>
     memoryFs.ioctl(fd, cmd, arg, flags, data, data, cb),
   poll: (path, fd, ph, reventsp, cb) => memoryFs.poll(fd, ph, reventsp, cb),
-  write_buf: (path, fd, buffer, position, cb) =>
-    memoryFs.write_buf(fd, buffer, buffer.length, position, cb),
+  // write_buf: (path, fd, buf, offset, cb) =>
+  //   memoryFs.write_buf(path, fd, buf, offset, cb),
   read_buf: (path, fd, buffer, length, position, cb) =>
     memoryFs.read_buf(fd, buffer, length, position, cb),
   flock: (path, fd, op, cb) => memoryFs.flock(fd, op, cb),
