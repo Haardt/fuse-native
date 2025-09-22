@@ -280,7 +280,8 @@ describe("FUSE Operations Test Suite", () => {
         fs.create("/test.txt", 0o644, (err, fd) => {
           expect(err).toBe(0);
 
-          fs.write(fd, testData, testData.length, 0, (bytesWritten) => {
+          fs.write(fd, testData, testData.length, 0, (err, bytesWritten) => {
+            expect(err).toBe(null);
             expect(bytesWritten).toBe(testData.length);
 
             const readBuffer = Buffer.alloc(testData.length);
@@ -298,7 +299,8 @@ describe("FUSE Operations Test Suite", () => {
         fs.create("/test.txt", 0o644, (err, fd) => {
           expect(err).toBe(0);
 
-          fs.write(fd, testData, testData.length, 0, (bytesWritten) => {
+          fs.write(fd, testData, testData.length, 0, (err, bytesWritten) => {
+            expect(err).toBe(null);
             expect(bytesWritten).toBe(testData.length);
 
             const readBuffer = Buffer.alloc(5);
@@ -366,7 +368,8 @@ describe("FUSE Operations Test Suite", () => {
         const testData = Buffer.from("Hello, World!");
         fs.create("/test.txt", 0o644, (err, fd) => {
           expect(err).toBe(0);
-          fs.write(fd, testData, testData.length, 0, (bytesWritten) => {
+          fs.write(fd, testData, testData.length, 0, (err, bytesWritten) => {
+            expect(err).toBe(null);
             expect(bytesWritten).toBe(testData.length);
 
             fs.truncate("/test.txt", 5, (err2) => {
@@ -387,7 +390,8 @@ describe("FUSE Operations Test Suite", () => {
         const testData = Buffer.from("Hello, World!");
         fs.create("/test.txt", 0o644, (err, fd) => {
           expect(err).toBe(0);
-          fs.write(fd, testData, testData.length, 0, (bytesWritten) => {
+          fs.write(fd, testData, testData.length, 0, (err, bytesWritten) => {
+            expect(err).toBe(null);
             expect(bytesWritten).toBe(testData.length);
 
             fs.ftruncate(fd, 5, (err2) => {
@@ -882,7 +886,8 @@ describe("FUSE Operations Test Suite", () => {
         fs.create("/test.txt", 0o644, (err, fd) => {
           expect(err).toBe(0);
 
-          fs.write_buf(fd, testData, testData.length, 0, (bytesWritten) => {
+          fs.write_buf("/test.txt", fd, testData, 0, (err, bytesWritten) => {
+            expect(err).toBe(null);
             expect(bytesWritten).toBe(testData.length);
 
             const readBuffer = Buffer.alloc(testData.length);
@@ -938,7 +943,8 @@ describe("FUSE Operations Test Suite", () => {
         const testData = Buffer.from("Hello, World!");
         fs.create("/test.txt", 0o644, (err, fd) => {
           expect(err).toBe(0);
-          fs.write(fd, testData, testData.length, 0, (bytesWritten) => {
+          fs.write(fd, testData, testData.length, 0, (err, bytesWritten) => {
+            expect(err).toBe(null);
             expect(bytesWritten).toBe(testData.length);
 
             fs.lseek(fd, 7, 0, (err2, newPos) => {
@@ -955,7 +961,8 @@ describe("FUSE Operations Test Suite", () => {
         const testData = Buffer.from("Hello, World!");
         fs.create("/test.txt", 0o644, (err, fd) => {
           expect(err).toBe(0);
-          fs.write(fd, testData, testData.length, 0, (bytesWritten) => {
+          fs.write(fd, testData, testData.length, 0, (err, bytesWritten) => {
+            expect(err).toBe(null);
             expect(bytesWritten).toBe(testData.length);
 
             // Set initial position
@@ -980,7 +987,8 @@ describe("FUSE Operations Test Suite", () => {
         const testData = Buffer.from("Hello, World!");
         fs.create("/test.txt", 0o644, (err, fd) => {
           expect(err).toBe(0);
-          fs.write(fd, testData, testData.length, 0, (bytesWritten) => {
+          fs.write(fd, testData, testData.length, 0, (err, bytesWritten) => {
+            expect(err).toBe(null);
             expect(bytesWritten).toBe(testData.length);
 
             fs.lseek(fd, -5, 2, (err2, newPos) => {
@@ -1039,7 +1047,8 @@ describe("FUSE Operations Test Suite", () => {
               sourceData,
               sourceData.length,
               0,
-              (bytesWritten) => {
+              (err, bytesWritten) => {
+                expect(err).toBe(null);
                 expect(bytesWritten).toBe(sourceData.length);
 
                 // Write dest data
@@ -1048,7 +1057,8 @@ describe("FUSE Operations Test Suite", () => {
                   destData,
                   destData.length,
                   0,
-                  (bytesWritten2) => {
+                  (err2, bytesWritten2) => {
+                    expect(err2).toBe(null);
                     expect(bytesWritten2).toBe(destData.length);
 
                     // Copy 10 bytes from source offset 7 to dest offset 5
@@ -1106,7 +1116,8 @@ describe("FUSE Operations Test Suite", () => {
               sourceData,
               sourceData.length,
               0,
-              (bytesWritten) => {
+              (err, bytesWritten) => {
+                expect(err).toBe(null);
                 expect(bytesWritten).toBe(sourceData.length);
 
                 // Try to copy beyond end of source
@@ -1142,16 +1153,23 @@ describe("FUSE Operations Test Suite", () => {
         fs.create("/samefile.txt", 0o644, (err, fd) => {
           expect(err).toBe(0);
 
-          fs.write(fd, sourceData, sourceData.length, 0, (bytesWritten) => {
-            expect(bytesWritten).toBe(sourceData.length);
+          fs.write(
+            fd,
+            sourceData,
+            sourceData.length,
+            0,
+            (err, bytesWritten) => {
+              expect(err).toBe(null);
+              expect(bytesWritten).toBe(sourceData.length);
 
-            // Try to copy overlapping ranges within the same file
-            // This should return an error (EINVAL)
-            fs.copy_file_range(fd, 0, fd, 5, 10, 0, (err, bytesCopied) => {
-              expect(err).toBe(-22); // EINVAL - overlapping ranges in same file
-              done();
-            });
-          });
+              // Try to copy overlapping ranges within the same file
+              // This should return an error (EINVAL)
+              fs.copy_file_range(fd, 0, fd, 5, 10, 0, (err, bytesCopied) => {
+                expect(err).toBe(-22); // EINVAL - overlapping ranges in same file
+                done();
+              });
+            },
+          );
         });
       });
 
@@ -1192,7 +1210,8 @@ describe("FUSE Operations Test Suite", () => {
               sourceData,
               sourceData.length,
               0,
-              (bytesWritten) => {
+              (err, bytesWritten) => {
+                expect(err).toBe(null);
                 expect(bytesWritten).toBe(sourceData.length);
 
                 // Test with flags = 1 (should work for now, but may be extended later)
@@ -1230,7 +1249,8 @@ describe("FUSE Operations Test Suite", () => {
               sourceData,
               sourceData.length,
               0,
-              (bytesWritten) => {
+              (err, bytesWritten) => {
+                expect(err).toBe(null);
                 expect(bytesWritten).toBe(sourceData.length);
 
                 // Copy from offset 20 to dest offset 0
@@ -1279,7 +1299,8 @@ describe("FUSE Operations Test Suite", () => {
               sourceData,
               sourceData.length,
               0,
-              (bytesWritten1) => {
+              (err1, bytesWritten1) => {
+                expect(err1).toBe(null);
                 expect(bytesWritten1).toBe(sourceData.length);
 
                 fs.write(
@@ -1287,7 +1308,8 @@ describe("FUSE Operations Test Suite", () => {
                   destData,
                   destData.length,
                   0,
-                  (bytesWritten2) => {
+                  (err2, bytesWritten2) => {
+                    expect(err2).toBe(null);
                     expect(bytesWritten2).toBe(destData.length);
 
                     // Copy more data than what exists in source beyond offset
@@ -1325,7 +1347,8 @@ describe("FUSE Operations Test Suite", () => {
         expect(err1).toBe(0);
 
         // Write data
-        fs.write(fd, testData, testData.length, 0, (bytesWritten) => {
+        fs.write(fd, testData, testData.length, 0, (err, bytesWritten) => {
+          expect(err).toBe(null);
           expect(bytesWritten).toBe(testData.length);
 
           // Flush data
@@ -1402,9 +1425,11 @@ describe("FUSE Operations Test Suite", () => {
             const data1 = Buffer.from("File 1 content");
             const data2 = Buffer.from("File 2 content");
 
-            fs.write(fd1, data1, data1.length, 0, (bytes1) => {
+            fs.write(fd1, data1, data1.length, 0, (err1, bytes1) => {
+              expect(err1).toBe(null);
               expect(bytes1).toBe(data1.length);
-              fs.write(fd2, data2, data2.length, 0, (bytes2) => {
+              fs.write(fd2, data2, data2.length, 0, (err2, bytes2) => {
+                expect(err2).toBe(null);
                 expect(bytes2).toBe(data2.length);
 
                 // Release file descriptors
