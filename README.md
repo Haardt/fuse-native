@@ -12,9 +12,72 @@ Upstream: [https://github.com/fuse\-friends/fuse\-native](https://github.com/fus
 
 ### TESTING
 
+This project includes a comprehensive testing framework with an in-memory FUSE filesystem for testing all FUSE operations.
+
+#### Running Tests
+
 ```sh
+# Run all tests
 pnpm test
+
+# Run only FUSE operations tests
+pnpm test:fuse
+
+# Run with verbose output
+pnpm test:verbose
+
+# Run the in-memory filesystem example
+pnpm example:memory-fs
 ```
+
+#### Test Framework
+
+The test suite includes:
+
+- **96 comprehensive tests** covering all FUSE operations
+- **In-memory filesystem** (`test/memory-fs.js`) - Complete FUSE implementation in memory
+- **Operation tests** (`test/fuse-operations.test.js`) - Tests for all 40+ FUSE operations
+- **Integration tests** - End-to-end filesystem scenarios
+- **Example usage** (`test/example-usage.js`) - Mountable in-memory filesystem demo
+
+#### Tested FUSE Operations
+
+All major FUSE operations are tested with positive and negative test cases:
+
+**Core Operations:** `init`, `error`, `access`, `statfs`
+**File Metadata:** `getattr`, `fgetattr`, `utimens`, `chmod`, `chown`  
+**File I/O:** `open`, `create`, `read`, `write`, `release`, `flush`, `fsync`, `truncate`, `ftruncate`
+**Directory Operations:** `opendir`, `readdir`, `releasedir`, `fsyncdir`, `mkdir`, `rmdir`
+**File Management:** `unlink`, `rename`, `link`, `symlink`, `readlink`, `mknod`
+**Extended Attributes:** `setxattr`, `getxattr`, `listxattr`, `removexattr`
+**Advanced Operations:** `lock`, `bmap`, `ioctl`, `poll`, `write_buf`, `read_buf`, `flock`, `fallocate`, `lseek`, `copy_file_range`
+
+#### Callback Conventions
+
+The tests follow strict callback conventions based on AGENTS.md:
+- **Success**: `cb(0)` or `cb(0, result)` 
+- **File operations**: `create` returns `cb(0, fd)`, `read`/`write` return `cb(bytesTransferred)`
+- **Errors**: `cb(negativeNumber)` using standard errno codes
+
+#### Example: Testing Your FUSE Implementation
+
+```js
+const MemoryFileSystem = require('./test/memory-fs');
+const fs = new MemoryFileSystem();
+
+// Test file creation
+fs.create('/test.txt', 0o644, (err, fd) => {
+  console.log('File created with FD:', fd);
+  
+  // Test writing
+  const data = Buffer.from('Hello World');
+  fs.write(fd, data, data.length, 0, (bytesWritten) => {
+    console.log('Bytes written:', bytesWritten);
+  });
+});
+```
+
+#### Testing Results
 
 - On ARM64 linux, at least, 3 of the tests fail.
 - On x86\-64 linux, all the tests pass
@@ -349,6 +412,26 @@ Called to find the next data or hole in a file.
 #### `ops.copy_file_range(path, fd, offsetIn, pathOut, fdOut, offsetOut, len, flags, cb)`
 
 Called to copy a range of data from one file to another.
+
+## Error Codes
+
+FUSE operations should return appropriate POSIX error codes. Here are common ones used in the tests:
+
+- `0` - Success
+- `-2` (ENOENT) - File/directory not found
+- `-9` (EBADF) - Bad file descriptor
+- `-13` (EACCES) - Access denied
+- `-17` (EEXIST) - File exists
+- `-20` (ENOTDIR) - Not a directory
+- `-21` (EISDIR) - Is a directory
+- `-22` (EINVAL) - Invalid argument
+- `-25` (ENOTTY) - Not a terminal
+- `-39` (ENOTEMPTY) - Directory not empty
+- `-61` (ENODATA) - No data available
+
+## Testing and Development
+
+See `test/README.md` for detailed information about the testing framework and how to use the in-memory filesystem for development and testing.
 
 ## License
 

@@ -312,6 +312,7 @@ class Fuse extends Nanoresource {
     this._thread = null;
     this._handlers = this._makeHandlerArray();
     this._threads = new Set();
+    this._writes = new Map();
 
     const implemented = [binding.op_init, binding.op_error, binding.op_getattr];
     if (this.ops) {
@@ -636,7 +637,7 @@ class Fuse extends Nanoresource {
       }
       return;
     }
-    this.ops.getattr(path, (err, stat) => {
+    this.ops.fgetattr(fd, (err, stat) => {
       if (err) return signal(err);
       return signal(0, getStatArray(stat));
     });
@@ -675,9 +676,20 @@ class Fuse extends Nanoresource {
   }
 
   _op_release(signal, path, fd) {
-    this.ops.release(path, fd, (err) => {
-      return signal(err);
-    });
+    const self = this;
+    function doRelease() {
+      self.ops.release(path, fd, (err) => {
+        self._writes.delete(fd);
+        return signal(err);
+      });
+    }
+
+    const writes = this._writes.get(fd);
+    if (writes && writes.count > 0) {
+      writes.waiting.push(doRelease);
+    } else {
+      doRelease();
+    }
   }
 
   _op_releasedir(signal, path, fd) {
@@ -687,37 +699,79 @@ class Fuse extends Nanoresource {
   }
 
   _op_read(signal, path, fd, buf, len, offsetLow, offsetHigh) {
-    this.ops.read(
-      path,
-      fd,
-      buf,
-      len,
-      getDoubleArg(offsetLow, offsetHigh),
-      (err, bytesRead) => {
-        if (err) {
-          return signal(err < 0 ? err : -err, buf.buffer);
-        } else {
-          return signal(bytesRead || 0, buf.buffer);
-        }
-      },
-    );
+    const self = this;
+    const offset = getDoubleArg(offsetLow, offsetHigh);
+    let retries = 0;
+    const maxRetries = 100;
+    const args = [path, fd, buf, len, offset, retryCallback];
+
+    function retryCallback(err, bytesRead) {
+      if (
+        (err === -Fuse.EINTR || err === -Fuse.EAGAIN) &&
+        retries++ < maxRetries
+      ) {
+        return process.nextTick(() => self.ops.read.apply(self.ops, args));
+      }
+
+      if (err === -Fuse.EINTR || err === -Fuse.EAGAIN) {
+        err = -Fuse.EIO;
+      }
+
+      if (err) {
+        return signal(err < 0 ? err : -err, buf.buffer);
+      } else {
+        return signal(bytesRead || 0, buf.buffer);
+      }
+    }
+
+    this.ops.read.apply(this.ops, args);
   }
 
   _op_write(signal, path, fd, buf, len, offsetLow, offsetHigh) {
-    this.ops.write(
-      path,
-      fd,
-      buf,
-      len,
-      getDoubleArg(offsetLow, offsetHigh),
-      (err, bytesWritten) => {
-        if (err) {
-          return signal(err < 0 ? err : -err, buf.buffer);
-        } else {
-          return signal(bytesWritten || 0, buf.buffer);
+    let writes = this._writes.get(fd);
+    if (!writes) {
+      writes = { count: 0, waiting: [] };
+      this._writes.set(fd, writes);
+    }
+    writes.count++;
+
+    const self = this;
+    const offset = getDoubleArg(offsetLow, offsetHigh);
+    let retries = 0;
+    const maxRetries = 100;
+    const args = [path, fd, buf, len, offset, retryCallback];
+
+    function retryCallback(err, bytesWritten) {
+      if (
+        (err === -Fuse.EINTR || err === -Fuse.EAGAIN) &&
+        retries++ < maxRetries
+      ) {
+        return process.nextTick(() => self.ops.write.apply(self.ops, args));
+      }
+
+      const writes = self._writes.get(fd);
+      if (writes) {
+        writes.count--;
+        if (writes.count === 0) {
+          for (const waiter of writes.waiting) {
+            waiter();
+          }
+          writes.waiting = [];
         }
-      },
-    );
+      }
+
+      if (err === -Fuse.EINTR || err === -Fuse.EAGAIN) {
+        err = -Fuse.EIO;
+      }
+
+      if (err) {
+        return signal(err < 0 ? err : -err, buf.buffer);
+      } else {
+        return signal(bytesWritten || 0, buf.buffer);
+      }
+    }
+
+    this.ops.write.apply(this.ops, args);
   }
 
   _op_readdir(signal, path) {
@@ -775,9 +829,19 @@ class Fuse extends Nanoresource {
   }
 
   _op_flush(signal, path, fd) {
-    this.ops.flush(path, fd, (err) => {
-      return signal(err);
-    });
+    const self = this;
+    function doFlush() {
+      self.ops.flush(path, fd, (err) => {
+        return signal(err);
+      });
+    }
+
+    const writes = this._writes.get(fd);
+    if (writes && writes.count > 0) {
+      writes.waiting.push(doFlush);
+    } else {
+      doFlush();
+    }
   }
 
   _op_fsync(signal, path, datasync, fd) {
@@ -931,13 +995,50 @@ class Fuse extends Nanoresource {
     if (!this.ops.write_buf) {
       return signal(Fuse.ENOSYS);
     }
-    this.ops.write_buf(path, fd, buf, offset, (err, bytesWritten) => {
+
+    let writes = this._writes.get(fd);
+    if (!writes) {
+      writes = { count: 0, waiting: [] };
+      this._writes.set(fd, writes);
+    }
+    writes.count++;
+
+    const self = this;
+    let retries = 0;
+    const maxRetries = 100;
+    const args = [path, fd, buf, offset, retryCallback];
+
+    function retryCallback(err, bytesWritten) {
+      if (
+        (err === -Fuse.EINTR || err === -Fuse.EAGAIN) &&
+        retries++ < maxRetries
+      ) {
+        return process.nextTick(() => self.ops.write_buf.apply(self.ops, args));
+      }
+
+      const writes = self._writes.get(fd);
+      if (writes) {
+        writes.count--;
+        if (writes.count === 0) {
+          for (const waiter of writes.waiting) {
+            waiter();
+          }
+          writes.waiting = [];
+        }
+      }
+
+      if (err === -Fuse.EINTR || err === -Fuse.EAGAIN) {
+        err = -Fuse.EIO;
+      }
+
       if (err) {
         return signal(err < 0 ? err : -err);
       } else {
         return signal(bytesWritten || 0);
       }
-    });
+    }
+
+    this.ops.write_buf.apply(this.ops, args);
   }
 
   _op_read_buf(signal, path, bufp, len, offsetLow, offsetHigh, fd) {

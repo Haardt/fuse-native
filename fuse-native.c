@@ -797,7 +797,7 @@ FUSE_METHOD_OFFSET(lseek, 5, 2, (const char *path, off_t off, int whence, struct
   l->res = (off_t) uint32s_to_uint64((uint32_t *[]){(uint32_t *) &offset_low, (uint32_t *) &offset_high});
 })
 
-FUSE_METHOD_VOID(lock, 3, 0, (const char *path, struct fuse_file_info *info, int cmd, struct flock *flock), {
+FUSE_METHOD_VOID(lock, 4, 0, (const char *path, struct fuse_file_info *info, int cmd, struct flock *flock), {
   l->path = path;
   l->info = info;
   l->cmd = cmd;
@@ -810,7 +810,7 @@ FUSE_METHOD_VOID(lock, 3, 0, (const char *path, struct fuse_file_info *info, int
     napi_create_uint32(env, 0, &(argv[3]));
   }
   napi_create_uint32(env, l->cmd, &(argv[4]));
-  napi_create_buffer(env, sizeof(struct flock), (void **) &l->flock, &(argv[5]));
+  napi_create_buffer(env, sizeof(struct flock), (void *) l->flock, &(argv[5]));
 })
 
 FUSE_METHOD(bmap, 2, 2, (const char *path, size_t blocksize, uint64_t *idx), {

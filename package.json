@@ -8,7 +8,12 @@
   },
   "scripts": {
     "install": "node-gyp-build",
-    "test": "tape test/*.js",
+    "test": "jest test/*.js",
+    "test:fuse": "jest test/fuse-operations.test.js",
+    "test:operations": "jest test/fuse-operations.test.js",
+    "test:verbose": "jest test/*.js --verbose",
+    "test:watch": "jest test/*.js --watch",
+    "example:memory-fs": "node test/example-usage.js",
     "clean": "rm -rf node_modules build",
     "prebuild": "prebuildify --napi --strip",
     "prebuild-ia32": "prebuildify --napi --strip --arch=ia32",
@@ -22,8 +27,8 @@
   },
   "devDependencies": {
     "concat-stream": "^2.0.0",
-    "prebuildify": "^3.0.4",
-    "tape": "^4.12.0"
+    "jest": "^30.1.3",
+    "prebuildify": "^3.0.4"
   },
   "repository": {
     "type": "git",
