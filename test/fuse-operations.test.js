@@ -883,8 +883,10 @@ describe("FUSE Operations Test Suite", () => {
           fs.write_buf(fd, testData, testData.length, 0, (bytesWritten) => {
             expect(bytesWritten).toBe(testData.length);
 
-            fs.read_buf(fd, testData.length, 0, (bytesRead) => {
+            const readBuffer = Buffer.alloc(testData.length);
+            fs.read_buf(fd, readBuffer, testData.length, 0, (bytesRead) => {
               expect(bytesRead).toBe(testData.length);
+              expect(readBuffer.toString()).toBe("Buffer test data");
               done();
             });
           });
