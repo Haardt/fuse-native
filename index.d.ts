@@ -1,3 +1,57 @@
+/**
+ * FUSE-Native TypeScript Definitions
+ *
+ * IMPORTANT CALLBACK CONVENTIONS:
+ *
+ * All FUSE operations use Node.js callback convention: cb(err, result)
+ * - On SUCCESS: cb(null, result) - first parameter is null, second is the result
+ * - On ERROR: cb(errorCode) - single negative error code parameter
+ *
+ * Examples:
+ * - write: cb(null, bytesWritten) on success, cb(-13) for EACCES error
+ * - read: cb(null, bytesRead) on success, cb(-2) for ENOENT error
+ * - getattr: cb(null, stats) on success, cb(-2) for ENOENT error
+ *
+ * Error codes are negative integers corresponding to errno values:
+ * - -1: EPERM (Permission denied)
+ * - -2: ENOENT (No such file or directory)
+ * - -5: EIO (I/O error)
+ * - -13: EACCES (Permission denied)
+ * - -28: ENOSPC (No space left on device)
+ *
+ * See Fuse.ENOENT, Fuse.EACCES, etc. for all error codes.
+ *
+ * USAGE EXAMPLES:
+ *
+ * const operations: Fuse.OPERATIONS = {
+ *   write: (path, fd, buffer, length, position, cb) => {
+ *     // Write data and call cb(null, bytesWritten) on success
+ *     if (success) {
+ *       cb(null, length); // Success: return bytes written
+ *     } else {
+ *       cb(-13); // Error: EACCES (Permission denied)
+ *     }
+ *   },
+ *
+ *   read: (path, fd, buffer, length, position, cb) => {
+ *     // Read data and call cb(null, bytesRead) on success
+ *     if (success) {
+ *       cb(null, actualBytesRead); // Success
+ *     } else {
+ *       cb(-2); // Error: ENOENT (No such file)
+ *     }
+ *   },
+ *
+ *   getattr: (path, cb) => {
+ *     // Get file attributes
+ *     if (fileExists) {
+ *       cb(null, stats); // Success: return Stats object
+ *     } else {
+ *       cb(-2); // Error: ENOENT
+ *     }
+ *   }
+ * };
+ */
 declare namespace Fuse {
   export interface Flock {
     l_type: number;
@@ -25,13 +79,17 @@ declare namespace Fuse {
   }
 
   export interface OPERATIONS {
-    init?: (cb: (err: number) => void) => void;
-    error?: (cb: (err: number) => void) => void;
-    access?: (path: string, mode: number, cb: (err: number) => void) => void;
+    init?: (cb: (err: number | null) => void) => void;
+    error?: (cb: (err: number | null) => void) => void;
+    access?: (
+      path: string,
+      mode: number,
+      cb: (err: number | null) => void,
+    ) => void;
     statfs?: (
       path: string,
       cb: (
-        err: number,
+        err: number | null,
         stats?: {
           bsize: number;
           frsize: number;
@@ -50,55 +108,70 @@ declare namespace Fuse {
     fgetattr?: (
       path: string,
       fd: number,
-      cb: (err: number, stat?: Stats) => void,
+      cb: (err: number | null, stat?: Stats) => void,
     ) => void;
-    getattr?: (path: string, cb: (err: number, stat?: Stats) => void) => void;
-    flush?: (path: string, fd: number, cb: (err: number) => void) => void;
+    getattr?: (
+      path: string,
+      cb: (err: number | null, stat?: Stats) => void,
+    ) => void;
+    flush?: (
+      path: string,
+      fd: number,
+      cb: (err: number | null) => void,
+    ) => void;
     fsync?: (
       path: string,
       dataSync: boolean,
       fd: number,
-      cb: (err: number) => void,
+      cb: (err: number | null) => void,
     ) => void;
     fsyncdir?: (
       path: string,
       dataSync: boolean,
       fd: number,
-      cb: (err: number) => void,
+      cb: (err: number | null) => void,
     ) => void;
     readdir?: (
       path: string,
-      cb: (err: number, names?: string[], stats?: Stats[]) => void,
+      cb: (err: number | null, names?: string[], stats?: Stats[]) => void,
     ) => void;
-    truncate?: (path: string, size: number, cb: (err: number) => void) => void;
+    truncate?: (
+      path: string,
+      size: number,
+      cb: (err: number | null) => void,
+    ) => void;
     ftruncate?: (
       path: string,
       fd: number,
       size: number,
-      cb: (err: number) => void,
+      cb: (err: number | null) => void,
     ) => void;
     utimens?: (
       path: string,
       atime: Date,
       mtime: Date,
-      cb: (err: number) => void,
+      cb: (err: number | null) => void,
     ) => void;
     readlink?: (
       path: string,
-      cb: (err: number, linkName?: string) => void,
+      cb: (err: number | null, linkName?: string) => void,
     ) => void;
     chown?: (
       path: string,
       uid: number,
       gid: number,
-      cb: (err: number) => void,
+      cb: (err: number | null) => void,
     ) => void;
-    chmod?: (path: string, mode: number, cb: (err: number) => void) => void;
+    chmod?: (
+      path: string,
+      mode: number,
+      cb: (err: number | null) => void,
+    ) => void;
     mknod?: (
       path: string,
       mode: number,
       dev: number,
-      cb: (err: number) => void,
+      cb: (err: number | null) => void,
     ) => void;
     setxattr?: (
       path: string,
@@ -106,32 +179,32 @@ declare namespace Fuse {
       value: Buffer,
       size: number,
       flags: number,
-      cb: (err: number) => void,
+      cb: (err: number | null) => void,
     ) => void;
     getxattr?: (
       path: string,
       name: string,
-      size: number,
-      cb: (err: number) => void,
+      position: number,
+      cb: (err: number | null, buffer?: Buffer) => void,
     ) => void;
     listxattr?: (
       path: string,
-      cb: (err: number, list?: string[]) => void,
+      cb: (err: number | null, list?: string[]) => void,
     ) => void;
     removexattr?: (
       path: string,
       name: string,
-      cb: (err: number) => void,
+      cb: (err: number | null) => void,
     ) => void;
     open?: (
       path: string,
-      mode: number,
-      cb: (err: number, fd?: number) => void,
+      flags: number,
+      cb: (err: number | null, fd?: number) => void,
     ) => void;
     opendir?: (
       path: string,
-      mode: number,
-      cb: (err: number, fd?: number) => void,
+      flags: number,
+      cb: (err: number | null, fd?: number) => void,
     ) => void;
     read?: (
       path: string,
@@ -139,10 +212,10 @@ declare namespace Fuse {
       buffer: Buffer,
       length: number,
       position: number,
-      // FUSE/POSIX semantics: callback with single value
-      // - Positive or 0: number of bytes read
-      // - Negative: error code (e.g. -5 for EIO)
-      cb: (result: number) => void,
+      // Node.js callback convention: cb(err, result)
+      // - On success: cb(null, bytesRead)
+      // - On error: cb(errorCode) where errorCode < 0
+      cb: (err: number | null, bytesRead?: number) => void,
     ) => void;
     write?: (
       path: string,
@@ -150,39 +223,63 @@ declare namespace Fuse {
       buffer: Buffer,
       length: number,
       position: number,
-      // FUSE/POSIX semantics: callback with single value
-      // - Positive or 0: number of bytes written
-      // - Negative: error code (e.g. -5 for EIO)
-      cb: (result: number) => void,
+      // Node.js callback convention: cb(err, result)
+      // - On success: cb(null, bytesWritten)
+      // - On error: cb(errorCode) where errorCode < 0
+      cb: (err: number | null, bytesWritten?: number) => void,
     ) => void;
     // For every open() call there will be exactly one release() call with the same flags and
     // file handle. It is possible to have a file opened more than once, in which case only the
     // last release will mean, that no more reads/writes will happen on the file. The return
     // value of release is ignored.
-    release?: (path: string, fd: number, cb: (err: number) => void) => void;
-    releasedir?: (path: string, fd: number, cb: (err: number) => void) => void;
+    release?: (
+      path: string,
+      fd: number,
+      cb: (err: number | null) => void,
+    ) => void;
+    releasedir?: (
+      path: string,
+      fd: number,
+      cb: (err: number | null) => void,
+    ) => void;
     create?: (
       path: string,
       mode: number,
-      cb: (err: number, fd?: number, modePassedOn?: number) => void,
+      cb: (err: number | null, fd?: number) => void,
     ) => void;
-    unlink?: (path: string, cb: (err: number) => void) => void;
-    rename?: (src: string, dest: string, cb: (err: number) => void) => void;
-    link?: (src: string, dest: string, cb: (err: number) => void) => void;
-    symlink?: (src: string, dest: string, cb: (err: number) => void) => void;
-    mkdir?: (path: string, mode: number, cb: (err: number) => void) => void;
-    rmdir?: (path: string, cb: (err: number) => void) => void;
+    unlink?: (path: string, cb: (err: number | null) => void) => void;
+    rename?: (
+      src: string,
+      dest: string,
+      cb: (err: number | null) => void,
+    ) => void;
+    link?: (
+      src: string,
+      dest: string,
+      cb: (err: number | null) => void,
+    ) => void;
+    symlink?: (
+      src: string,
+      dest: string,
+      cb: (err: number | null) => void,
+    ) => void;
+    mkdir?: (
+      path: string,
+      mode: number,
+      cb: (err: number | null) => void,
+    ) => void;
+    rmdir?: (path: string, cb: (err: number | null) => void) => void;
     lock?: (
       path: string,
       fd: number,
       cmd: number,
       flock: Flock,
-      cb: (err: number) => void,
+      cb: (err: number | null) => void,
     ) => void;
     bmap?: (
       path: string,
       blocksize: number,
-      cb: (err: number, idx?: number) => void,
+      cb: (err: number | null, idx?: number) => void,
     ) => void;
     ioctl?: (
       path: string,
@@ -191,35 +288,41 @@ declare namespace Fuse {
       fd: number,
       flags: number,
       data: Buffer,
-      cb: (err: number) => void,
+      cb: (err: number | null) => void,
     ) => void;
     poll?: (
       path: string,
       fd: number,
       ph: Buffer,
       reventsp: Buffer,
-      cb: (err: number) => void,
+      cb: (err: number | null) => void,
     ) => void;
     write_buf?: (
       path: string,
+      fd: number,
       buf: Buffer,
       offset: number,
-      fd: number,
-      cb: (result: number) => void,
+      // Node.js callback convention: cb(err, result)
+      // - On success: cb(null, bytesWritten)
+      // - On error: cb(errorCode) where errorCode < 0
+      cb: (err: number | null, bytesWritten?: number) => void,
     ) => void;
     read_buf?: (
       path: string,
-      bufp: Buffer,
-      len: number,
-      offset: number,
       fd: number,
-      cb: (err: number) => void,
+      buffer: Buffer,
+      length: number,
+      offset: number,
+      // Node.js callback convention: cb(err, result)
+      // - On success: cb(null, bytesRead)
+      // - On error: cb(errorCode) where errorCode < 0
+      cb: (err: number | null, bytesRead?: number) => void,
     ) => void;
     flock?: (
       path: string,
       fd: number,
       op: number,
-      cb: (err: number) => void,
+      cb: (err: number | null) => void,
     ) => void;
     fallocate?: (
       path: string,
@@ -227,14 +330,14 @@ declare namespace Fuse {
       offset: number,
       length: number,
       fd: number,
-      cb: (err: number) => void,
+      cb: (err: number | null) => void,
     ) => void;
     lseek?: (
       path: string,
       offset: number,
       whence: number,
       fd: number,
-      cb: (err: number, offset?: number) => void,
+      cb: (err: number | null, newOffset?: number) => void,
     ) => void;
     copy_file_range?: (
       path: string,
@@ -245,7 +348,7 @@ declare namespace Fuse {
       offsetOut: number,
       len: number,
       flags: number,
-      cb: (err: number, bytes?: number) => void,
+      cb: (err: number | null, bytes?: number) => void,
     ) => void;
   }
 
