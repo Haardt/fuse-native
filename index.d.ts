@@ -1,10 +1,10 @@
 declare namespace Fuse {
   export interface Flock {
-    l_type: number,
-    l_whence: number,
-    l_start: number,
-    l_len: number,
-    l_pid: number
+    l_type: number;
+    l_whence: number;
+    l_start: number;
+    l_len: number;
+    l_pid: number;
   }
 
   // Stats object produced by fuse-native index.js function getStatArray
@@ -29,76 +29,131 @@ declare namespace Fuse {
     error?: (cb: (err: number) => void) => void;
     access?: (path: string, mode: number, cb: (err: number) => void) => void;
     statfs?: (
-        path: string,
-        cb: (
-            err: number,
-            stats?: {
-              bsize: number;
-              frsize: number;
-              blocks: number;
-              bfree: number;
-              bavail: number;
-              files: number;
-              ffree: number;
-              favail: number;
-              fsid: number;
-              flag: number;
-              namemax: number;
-            }
-        ) => void
+      path: string,
+      cb: (
+        err: number,
+        stats?: {
+          bsize: number;
+          frsize: number;
+          blocks: number;
+          bfree: number;
+          bavail: number;
+          files: number;
+          ffree: number;
+          favail: number;
+          fsid: number;
+          flag: number;
+          namemax: number;
+        },
+      ) => void,
     ) => void;
     fgetattr?: (
-        path: string,
-        fd: number,
-        cb: (err: number, stat?: Stats) => void
+      path: string,
+      fd: number,
+      cb: (err: number, stat?: Stats) => void,
     ) => void;
-    getattr?: (
-        path: string,
-        cb: (err: number, stat?: Stats) => void
-    ) => void;
+    getattr?: (path: string, cb: (err: number, stat?: Stats) => void) => void;
     flush?: (path: string, fd: number, cb: (err: number) => void) => void;
-    fsync?: (path: string, dataSync: boolean, fd: number, cb: (err: number) => void) => void;
-    fsyncdir?: (path: string, dataSync: boolean, fd: number, cb: (err: number) => void) => void;
-    readdir?: (path: string, cb: (err: number, names?: string[], stats?: Stats[]) => void) => void;
-    truncate?: (path: string, size: number, cb: (err: number) => void) => void;
-    ftruncate?: (path: string, fd: number, size: number, cb: (err: number) => void) => void;
-    utimens?: (path: string, atime: Date, mtime: Date, cb: (err: number) => void) => void;
-    readlink?: (path: string, cb: (err: number, linkName?: string) => void) => void;
-    chown?: (path: string, uid: number, gid: number, cb: (err: number) => void) => void;
-    chmod?: (path: string, mode: number, cb: (err: number) => void) => void;
-    mknod?: (path: string, mode: number, dev: number, cb: (err: number) => void) => void;
-    setxattr?: (
-        path: string,
-        name: string,
-        value: Buffer,
-        size: number,
-        flags: number,
-        cb: (err: number) => void
+    fsync?: (
+      path: string,
+      dataSync: boolean,
+      fd: number,
+      cb: (err: number) => void,
     ) => void;
-    getxattr?: (path: string, name: string, size: number, cb: (err: number) => void) => void;
-    listxattr?: (path: string, cb: (err: number, list?: string[]) => void) => void;
-    removexattr?: (path: string, name: string, cb: (err: number) => void) => void;
-    open?: (path: string, mode: number, cb: (err: number, fd?: number) => void) => void;
-    opendir?: (path: string, mode: number, cb: (err: number, fd?: number) => void) => void;
+    fsyncdir?: (
+      path: string,
+      dataSync: boolean,
+      fd: number,
+      cb: (err: number) => void,
+    ) => void;
+    readdir?: (
+      path: string,
+      cb: (err: number, names?: string[], stats?: Stats[]) => void,
+    ) => void;
+    truncate?: (path: string, size: number, cb: (err: number) => void) => void;
+    ftruncate?: (
+      path: string,
+      fd: number,
+      size: number,
+      cb: (err: number) => void,
+    ) => void;
+    utimens?: (
+      path: string,
+      atime: Date,
+      mtime: Date,
+      cb: (err: number) => void,
+    ) => void;
+    readlink?: (
+      path: string,
+      cb: (err: number, linkName?: string) => void,
+    ) => void;
+    chown?: (
+      path: string,
+      uid: number,
+      gid: number,
+      cb: (err: number) => void,
+    ) => void;
+    chmod?: (path: string, mode: number, cb: (err: number) => void) => void;
+    mknod?: (
+      path: string,
+      mode: number,
+      dev: number,
+      cb: (err: number) => void,
+    ) => void;
+    setxattr?: (
+      path: string,
+      name: string,
+      value: Buffer,
+      size: number,
+      flags: number,
+      cb: (err: number) => void,
+    ) => void;
+    getxattr?: (
+      path: string,
+      name: string,
+      size: number,
+      cb: (err: number) => void,
+    ) => void;
+    listxattr?: (
+      path: string,
+      cb: (err: number, list?: string[]) => void,
+    ) => void;
+    removexattr?: (
+      path: string,
+      name: string,
+      cb: (err: number) => void,
+    ) => void;
+    open?: (
+      path: string,
+      mode: number,
+      cb: (err: number, fd?: number) => void,
+    ) => void;
+    opendir?: (
+      path: string,
+      mode: number,
+      cb: (err: number, fd?: number) => void,
+    ) => void;
     read?: (
-        path: string,
-        fd: number,
-        buffer: Buffer,
-        length: number,
-        position: number,
-        // This contradicts the code in index.js for _op_read, where the callback signature is (err, bytesRead)
-        // however, it appears that the calling code indeed interprets the "err" position as the value.
-        cb: (bytesRead?: number) => void
+      path: string,
+      fd: number,
+      buffer: Buffer,
+      length: number,
+      position: number,
+      // FUSE/POSIX semantics: callback with single value
+      // - Positive or 0: number of bytes read
+      // - Negative: error code (e.g. -5 for EIO)
+      cb: (result: number) => void,
     ) => void;
     write?: (
-        path: string,
-        fd: number,
-        buffer: Buffer,
-        length: number,
-        position: number,
-        // This contradicts the code in index.js for _op_write, where the callback signature is (err, bytesWritten)
-        // however, it appears that the calling code indeed interprets the "err" position as the value.
-        cb: (bytesWritten?: number) => void
+      path: string,
+      fd: number,
+      buffer: Buffer,
+      length: number,
+      position: number,
+      // FUSE/POSIX semantics: callback with single value
+      // - Positive or 0: number of bytes written
+      // - Negative: error code (e.g. -5 for EIO)
+      cb: (result: number) => void,
     ) => void;
     // For every open() call there will be exactly one release() call with the same flags and
     // file handle. It is possible to have a file opened more than once, in which case only the
@@ -107,9 +162,9 @@ declare namespace Fuse {
     release?: (path: string, fd: number, cb: (err: number) => void) => void;
     releasedir?: (path: string, fd: number, cb: (err: number) => void) => void;
     create?: (
-        path: string,
-        mode: number,
-        cb: (err: number, fd?: number, modePassedOn?: number) => void
+      path: string,
+      mode: number,
+      cb: (err: number, fd?: number, modePassedOn?: number) => void,
     ) => void;
     unlink?: (path: string, cb: (err: number) => void) => void;
     rename?: (src: string, dest: string, cb: (err: number) => void) => void;
@@ -117,16 +172,81 @@ declare namespace Fuse {
     symlink?: (src: string, dest: string, cb: (err: number) => void) => void;
     mkdir?: (path: string, mode: number, cb: (err: number) => void) => void;
     rmdir?: (path: string, cb: (err: number) => void) => void;
-    lock?: (path: string, fd: number, cmd: number, flock: Flock, cb: (err: number) => void) => void;
-    bmap?: (path: string, blocksize: number, cb: (err: number, idx?: number) => void) => void;
-    ioctl?: (path: string, cmd: number, arg: Buffer, fd: number, flags: number, data: Buffer, cb: (err: number) => void) => void;
-    poll?: (path: string, fd: number, ph: Buffer, reventsp: Buffer, cb: (err: number) => void) => void;
-    write_buf?: (path: string, buf: Buffer, offset: number, fd: number, cb: (err: number) => void) => void;
-    read_buf?: (path: string, bufp: Buffer, len: number, offset: number, fd: number, cb: (err: number) => void) => void;
-    flock?: (path: string, fd: number, op: number, cb: (err: number) => void) => void;
-    fallocate?: (path: string, mode: number, offset: number, length: number, fd: number, cb: (err: number) => void) => void;
-    lseek?: (path: string, offset: number, whence: number, fd: number, cb: (err: number, offset?: number) => void) => void;
-    copy_file_range?: (path: string, fd: number, offsetIn: number, pathOut: string, fdOut: number, offsetOut: number, len: number, flags: number, cb: (err: number, bytes?: number) => void) => void;
+    lock?: (
+      path: string,
+      fd: number,
+      cmd: number,
+      flock: Flock,
+      cb: (err: number) => void,
+    ) => void;
+    bmap?: (
+      path: string,
+      blocksize: number,
+      cb: (err: number, idx?: number) => void,
+    ) => void;
+    ioctl?: (
+      path: string,
+      cmd: number,
+      arg: Buffer,
+      fd: number,
+      flags: number,
+      data: Buffer,
+      cb: (err: number) => void,
+    ) => void;
+    poll?: (
+      path: string,
+      fd: number,
+      ph: Buffer,
+      reventsp: Buffer,
+      cb: (err: number) => void,
+    ) => void;
+    write_buf?: (
+      path: string,
+      buf: Buffer,
+      offset: number,
+      fd: number,
+      cb: (result: number) => void,
+    ) => void;
+    read_buf?: (
+      path: string,
+      bufp: Buffer,
+      len: number,
+      offset: number,
+      fd: number,
+      cb: (err: number) => void,
+    ) => void;
+    flock?: (
+      path: string,
+      fd: number,
+      op: number,
+      cb: (err: number) => void,
+    ) => void;
+    fallocate?: (
+      path: string,
+      mode: number,
+      offset: number,
+      length: number,
+      fd: number,
+      cb: (err: number) => void,
+    ) => void;
+    lseek?: (
+      path: string,
+      offset: number,
+      whence: number,
+      fd: number,
+      cb: (err: number, offset?: number) => void,
+    ) => void;
+    copy_file_range?: (
+      path: string,
+      fd: number,
+      offsetIn: number,
+      pathOut: string,
+      fdOut: number,
+      offsetOut: number,
+      len: number,
+      flags: number,
+      cb: (err: number, bytes?: number) => void,
+    ) => void;
   }
 
   // See https://github.com/refinio/fuse-native
@@ -176,7 +296,9 @@ declare class Fuse {
   static beforeUnmount: (cb: (err: null | Error) => any) => void;
   static configure: (cb: (err: null | Error) => any) => void;
   static unconfigure: (cb: (err: null | Error) => any) => void;
-  static isConfigured: (cb: (err: null | Error, result: boolean) => any) => void;
+  static isConfigured: (
+    cb: (err: null | Error, result: boolean) => any,
+  ) => void;
 
   // Error codes - numeric value retrieved from Fuse instance with errno(code)
   static EPERM: -1;

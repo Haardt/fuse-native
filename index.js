@@ -694,7 +694,11 @@ class Fuse extends Nanoresource {
       len,
       getDoubleArg(offsetLow, offsetHigh),
       (err, bytesRead) => {
-        return signal(err, bytesRead || 0, buf.buffer);
+        if (err) {
+          return signal(err < 0 ? err : -err, buf.buffer);
+        } else {
+          return signal(bytesRead || 0, buf.buffer);
+        }
       },
     );
   }
@@ -707,7 +711,11 @@ class Fuse extends Nanoresource {
       len,
       getDoubleArg(offsetLow, offsetHigh),
       (err, bytesWritten) => {
-        return signal(err, bytesWritten || 0, buf.buffer);
+        if (err) {
+          return signal(err < 0 ? err : -err, buf.buffer);
+        } else {
+          return signal(bytesWritten || 0, buf.buffer);
+        }
       },
     );
   }
@@ -923,8 +931,12 @@ class Fuse extends Nanoresource {
     if (!this.ops.write_buf) {
       return signal(Fuse.ENOSYS);
     }
-    this.ops.write_buf(path, fd, buf, offset, (err) => {
-      return signal(err);
+    this.ops.write_buf(path, fd, buf, offset, (err, bytesWritten) => {
+      if (err) {
+        return signal(err < 0 ? err : -err);
+      } else {
+        return signal(bytesWritten || 0);
+      }
     });
   }
 

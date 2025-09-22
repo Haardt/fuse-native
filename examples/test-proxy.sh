@@ -8,8 +8,8 @@ echo ""
 
 # Configuration
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PROXY_MOUNT="/tmp/fuse-proxy-test"
-TARGET_DIR="/tmp/fuse-target-test"
+PROXY_MOUNT="$HOME/fuse-test/fuse-proxy-test"
+TARGET_DIR="$HOME/fuse-test/fuse-target-test"
 PROXY_SCRIPT="$SCRIPT_DIR/fuse-proxy-quiet.js"
 
 # Colors for output
@@ -97,6 +97,7 @@ cleanup
 
 # Create directories
 print_status "Setting up test environment..."
+mkdir -p "$HOME/fuse-test"
 mkdir -p "$TARGET_DIR"
 mkdir -p "$PROXY_MOUNT"
 

@@ -446,7 +446,7 @@ FUSE_METHOD_VOID(releasedir, 2, 0, (const char *path, struct fuse_file_info *inf
   }
 })
 
-FUSE_METHOD(read, 6, 2, (const char *path, char *buf, size_t len, off_t offset, struct fuse_file_info *info), {
+FUSE_METHOD(read, 6, 1, (const char *path, char *buf, size_t len, off_t offset, struct fuse_file_info *info), {
   l->path = path;
   l->buf = buf;
   l->len = len;
@@ -459,10 +459,10 @@ FUSE_METHOD(read, 6, 2, (const char *path, char *buf, size_t len, off_t offset, 
   napi_create_uint32(env, l->len, &(argv[5]));
   FUSE_UINT64_TO_INTS_ARGV(l->offset, 6)
 }, {
-  if (IS_ARRAY_BUFFER_DETACH_SUPPORTED == 1) assert(napi_detach_arraybuffer(env, argv[3]) == napi_ok);
+  if (IS_ARRAY_BUFFER_DETACH_SUPPORTED == 1) assert(napi_detach_arraybuffer(env, argv[2]) == napi_ok);
 })
 
-FUSE_METHOD(write, 6, 2, (const char *path, const char *buf, size_t len, off_t offset, struct fuse_file_info *info), {
+FUSE_METHOD(write, 6, 1, (const char *path, const char *buf, size_t len, off_t offset, struct fuse_file_info *info), {
   l->path = path;
   l->buf = buf;
   l->len = len;
@@ -475,7 +475,7 @@ FUSE_METHOD(write, 6, 2, (const char *path, const char *buf, size_t len, off_t o
   napi_create_uint32(env, l->len, &(argv[5]));
   FUSE_UINT64_TO_INTS_ARGV(l->offset, 6)
 }, {
-  if (IS_ARRAY_BUFFER_DETACH_SUPPORTED == 1) assert(napi_detach_arraybuffer(env, argv[3]) == napi_ok);
+  if (IS_ARRAY_BUFFER_DETACH_SUPPORTED == 1) assert(napi_detach_arraybuffer(env, argv[2]) == napi_ok);
 })
 
 FUSE_METHOD(readdir, 1, 2, (const char *path, void *buf, fuse_fill_dir_t filler, off_t offset, struct fuse_file_info *info, enum fuse_readdir_flags flags), {
@@ -875,7 +875,7 @@ FUSE_METHOD(write_buf, 5, 1, (const char *path, struct fuse_bufvec *buf, off_t o
   l->info = info;
 }, {
   napi_create_string_utf8(env, l->path, NAPI_AUTO_LENGTH, &(argv[2]));
-  
+
   // Extract actual buffer data from fuse_bufvec structure
   struct fuse_bufvec *bufvec = (struct fuse_bufvec *) l->buf;
   if (bufvec != NULL && bufvec->count > 0 && bufvec->buf[0].mem != NULL) {
@@ -885,7 +885,7 @@ FUSE_METHOD(write_buf, 5, 1, (const char *path, struct fuse_bufvec *buf, off_t o
     // Fallback: create empty buffer
     napi_create_buffer(env, 0, NULL, &(argv[3]));
   }
-  
+
   FUSE_UINT64_TO_INTS_ARGV(l->offset, 4)
   if (l->info != NULL) {
     napi_create_uint32(env, l->info->fh, &(argv[6]));
@@ -905,13 +905,13 @@ FUSE_METHOD_VOID(read_buf, 6, 0, (const char *path, struct fuse_bufvec **bufp, s
   l->info = info;
 }, {
   napi_create_string_utf8(env, l->path, NAPI_AUTO_LENGTH, &(argv[2]));
-  
+
   // Create a buffer that will be filled by the JavaScript callback
   void *read_buffer = malloc(l->len);
   if (read_buffer != NULL) {
     // Create external buffer with no cleanup - let FUSE handle memory
     napi_create_external_buffer(env, l->len, read_buffer, NULL, NULL, &(argv[3]));
-    
+
     // Create a simple bufvec for FUSE
     struct fuse_bufvec *result_bufvec = malloc(sizeof(struct fuse_bufvec) + sizeof(struct fuse_buf));
     if (result_bufvec != NULL) {
@@ -923,7 +923,7 @@ FUSE_METHOD_VOID(read_buf, 6, 0, (const char *path, struct fuse_bufvec **bufp, s
       result_bufvec->buf[0].mem = read_buffer;
       result_bufvec->buf[0].fd = -1;
       result_bufvec->buf[0].pos = 0;
-      
+
       // Store the bufvec so FUSE can access it
       *(l->bufp) = result_bufvec;
     } else {
@@ -934,7 +934,7 @@ FUSE_METHOD_VOID(read_buf, 6, 0, (const char *path, struct fuse_bufvec **bufp, s
     // Fallback: create empty buffer
     napi_create_buffer(env, 0, NULL, &(argv[3]));
   }
-  
+
   napi_create_uint32(env, l->len, &(argv[4]));
   FUSE_UINT64_TO_INTS_ARGV(l->offset, 5)
   if (l->info != NULL) {
