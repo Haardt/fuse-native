@@ -383,13 +383,18 @@ class Fuse extends Nanoresource {
   _close (cb) {
     const self = this
 
-    Fuse.unmount(this.mnt, err => {
-      if (err) {
-        err.unmountFailure = true
-        return cb(err)
-      }
-      nativeUnmount()
-    })
+    // Add a small delay to allow pending FLUSH operations to complete
+    // before starting the unmount process. This prevents race conditions
+    // where FLUSH operations are sent just as unmounting begins.
+    setTimeout(() => {
+      Fuse.unmount(this.mnt, err => {
+        if (err) {
+          err.unmountFailure = true
+          return cb(err)
+        }
+        nativeUnmount()
+      })
+    }, 100) // 100ms delay should be sufficient for most pending operations
 
     function nativeUnmount () {
       try {
