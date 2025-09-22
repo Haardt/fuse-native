@@ -866,23 +866,38 @@ FUSE_METHOD_VOID(poll, 3, 0, (const char *path, struct fuse_file_info *info, str
   napi_create_external_buffer(env, sizeof(unsigned), l->reventsp, NULL, NULL, &argv[5]);
 })
 
-FUSE_METHOD_VOID(write_buf, 4, 0, (const char *path, struct fuse_bufvec *buf, off_t off, struct fuse_file_info *info), {
+
+
+FUSE_METHOD(write_buf, 5, 1, (const char *path, struct fuse_bufvec *buf, off_t off, struct fuse_file_info *info), {
   l->path = path;
   l->buf = (void *) buf;
   l->offset = off;
   l->info = info;
 }, {
   napi_create_string_utf8(env, l->path, NAPI_AUTO_LENGTH, &(argv[2]));
-  napi_create_buffer(env, sizeof(struct fuse_bufvec), (void **) &l->buf, &(argv[3]));
+  
+  // Extract actual buffer data from fuse_bufvec structure
+  struct fuse_bufvec *bufvec = (struct fuse_bufvec *) l->buf;
+  if (bufvec != NULL && bufvec->count > 0 && bufvec->buf[0].mem != NULL) {
+    // Create external buffer pointing to the actual data
+    napi_create_external_buffer(env, bufvec->buf[0].size, bufvec->buf[0].mem, NULL, NULL, &(argv[3]));
+  } else {
+    // Fallback: create empty buffer
+    napi_create_buffer(env, 0, NULL, &(argv[3]));
+  }
+  
   FUSE_UINT64_TO_INTS_ARGV(l->offset, 4)
   if (l->info != NULL) {
     napi_create_uint32(env, l->info->fh, &(argv[6]));
   } else {
     napi_create_uint32(env, 0, &(argv[6]));
   }
+}, {
+  // Signal handler: JavaScript should call cb(bytes_written) instead of cb(0)
+  // The res parameter contains the number of bytes written
 })
 
-FUSE_METHOD_VOID(read_buf, 5, 0, (const char *path, struct fuse_bufvec **bufp, size_t size, off_t off, struct fuse_file_info *info), {
+FUSE_METHOD_VOID(read_buf, 6, 0, (const char *path, struct fuse_bufvec **bufp, size_t size, off_t off, struct fuse_file_info *info), {
   l->path = path;
   l->bufp = bufp;
   l->len = size;
@@ -890,7 +905,36 @@ FUSE_METHOD_VOID(read_buf, 5, 0, (const char *path, struct fuse_bufvec **bufp, s
   l->info = info;
 }, {
   napi_create_string_utf8(env, l->path, NAPI_AUTO_LENGTH, &(argv[2]));
-  napi_create_buffer(env, sizeof(struct fuse_bufvec *), (void **) &l->bufp, &(argv[3]));
+  
+  // Create a buffer that will be filled by the JavaScript callback
+  void *read_buffer = malloc(l->len);
+  if (read_buffer != NULL) {
+    // Create external buffer with no cleanup - let FUSE handle memory
+    napi_create_external_buffer(env, l->len, read_buffer, NULL, NULL, &(argv[3]));
+    
+    // Create a simple bufvec for FUSE
+    struct fuse_bufvec *result_bufvec = malloc(sizeof(struct fuse_bufvec) + sizeof(struct fuse_buf));
+    if (result_bufvec != NULL) {
+      result_bufvec->count = 1;
+      result_bufvec->idx = 0;
+      result_bufvec->off = 0;
+      result_bufvec->buf[0].size = l->len;
+      result_bufvec->buf[0].flags = 0;
+      result_bufvec->buf[0].mem = read_buffer;
+      result_bufvec->buf[0].fd = -1;
+      result_bufvec->buf[0].pos = 0;
+      
+      // Store the bufvec so FUSE can access it
+      *(l->bufp) = result_bufvec;
+    } else {
+      free(read_buffer);
+      napi_create_buffer(env, 0, NULL, &(argv[3]));
+    }
+  } else {
+    // Fallback: create empty buffer
+    napi_create_buffer(env, 0, NULL, &(argv[3]));
+  }
+  
   napi_create_uint32(env, l->len, &(argv[4]));
   FUSE_UINT64_TO_INTS_ARGV(l->offset, 5)
   if (l->info != NULL) {
