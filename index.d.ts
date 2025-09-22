@@ -218,10 +218,12 @@ declare namespace Fuse {
       buffer: Buffer,
       length: number,
       position: number,
-      // FUSE-style callback: cb(bytesWritten) on success, cb(errorCode) on error
-      // - On success: cb(bytesWritten) where bytesWritten > 0
+      // Mixed callback style: cb(null, bytesWritten) on success, cb(errorCode) on error
+      // - On success: cb(null, bytesWritten) where bytesWritten >= 0
       // - On error: cb(errorCode) where errorCode < 0
-      cb: (result: number) => void,
+      cb:
+        | ((error: null, bytesWritten: number) => void)
+        | ((errorCode: number) => void),
     ) => void;
     // For every open() call there will be exactly one release() call with the same flags and
     // file handle. It is possible to have a file opened more than once, in which case only the
@@ -276,10 +278,12 @@ declare namespace Fuse {
       fd: number,
       buf: Buffer,
       offset: number,
-      // FUSE-style callback: cb(bytesWritten) on success, cb(errorCode) on error
-      // - On success: cb(bytesWritten) where bytesWritten > 0
+      // Mixed callback style: cb(null, bytesWritten) on success, cb(errorCode) on error
+      // - On success: cb(null, bytesWritten) where bytesWritten >= 0
       // - On error: cb(errorCode) where errorCode < 0
-      cb: (result: number) => void,
+      cb:
+        | ((error: null, bytesWritten: number) => void)
+        | ((errorCode: number) => void),
     ) => void;
     read_buf?: (
       path: string,
