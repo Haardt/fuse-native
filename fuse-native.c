@@ -170,7 +170,6 @@ static const uint32_t op_flock = 40;
 static const uint32_t op_fallocate = 41;
 static const uint32_t op_lseek = 42;
 static const uint32_t op_copy_file_range = 43;
-static const uint32_t op_copy_file_range_64 = 53;
 
 // Data structures
 
@@ -182,7 +181,7 @@ typedef struct {
   napi_ref malloc;
 
   // Operation handlers
-  napi_ref handlers[54];
+  napi_ref handlers[45];
 
   struct fuse *fuse;
   struct fuse_chan *ch;
@@ -778,7 +777,7 @@ FUSE_METHOD_VOID(flock, 2, 0, (const char *path, struct fuse_file_info *info, in
   napi_create_uint32(env, l->mode, &(argv[4]));
 })
 
-FUSE_METHOD_OFFSET(lseek, 5, 2, (const char *path, off_t off, int whence, struct fuse_file_info *info), {
+FUSE_METHOD_OFFSET(lseek, 4, 1, (const char *path, off_t off, int whence, struct fuse_file_info *info), {
   l->path = path;
   l->offset = off;
   l->mode = whence;
@@ -814,7 +813,7 @@ FUSE_METHOD_VOID(lock, 3, 0, (const char *path, struct fuse_file_info *info, int
   napi_create_buffer(env, sizeof(struct flock), (void **) &l->flock, &(argv[5]));
 })
 
-FUSE_METHOD(bmap, 2, 2, (const char *path, size_t blocksize, uint64_t *idx), {
+FUSE_METHOD(bmap, 2, 1, (const char *path, size_t blocksize, uint64_t *idx), {
   l->path = path;
   l->len = blocksize;
   l->linkname = (char *) idx;
@@ -901,7 +900,7 @@ FUSE_METHOD_VOID(read_buf, 5, 0, (const char *path, struct fuse_bufvec **bufp, s
   }
 })
 
-FUSE_METHOD_SSIZE(copy_file_range, 10, 1, (const char *path_in, struct fuse_file_info *fi_in, off_t offset_in, const char *path_out, struct fuse_file_info *fi_out, off_t offset_out, size_t size, int flags), {
+FUSE_METHOD_SSIZE(copy_file_range, 8, 1, (const char *path_in, struct fuse_file_info *fi_in, off_t offset_in, const char *path_out, struct fuse_file_info *fi_out, off_t offset_out, size_t size, int flags), {
   l->path = path_in;
   l->fi_in = fi_in;
   l->offset_in = offset_in;
@@ -932,38 +931,7 @@ FUSE_METHOD_SSIZE(copy_file_range, 10, 1, (const char *path_in, struct fuse_file
   l->res = bytes;
 })
 
-FUSE_METHOD_SSIZE(copy_file_range_64, 10, 1, (const char *path_in, struct fuse_file_info *fi_in, off_t offset_in, const char *path_out, struct fuse_file_info *fi_out, off_t offset_out, size_t size, int flags), {
-  l->path = path_in;
-  l->fi_in = fi_in;
-  l->offset_in = offset_in;
-  l->path_out = path_out;
-  l->fi_out = fi_out;
-  l->offset_out = offset_out;
-  l->len = size;
-  l->flags = flags;
-}, {
-  napi_create_string_utf8(env, l->path, NAPI_AUTO_LENGTH, &(argv[2]));
-  if (l->fi_in != NULL) {
-    napi_create_uint32(env, l->fi_in->fh, &(argv[3]));
-  } else {
-    napi_create_uint32(env, 0, &(argv[3]));
-  }
-  FUSE_UINT64_TO_INTS_ARGV(l->offset_in, 4)
-  napi_create_string_utf8(env, l->path_out, NAPI_AUTO_LENGTH, &(argv[6]));
-  if (l->fi_out != NULL) {
-    napi_create_uint32(env, l->fi_out->fh, &(argv[7]));
-  } else {
-    napi_create_uint32(env, 0, &(argv[7]));
-  }
-  FUSE_UINT64_TO_INTS_ARGV(l->offset_out, 8)
-  napi_create_uint32(env, l->len, &(argv[10]));
-  napi_create_uint32(env, l->flags, &(argv[11]));
-}, {
-  NAPI_ARGV_INT32(bytes, 2)
-  l->res = bytes;
-})
-
-FUSE_METHOD_VOID(fallocate, 7, 0, (const char *path, int mode, off_t off, off_t len, struct fuse_file_info *info), {
+FUSE_METHOD_VOID(fallocate, 5, 0, (const char *path, int mode, off_t off, off_t len, struct fuse_file_info *info), {
   l->path = path;
   l->mode = mode;
   l->offset = off;
@@ -1101,7 +1069,7 @@ NAPI_METHOD(fuse_native_mount) {
   napi_value handlers = argv[5];
   NAPI_ARGV_BUFFER_CAST(uint32_t *, implemented, 6)
 
-  for (int i = 0; i < 54; i++) {
+  for (int i = 0; i < 45; i++) {
     ft->handlers[i] = NULL;
   }
 
@@ -1152,9 +1120,7 @@ NAPI_METHOD(fuse_native_mount) {
   if (implemented[op_flock]) ops.flock = fuse_native_flock;
   if (implemented[op_fallocate]) ops.fallocate = fuse_native_fallocate;
   if (implemented[op_lseek]) ops.lseek = fuse_native_lseek;
-  if (implemented[op_copy_file_range_64]) ops.copy_file_range = fuse_native_copy_file_range_64;
-  else if (implemented[op_copy_file_range]) ops.copy_file_range = fuse_native_copy_file_range;
-  if (implemented[op_copy_file_range_64]) ops.copy_file_range = fuse_native_copy_file_range;
+  if (implemented[op_copy_file_range]) ops.copy_file_range = fuse_native_copy_file_range;
 
   int _argc = (strcmp(mntopts, "-o") <= 0) ? 1 : 2;
   char *_argv[] = {
@@ -1271,7 +1237,6 @@ NAPI_INIT() {
   NAPI_EXPORT_FUNCTION(fuse_native_signal_fallocate)
   NAPI_EXPORT_FUNCTION(fuse_native_signal_lseek)
   NAPI_EXPORT_FUNCTION(fuse_native_signal_copy_file_range)
-  NAPI_EXPORT_FUNCTION(fuse_native_signal_copy_file_range_64)
 
   NAPI_EXPORT_UINT32(op_getattr)
   NAPI_EXPORT_UINT32(op_init)
@@ -1318,5 +1283,4 @@ NAPI_INIT() {
   NAPI_EXPORT_UINT32(op_fallocate)
   NAPI_EXPORT_UINT32(op_lseek)
   NAPI_EXPORT_UINT32(op_copy_file_range)
-  NAPI_EXPORT_UINT32(op_copy_file_range_64)
 }

@@ -69,6 +69,9 @@ tape('file copy', function (t) {
     },
     lseek: function (path, off, whence, fd, cb) {
       return process.nextTick(cb, 0, off)
+    },
+    copy_file_range: function (path, fd, offsetIn, pathOut, fdOut, offsetOut, len, flags, cb) {
+      return process.nextTick(cb, 0, 0)
     }
   }
 
