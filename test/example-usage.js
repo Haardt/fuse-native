@@ -152,8 +152,8 @@ const fuseOps = {
   ioctl: (path, cmd, arg, fd, flags, data, cb) =>
     memoryFs.ioctl(fd, cmd, arg, flags, data, data, cb),
   poll: (path, fd, ph, reventsp, cb) => memoryFs.poll(fd, ph, reventsp, cb),
-  // write_buf: (path, fd, buf, offset, cb) =>
-  //   memoryFs.write_buf(path, fd, buf, offset, cb),
+  write_buf: (path, fd, buf, offset, cb) =>
+    memoryFs.write_buf(path, fd, buf, offset, cb),
   read_buf: (path, fd, buffer, length, position, cb) =>
     memoryFs.read_buf(fd, buffer, length, position, cb),
   flock: (path, fd, op, cb) => memoryFs.flock(fd, op, cb),
