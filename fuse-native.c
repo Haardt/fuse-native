@@ -777,7 +777,7 @@ FUSE_METHOD_VOID(flock, 2, 0, (const char *path, struct fuse_file_info *info, in
   napi_create_uint32(env, l->mode, &(argv[4]));
 })
 
-FUSE_METHOD_OFFSET(lseek, 4, 1, (const char *path, off_t off, int whence, struct fuse_file_info *info), {
+FUSE_METHOD_OFFSET(lseek, 5, 2, (const char *path, off_t off, int whence, struct fuse_file_info *info), {
   l->path = path;
   l->offset = off;
   l->mode = whence;
@@ -813,7 +813,7 @@ FUSE_METHOD_VOID(lock, 3, 0, (const char *path, struct fuse_file_info *info, int
   napi_create_buffer(env, sizeof(struct flock), (void **) &l->flock, &(argv[5]));
 })
 
-FUSE_METHOD(bmap, 2, 1, (const char *path, size_t blocksize, uint64_t *idx), {
+FUSE_METHOD(bmap, 2, 2, (const char *path, size_t blocksize, uint64_t *idx), {
   l->path = path;
   l->len = blocksize;
   l->linkname = (char *) idx;
@@ -823,7 +823,7 @@ FUSE_METHOD(bmap, 2, 1, (const char *path, size_t blocksize, uint64_t *idx), {
 }, {
   NAPI_ARGV_UINT32(idx_low, 2)
   NAPI_ARGV_UINT32(idx_high, 3)
-  *((uint64_t *) l->linkname) = uint32s_to_uint64((uint32_t *[]){(uint32_t *) &idx_low, (uint32_t *) &idx_high});
+  *((uint64_t *) l->linkname) = ((uint64_t)idx_high * 4294967296ULL) + (uint64_t)idx_low;
 })
 
 FUSE_METHOD_VOID(ioctl, 5, 0, (const char *path, int cmd, void *arg, struct fuse_file_info *info, unsigned int flags, void *data), {
@@ -900,7 +900,7 @@ FUSE_METHOD_VOID(read_buf, 5, 0, (const char *path, struct fuse_bufvec **bufp, s
   }
 })
 
-FUSE_METHOD_SSIZE(copy_file_range, 8, 1, (const char *path_in, struct fuse_file_info *fi_in, off_t offset_in, const char *path_out, struct fuse_file_info *fi_out, off_t offset_out, size_t size, int flags), {
+FUSE_METHOD_SSIZE(copy_file_range, 10, 1, (const char *path_in, struct fuse_file_info *fi_in, off_t offset_in, const char *path_out, struct fuse_file_info *fi_out, off_t offset_out, size_t size, int flags), {
   l->path = path_in;
   l->fi_in = fi_in;
   l->offset_in = offset_in;
@@ -931,7 +931,7 @@ FUSE_METHOD_SSIZE(copy_file_range, 8, 1, (const char *path_in, struct fuse_file_
   l->res = bytes;
 })
 
-FUSE_METHOD_VOID(fallocate, 5, 0, (const char *path, int mode, off_t off, off_t len, struct fuse_file_info *info), {
+FUSE_METHOD_VOID(fallocate, 7, 0, (const char *path, int mode, off_t off, off_t len, struct fuse_file_info *info), {
   l->path = path;
   l->mode = mode;
   l->offset = off;

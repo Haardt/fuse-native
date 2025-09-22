@@ -31,6 +31,9 @@
       '-O3',
       '-Wall'
     ],
+    'defines': [
+      'HAVE_COPY_FILE_RANGE=1'
+    ],
   }, {
     "target_name": "postinstall",
     "type": "none",
