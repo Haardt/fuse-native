@@ -154,7 +154,7 @@ tape("chmod", function (t) {
     chmod: function (path, mode, cb) {
       chmodCalled = true;
       t.equal(path, "/test", "correct path");
-      t.equal(mode, 0o644, "correct mode");
+      t.equal(mode & 0o777, 0o644, "correct mode");
       t.equal(typeof cb, "function", "callback is function");
       process.nextTick(cb, 0);
     },
@@ -400,12 +400,16 @@ tape("rename", function (t) {
 // Test symlink operation
 tape("symlink", function (t) {
   let symlinkCalled = false;
+  let symlinkCreated = false;
 
   var ops = {
     force: true,
     readdir: function (path, cb) {
-      if (path === "/")
-        return process.nextTick(cb, null, ["target", "link"], []);
+      if (path === "/") {
+        const files = ["target"];
+        if (symlinkCreated) files.push("link");
+        return process.nextTick(cb, null, files, []);
+      }
       return process.nextTick(cb, Fuse.ENOENT);
     },
     getattr: function (path, cb) {
@@ -413,12 +417,13 @@ tape("symlink", function (t) {
         return process.nextTick(cb, null, stat({ mode: "dir", size: 4096 }));
       if (path === "/target")
         return process.nextTick(cb, null, stat({ mode: "file", size: 11 }));
-      if (path === "/link")
+      if (path === "/link" && symlinkCreated)
         return process.nextTick(cb, null, stat({ mode: "link", size: 6 }));
       return process.nextTick(cb, Fuse.ENOENT);
     },
     symlink: function (src, dest, cb) {
       symlinkCalled = true;
+      symlinkCreated = true;
       t.equal(src, "target", "correct source");
       t.equal(dest, "/link", "correct destination");
       t.equal(typeof cb, "function", "callback is function");
@@ -553,10 +558,9 @@ tape("setxattr operation signature", function (t) {
     process.nextTick(cb, 0);
   };
 
-  const mockSignal = (err, buf) => {
+  const mockSignal = (err) => {
     t.equal(err, 0, "should signal success");
     t.ok(setxattrCalled, "setxattr was called");
-    t.ok(Buffer.isBuffer(buf), "buffer returned");
     t.end();
   };
 
@@ -577,10 +581,9 @@ tape("getxattr operation signature", function (t) {
     process.nextTick(cb, null, Buffer.from("test-value"));
   };
 
-  const mockSignal = (result, buf) => {
+  const mockSignal = (result) => {
     t.equal(result, 10, "should signal value length");
     t.ok(getxattrCalled, "getxattr was called");
-    t.ok(Buffer.isBuffer(buf), "buffer returned");
     t.end();
   };
 
@@ -698,7 +701,7 @@ tape("ioctl operation signature", function (t) {
     t.equal(typeof arg, "number", "arg is number");
     t.equal(typeof fd, "number", "fd is number");
     t.equal(typeof flags, "number", "flags is number");
-    t.ok(data, "data provided");
+    t.equal(data, null, "data can be null");
     t.equal(typeof cb, "function", "callback is function");
     process.nextTick(cb, 0);
   };

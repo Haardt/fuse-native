@@ -961,6 +961,9 @@ tape("write_buf with invalid file descriptor", function (t) {
     create: function (path, flags, cb) {
       process.nextTick(cb, 0, 42);
     },
+    open: function (path, flags, cb) {
+      process.nextTick(cb, 0, 42);
+    },
     release: function (path, fd, cb) {
       process.nextTick(cb, 0);
     },
