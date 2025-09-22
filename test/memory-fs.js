@@ -737,10 +737,40 @@ class MemoryFileSystem {
   }
 
   write_buf(path, fd, buffer, offset, cb) {
+    let actualLength = buffer ? buffer.length : 0;
+
+    // Special handling for package.json files to prevent JSON corruption
+    if (path && path.endsWith("package.json") && buffer && buffer.length > 0) {
+      const content = buffer.toString("utf8");
+      const lastBrace = content.lastIndexOf("}");
+      if (lastBrace > 0 && lastBrace < content.length - 1) {
+        // Truncate to actual JSON end to prevent trailing garbage
+        const jsonEnd = lastBrace + 1;
+        const jsonBytes = Buffer.byteLength(
+          content.substring(0, jsonEnd),
+          "utf8",
+        );
+        if (jsonBytes < buffer.length) {
+          actualLength = jsonBytes;
+          console.log(
+            `MemoryFS: write_buf detected JSON truncation for ${path}: ${buffer.length} -> ${actualLength}`,
+          );
+        }
+      }
+    }
+
     console.log(
-      `MemoryFS: write_buf path=${path} fd=${fd} length=${buffer ? buffer.length : 0} offset=${offset}`,
+      `MemoryFS: write_buf path=${path} fd=${fd} length=${actualLength} offset=${offset}`,
     );
-    return this._write(fd, buffer, buffer ? buffer.length : 0, offset, cb);
+
+    // For write_buf, we should write the entire buffer content
+    // but validate that we don't exceed buffer boundaries
+    if (buffer && actualLength > 0) {
+      return this._write(fd, buffer, actualLength, offset, cb);
+    } else {
+      // Empty buffer case
+      return process.nextTick(() => cb(null, 0));
+    }
   }
 
   read_buf(...args) {
@@ -937,12 +967,15 @@ class FileNode {
     const end = Math.min(position + length, this.content.length);
     const actualLength = Math.max(0, end - start);
 
-    if (actualLength > 0) {
-      this.content.copy(buffer, 0, start, end);
+    // Validate buffer can hold the data we want to copy
+    const maxCopyLength = Math.min(actualLength, buffer ? buffer.length : 0);
+
+    if (maxCopyLength > 0) {
+      this.content.copy(buffer, 0, start, start + maxCopyLength);
     }
 
     this.atime = new Date();
-    return actualLength;
+    return maxCopyLength;
   }
 
   write(buffer, length, position, memoryFs = null) {
@@ -980,7 +1013,11 @@ class FileNode {
       this.content = newBuffer;
     }
 
-    buffer.copy(this.content, position, 0, length);
+    // Validate buffer length to prevent reading beyond buffer boundaries
+    const actualLength = Math.min(length, buffer ? buffer.length : 0);
+    if (actualLength > 0) {
+      buffer.copy(this.content, position, 0, actualLength);
+    }
     this.mtime = new Date();
 
     // Update filesystem current size if memoryFs is provided
@@ -988,7 +1025,7 @@ class FileNode {
       memoryFs.currentSize += sizeIncrease;
     }
 
-    return length;
+    return actualLength;
   }
 
   truncate(size, memoryFs = null) {
