@@ -35,6 +35,71 @@ const session = createSession('/tmp/my-mount', operations, options);
 await session.mount();
 ```
 
+### AbortSignal and Timeout Support
+
+All async operations in FUSE Native support cancellation through AbortSignal and automatic timeouts.
+
+#### AbortOptions Interface
+
+```typescript
+interface AbortOptions {
+  signal?: AbortSignal;  // AbortSignal to cancel the operation
+  timeout?: number;      // Timeout in milliseconds
+}
+```
+
+#### Using AbortSignal
+
+```typescript
+import { copyFileRange } from 'fuse-native';
+
+// Manual cancellation
+const controller = new AbortController();
+const promise = copyFileRange(1, 0n, 2, 0n, 1024n, 0, {
+  signal: controller.signal
+});
+
+// Cancel after 1 second
+setTimeout(() => controller.abort(), 1000);
+
+try {
+  await promise;
+} catch (error) {
+  if (error.name === 'AbortError') {
+    console.log('Operation was cancelled');
+  }
+}
+```
+
+#### Using Timeout
+
+```typescript
+import { getxattr } from 'fuse-native';
+
+try {
+  const result = await getxattr('/path/to/file', 'user.attribute', undefined, {
+    timeout: 5000  // 5 second timeout
+  });
+} catch (error) {
+  if (error.name === 'TimeoutError') {
+    console.log('Operation timed out after 5000ms');
+  }
+}
+```
+
+#### Combining AbortSignal and Timeout
+
+```typescript
+import { setxattr } from 'fuse-native';
+
+const controller = new AbortController();
+
+const promise = setxattr('/path', 'user.test', Buffer.from('value'), 0, {
+  signal: controller.signal,
+  timeout: 10000  // Will abort on signal OR after 10 seconds
+});
+```
+
 ### `getVersion()`
 
 Returns version information for the FUSE library and binding.
@@ -148,6 +213,66 @@ import {
   addMilliseconds, 
   addSeconds,
   diffNanoseconds,
+  diffMilliseconds,
+  isAfter,
+  isBefore
+} from 'fuse-native';
+
+// Add 5 seconds to a timestamp
+const futureTime = addSeconds(now(), 5);
+
+// Check if one time is after another
+const isLater = isAfter(futureTime, now()); // true
+
+// Calculate difference in milliseconds
+const diffMs = diffMilliseconds(futureTime, now()); // ~5000
+```
+
+## Operation Cancellation
+
+### AbortError and TimeoutError
+
+```typescript
+import { AbortError, TimeoutError } from 'fuse-native';
+
+// Thrown when operation is manually cancelled
+class AbortError extends Error {
+  name: 'AbortError';
+  code: 'ABORT_ERR';
+}
+
+// Thrown when operation times out
+class TimeoutError extends AbortError {
+  name: 'TimeoutError';
+  code: 'TIMEOUT_ERR';
+}
+```
+
+### Utility Functions
+
+```typescript
+import {
+  createTimeoutSignal,
+  combineAbortSignals,
+  withAbort,
+  validateAbortOptions
+} from 'fuse-native';
+
+// Create a signal that aborts after timeout
+const timeoutSignal = createTimeoutSignal(5000);
+
+// Combine multiple signals
+const userController = new AbortController();
+const combinedSignal = combineAbortSignals(
+  userController.signal,
+  timeoutSignal
+);
+
+// Wrap any promise with abort support
+const result = await withAbort(
+  someAsyncOperation(),
+  combinedSignal
+);
   diffMilliseconds,
   diffSeconds 
 } from 'fuse-native';
