@@ -1,46 +1,54 @@
 {
-  "targets": [{
-    "target_name": "fuse",
-    'variables': {
-                    'fuse__include_dirs%': '<!(pkg-config fuse3 --cflags-only-I | sed s/-I//g)',
-                    'fuse__library_dirs%': '',
-                    'fuse__libraries%': '<!(pkg-config --libs-only-L --libs-only-l fuse3)'
-                },
-    "include_dirs": [
-      "<!(node -e \"require('napi-macros')\")",
-      "<@(fuse__include_dirs)"
-    ],
-    'library_dirs': [
-                  '<@(fuse__library_dirs)',
-    ],
-    "link_settings": {
-        "libraries": ["<@(fuse__libraries)"]},
-    "libraries": [],
-    "sources": [
-      "fuse-native.c"
-    ],
-    'xcode_settings': {
-      'OTHER_CFLAGS': [
-        '-g',
-        '-O3',
-        '-Wall'
+  "targets": [
+    {
+      "target_name": "fuse-native",
+      "sources": [
+        "src/statfs_only.cc",
+        "src/napi_bigint.cc",
+        "src/napi_helpers.cc",
+        "src/errno_mapping.cc",
+        "src/timespec_codec.cc",
+        "src/operations.cc"
+      ],
+      "include_dirs": [
+        "<!@(node -p \"require('node-addon-api').include\")",
+        "<!@(pkg-config --cflags-only-I fuse3 | sed 's/-I//g')"
+      ],
+      "libraries": [
+        "<!@(pkg-config --libs fuse3)"
+      ],
+      "cflags!": ["-fno-exceptions"],
+      "cflags_cc!": ["-fno-exceptions"],
+      "cflags": [
+        "<!@(pkg-config --cflags fuse3)"
+      ],
+      "cflags_cc": [
+        "-std=c++17",
+        "-fexceptions",
+        "-Wall",
+        "-Wextra",
+        "-Wno-unused-parameter",
+        "-Wno-missing-field-initializers"
+      ],
+      "defines": [
+        "NAPI_DISABLE_CPP_EXCEPTIONS",
+        "NODE_ADDON_API_DISABLE_DEPRECATED",
+        "NAPI_VERSION=8",
+        "FUSE_USE_VERSION=31"
+      ],
+      "conditions": [
+        [
+          "OS=='linux'",
+          {
+            "cflags_cc": [
+              "-pthread"
+            ],
+            "libraries": [
+              "-pthread"
+            ]
+          }
+        ]
       ]
-    },
-    'cflags': [
-      '-g',
-      '-O3',
-      '-Wall'
-    ],
-    'defines': [
-      'HAVE_COPY_FILE_RANGE=1'
-    ],
-  }, {
-    "target_name": "postinstall",
-    "type": "none",
-    "dependencies": ["fuse"],
-    "copies": [{
-      "destination": "build/Release",
-      "files": [  ],
-    }]
-  }]
+    }
+  ]
 }

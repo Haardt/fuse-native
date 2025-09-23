@@ -1,0 +1,513 @@
+name: CI
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main, develop ]
+  schedule:
+    # Run daily at 2 AM UTC to catch dependency issues
+    - cron: '0 2 * * *'
+
+env:
+  NODE_OPTIONS: '--max-old-space-size=4096'
+  FORCE_COLOR: 1
+
+jobs:
+  # Security and dependency checks
+  security:
+    name: Security Audit
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v2
+        with:
+          version: 8
+
+      - name: Get pnpm store directory
+        shell: bash
+        run: |
+          echo "STORE_PATH=$(pnpm store path --silent)" >> $GITHUB_ENV
+
+      - name: Cache pnpm store
+        uses: actions/cache@v3
+        with:
+          path: ${{ env.STORE_PATH }}
+          key: ${{ runner.os }}-pnpm-store-${{ hashFiles('**/pnpm-lock.yaml') }}
+          restore-keys: |
+            ${{ runner.os }}-pnpm-store-
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Run security audit
+        run: pnpm audit --audit-level high
+
+      - name: Check for vulnerabilities
+        run: pnpm audit --audit-level moderate --json > audit-results.json || true
+
+      - name: Upload audit results
+        uses: actions/upload-artifact@v3
+        if: always()
+        with:
+          name: security-audit-results
+          path: audit-results.json
+
+  # Lint and format checks
+  lint:
+    name: Lint and Format
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v2
+        with:
+          version: 8
+
+      - name: Get pnpm store directory
+        shell: bash
+        run: |
+          echo "STORE_PATH=$(pnpm store path --silent)" >> $GITHUB_ENV
+
+      - name: Cache pnpm store
+        uses: actions/cache@v3
+        with:
+          path: ${{ env.STORE_PATH }}
+          key: ${{ runner.os }}-pnpm-store-${{ hashFiles('**/pnpm-lock.yaml') }}
+          restore-keys: |
+            ${{ runner.os }}-pnpm-store-
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Run ESLint
+        run: pnpm run lint:check
+
+      - name: Check Prettier formatting
+        run: pnpm run format:check
+
+      - name: TypeScript type checking
+        run: pnpm run typecheck
+
+  # Build matrix for different Node.js versions and architectures
+  build:
+    name: Build (${{ matrix.os }}, Node ${{ matrix.node-version }}, ${{ matrix.arch }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-20.04, ubuntu-22.04]
+        node-version: ['18', '20', '21']
+        arch: ['x64']
+        include:
+          # Add ARM64 builds for specific combinations
+          - os: ubuntu-22.04
+            node-version: '20'
+            arch: 'arm64'
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libfuse3-dev build-essential cmake pkg-config
+
+      - name: Setup Node.js ${{ matrix.node-version }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+          architecture: ${{ matrix.arch }}
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v2
+        with:
+          version: 8
+
+      - name: Get pnpm store directory
+        shell: bash
+        run: |
+          echo "STORE_PATH=$(pnpm store path --silent)" >> $GITHUB_ENV
+
+      - name: Cache pnpm store
+        uses: actions/cache@v3
+        with:
+          path: ${{ env.STORE_PATH }}
+          key: ${{ runner.os }}-${{ matrix.arch }}-pnpm-store-${{ hashFiles('**/pnpm-lock.yaml') }}
+          restore-keys: |
+            ${{ runner.os }}-${{ matrix.arch }}-pnpm-store-
+
+      - name: Cache CMake build
+        uses: actions/cache@v3
+        with:
+          path: |
+            build/
+            ~/.cmake
+          key: ${{ runner.os }}-${{ matrix.arch }}-cmake-${{ hashFiles('CMakeLists.txt', 'src/**/*.cc', 'src/**/*.h') }}
+          restore-keys: |
+            ${{ runner.os }}-${{ matrix.arch }}-cmake-
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build native module
+        run: pnpm run build:native
+        env:
+          CMAKE_BUILD_TYPE: Release
+
+      - name: Build TypeScript
+        run: pnpm run build:ts
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v3
+        with:
+          name: build-${{ matrix.os }}-node${{ matrix.node-version }}-${{ matrix.arch }}
+          path: |
+            build/Release/
+            dist/
+          retention-days: 7
+
+  # Test suite with coverage
+  test:
+    name: Test (${{ matrix.os }}, Node ${{ matrix.node-version }})
+    runs-on: ${{ matrix.os }}
+    needs: [lint]
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-20.04, ubuntu-22.04]
+        node-version: ['18', '20', '21']
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libfuse3-dev build-essential cmake pkg-config
+
+      - name: Setup Node.js ${{ matrix.node-version }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v2
+        with:
+          version: 8
+
+      - name: Get pnpm store directory
+        shell: bash
+        run: |
+          echo "STORE_PATH=$(pnpm store path --silent)" >> $GITHUB_ENV
+
+      - name: Cache pnpm store
+        uses: actions/cache@v3
+        with:
+          path: ${{ env.STORE_PATH }}
+          key: ${{ runner.os }}-pnpm-store-${{ hashFiles('**/pnpm-lock.yaml') }}
+          restore-keys: |
+            ${{ runner.os }}-pnpm-store-
+
+      - name: Cache CMake build
+        uses: actions/cache@v3
+        with:
+          path: |
+            build/
+            ~/.cmake
+          key: ${{ runner.os }}-cmake-${{ hashFiles('CMakeLists.txt', 'src/**/*.cc', 'src/**/*.h') }}
+          restore-keys: |
+            ${{ runner.os }}-cmake-
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build project
+        run: pnpm run build
+
+      - name: Run unit tests
+        run: pnpm test --coverage
+        env:
+          NODE_ENV: test
+
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v3
+        with:
+          file: ./coverage/lcov.info
+          flags: unittests
+          name: codecov-${{ matrix.os }}-node${{ matrix.node-version }}
+          fail_ci_if_error: false
+
+      - name: Upload test artifacts
+        uses: actions/upload-artifact@v3
+        if: always()
+        with:
+          name: test-results-${{ matrix.os }}-node${{ matrix.node-version }}
+          path: |
+            coverage/
+            test-results.xml
+          retention-days: 7
+
+  # Integration tests (require FUSE capabilities)
+  integration-test:
+    name: Integration Tests
+    runs-on: ubuntu-22.04
+    needs: [build, test]
+    if: github.event_name == 'push' || github.event_name == 'schedule'
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libfuse3-dev build-essential cmake pkg-config fuse3
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v2
+        with:
+          version: 8
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build project
+        run: pnpm run build
+
+      - name: Setup FUSE permissions
+        run: |
+          sudo chmod 666 /dev/fuse
+          sudo modprobe fuse
+
+      - name: Run integration tests
+        run: pnpm test test/integration/
+        timeout-minutes: 10
+        env:
+          NODE_ENV: test
+          FUSE_INTEGRATION_TESTS: true
+
+      - name: Upload integration test results
+        uses: actions/upload-artifact@v3
+        if: always()
+        with:
+          name: integration-test-results
+          path: |
+            coverage/
+            integration-test-results.xml
+          retention-days: 7
+
+  # Memory leak and performance tests
+  performance:
+    name: Performance Tests
+    runs-on: ubuntu-22.04
+    needs: [build]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libfuse3-dev build-essential cmake pkg-config valgrind
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v2
+        with:
+          version: 8
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build project (Debug with symbols)
+        run: pnpm run build:native
+        env:
+          CMAKE_BUILD_TYPE: Debug
+
+      - name: Build TypeScript
+        run: pnpm run build:ts
+
+      - name: Run memory leak tests
+        run: |
+          # Enable core dumps for debugging
+          ulimit -c unlimited
+
+          # Run memory tests with Valgrind (if available)
+          if command -v valgrind &> /dev/null; then
+            valgrind --leak-check=full --show-leak-kinds=all --track-origins=yes \
+              node --expose-gc test/memory-leak.js || true
+          fi
+
+      - name: Run performance benchmarks
+        run: pnpm run bench || true
+
+      - name: Upload performance results
+        uses: actions/upload-artifact@v3
+        if: always()
+        with:
+          name: performance-results
+          path: |
+            benchmark-results.json
+            valgrind-results.txt
+          retention-days: 30
+
+  # Sanitizer builds (AddressSanitizer, UndefinedBehaviorSanitizer)
+  sanitizer:
+    name: Sanitizer Tests
+    runs-on: ubuntu-22.04
+    needs: [lint]
+    if: github.event_name == 'push'
+
+    strategy:
+      matrix:
+        sanitizer: [address, undefined]
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libfuse3-dev build-essential cmake pkg-config
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v2
+        with:
+          version: 8
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build with ${{ matrix.sanitizer }} sanitizer
+        run: pnpm run build:native
+        env:
+          CMAKE_BUILD_TYPE: Debug
+          CMAKE_CXX_FLAGS: '-fsanitize=${{ matrix.sanitizer }} -fno-omit-frame-pointer'
+          CMAKE_EXE_LINKER_FLAGS: '-fsanitize=${{ matrix.sanitizer }}'
+
+      - name: Build TypeScript
+        run: pnpm run build:ts
+
+      - name: Run tests with sanitizer
+        run: pnpm test
+        env:
+          NODE_ENV: test
+          ASAN_OPTIONS: 'detect_leaks=1:abort_on_error=1'
+          UBSAN_OPTIONS: 'abort_on_error=1'
+
+  # Build prebuilds for releases
+  prebuild:
+    name: Prebuild (${{ matrix.os }}, ${{ matrix.arch }})
+    runs-on: ${{ matrix.os }}
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    needs: [test, integration-test]
+
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-20.04
+            arch: x64
+          - os: ubuntu-22.04
+            arch: x64
+          - os: ubuntu-22.04
+            arch: arm64
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libfuse3-dev build-essential cmake pkg-config
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          architecture: ${{ matrix.arch }}
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v2
+        with:
+          version: 8
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build prebuild
+        run: pnpm run prebuild
+        env:
+          CMAKE_BUILD_TYPE: Release
+
+      - name: Upload prebuilds
+        uses: actions/upload-artifact@v3
+        with:
+          name: prebuilds-${{ matrix.os }}-${{ matrix.arch }}
+          path: prebuilds/
+          retention-days: 90
+
+  # Notify on success/failure
+  notify:
+    name: Notify Results
+    runs-on: ubuntu-latest
+    needs: [security, lint, build, test, integration-test]
+    if: always()
+
+    steps:
+      - name: Determine overall result
+        run: |
+          if [[ "${{ needs.security.result }}" == "failure" || \
+                "${{ needs.lint.result }}" == "failure" || \
+                "${{ needs.build.result }}" == "failure" || \
+                "${{ needs.test.result }}" == "failure" ]]; then
+            echo "BUILD_STATUS=failure" >> $GITHUB_ENV
+          elif [[ "${{ needs.integration-test.result }}" == "failure" ]]; then
+            echo "BUILD_STATUS=warning" >> $GITHUB_ENV
+          else
+            echo "BUILD_STATUS=success" >> $GITHUB_ENV
+          fi
+
+      - name: Report status
+        run: |
+          echo "Overall CI Status: ${{ env.BUILD_STATUS }}"
+          echo "- Security: ${{ needs.security.result }}"
+          echo "- Lint: ${{ needs.lint.result }}"
+          echo "- Build: ${{ needs.build.result }}"
+          echo "- Test: ${{ needs.test.result }}"
+          echo "- Integration: ${{ needs.integration-test.result }}"

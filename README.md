@@ -1,442 +1,505 @@
-# fuse-native
+# FUSE Native 3.0 - Modern FUSE3 Bindings for Node.js
 
-FUSE bindings for Node JS.
+[![CI Status](https://github.com/sagemathinc/fuse-native/workflows/CI/badge.svg)](https://github.com/sagemathinc/fuse-native/actions)
+[![npm version](https://badge.fury.io/js/@cocalc%2Ffuse-native.svg)](https://www.npmjs.com/package/@cocalc/fuse-native)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-This is a fork of https://www.npmjs.com/package/fuse-native that does
-NOT ship libfuse, and instead depends on it being installed on the user's
-computer. It also only supports Linux.
+A modern, high-performance **FUSE3** binding for Node.js built with **N-API** and **TypeScript**. This library provides a complete, type-safe interface to FUSE (Filesystem in Userspace) with focus on correctness, performance, and developer experience.
 
-URL: https://github.com/sagemathinc/fuse-native
+## ✨ Features
 
-Upstream: [https://github.com/fuse\-friends/fuse\-native](https://github.com/fuse-friends/fuse-native), but upstream is [no longer maintained](https://github.com/fuse-friends/fuse-native/issues/36).  However, [this fork](https://github.com/zkochan/fuse-native) might be the most maintained?
+- **🚀 Modern Architecture**: Built on stable N-API with TypeScript-first design
+- **📊 BigInt Support**: Native 64-bit file sizes, offsets, and timestamps
+- **⚡ High Performance**: Zero-copy data paths and optimized I/O operations
+- **🛡️ Type Safety**: Comprehensive TypeScript types with branded types for safety
+- **🔄 Promise-Based**: Clean async/await API with AbortSignal support
+- **📈 Observability**: Built-in structured logging and metrics
+- **🧪 Well Tested**: Comprehensive test suite with mock testing capabilities
+- **🔧 POSIX Compliant**: Consistent errno error handling and POSIX semantics
 
-### TESTING
+## 🎯 Use Cases
 
-This project includes a comprehensive testing framework with an in-memory FUSE filesystem for testing all FUSE operations.
+- **Custom Filesystems**: Build filesystems backed by databases, cloud storage, or APIs
+- **Virtual Filesystems**: Create overlay, union, or transformation filesystems  
+- **Development Tools**: Build debugging tools, profilers, or development utilities
+- **Data Processing**: Stream processing with filesystem interfaces
+- **Distributed Systems**: Network-attached or distributed filesystem implementations
 
-#### Running Tests
+## 📋 Requirements
 
-```sh
-# Run all tests
-pnpm test
+- **Node.js**: >= 18.0.0
+- **Operating System**: Linux (FUSE3 support required)
+- **Build Tools**: C++ compiler (GCC/Clang), CMake >= 3.18, pkg-config
+- **System Libraries**: libfuse3-dev
 
-# Run only FUSE operations tests
-pnpm test:fuse
+### System Dependencies
 
-# Run with verbose output
-pnpm test:verbose
-
-# Run the in-memory filesystem example
-pnpm example:memory-fs
+**Ubuntu/Debian:**
+```bash
+sudo apt-get update
+sudo apt-get install libfuse3-dev build-essential cmake pkg-config
 ```
 
-#### Test Framework
+**Fedora/CentOS/RHEL:**
+```bash
+sudo dnf install fuse3-devel gcc-c++ cmake pkg-config
+# or on older systems:
+sudo yum install fuse3-devel gcc-c++ cmake pkg-config
+```
 
-The test suite includes:
+**Arch Linux:**
+```bash
+sudo pacman -S fuse3 base-devel cmake pkgconf
+```
 
-- **96 comprehensive tests** covering all FUSE operations
-- **In-memory filesystem** (`test/memory-fs.js`) - Complete FUSE implementation in memory
-- **Operation tests** (`test/fuse-operations.test.js`) - Tests for all 40+ FUSE operations
-- **Integration tests** - End-to-end filesystem scenarios
-- **Example usage** (`test/example-usage.js`) - Mountable in-memory filesystem demo
+## 🚀 Quick Start
 
-#### Tested FUSE Operations
+### Installation
 
-All major FUSE operations are tested with positive and negative test cases:
+```bash
+# Using pnpm (recommended)
+pnpm add @cocalc/fuse-native
 
-**Core Operations:** `init`, `error`, `access`, `statfs`
-**File Metadata:** `getattr`, `fgetattr`, `utimens`, `chmod`, `chown`  
-**File I/O:** `open`, `create`, `read`, `write`, `release`, `flush`, `fsync`, `truncate`, `ftruncate`
-**Directory Operations:** `opendir`, `readdir`, `releasedir`, `fsyncdir`, `mkdir`, `rmdir`
-**File Management:** `unlink`, `rename`, `link`, `symlink`, `readlink`, `mknod`
-**Extended Attributes:** `setxattr`, `getxattr`, `listxattr`, `removexattr`
-**Advanced Operations:** `lock`, `bmap`, `ioctl`, `poll`, `write_buf`, `read_buf`, `flock`, `fallocate`, `lseek`, `copy_file_range`
+# Using npm
+npm install @cocalc/fuse-native
 
-#### Callback Conventions
+# Using yarn
+yarn add @cocalc/fuse-native
+```
 
-The tests follow strict callback conventions based on AGENTS.md:
-- **Success**: `cb(0)` or `cb(0, result)` 
-- **File operations**: `create` returns `cb(0, fd)`, `read`/`write` return `cb(bytesTransferred)`
-- **Errors**: `cb(negativeNumber)` using standard errno codes
+### Basic Example
 
-#### Example: Testing Your FUSE Implementation
+```typescript
+import { createSession, mode, errno } from '@cocalc/fuse-native';
+import type { FuseOperationHandlers, StatResult } from '@cocalc/fuse-native';
 
-```js
-const MemoryFileSystem = require('./test/memory-fs');
-const fs = new MemoryFileSystem();
+// Simple in-memory filesystem
+const files = new Map<bigint, { name: string; content: Buffer; stat: StatResult }>();
+let nextIno = 2n; // Start after root inode (1)
 
-// Test file creation
-fs.create('/test.txt', 0o644, (err, fd) => {
-  console.log('File created with FD:', fd);
-  
-  // Test writing
-  const data = Buffer.from('Hello World');
-  fs.write(fd, data, data.length, 0, (bytesWritten) => {
-    console.log('Bytes written:', bytesWritten);
-  });
+const operations: FuseOperationHandlers = {
+  async lookup(parent, name, context) {
+    // Find file in parent directory
+    for (const [ino, file] of files) {
+      if (file.name === name) {
+        return {
+          attr: file.stat,
+          timeout: 1.0
+        };
+      }
+    }
+    
+    throw new Error('ENOENT');
+  },
+
+  async getattr(ino, context) {
+    if (ino === 1n) {
+      // Root directory
+      return {
+        attr: {
+          ino: 1n,
+          mode: mode.S_IFDIR | 0o755,
+          nlink: 2,
+          uid: context.uid,
+          gid: context.gid,
+          size: 0n,
+          blocks: 0n,
+          atime: BigInt(Date.now()) * 1_000_000n,
+          mtime: BigInt(Date.now()) * 1_000_000n,
+          ctime: BigInt(Date.now()) * 1_000_000n
+        },
+        timeout: 1.0
+      };
+    }
+
+    const file = files.get(ino);
+    if (!file) {
+      throw new Error('ENOENT');
+    }
+
+    return {
+      attr: file.stat,
+      timeout: 1.0
+    };
+  },
+
+  async read(ino, context, options) {
+    const file = files.get(ino);
+    if (!file) {
+      throw new Error('ENOENT');
+    }
+
+    const start = Number(options.offset);
+    const end = Math.min(start + options.size, file.content.length);
+    const slice = file.content.subarray(start, end);
+    
+    return slice.buffer.slice(slice.byteOffset, slice.byteOffset + slice.byteLength);
+  }
+};
+
+// Create and mount the filesystem
+const session = createSession('/tmp/my-fs', operations, {
+  debug: true,
+  allowOther: true
+});
+
+await session.mount();
+console.log('Filesystem mounted at /tmp/my-fs');
+
+// Handle cleanup
+process.on('SIGINT', async () => {
+  await session.unmount();
+  await session.destroy();
+  console.log('Filesystem unmounted');
+  process.exit(0);
 });
 ```
 
-#### Testing Results
+## 🏗️ Local Development
 
-- On ARM64 linux, at least, 3 of the tests fail.
-- On x86\-64 linux, all the tests pass
+### Prerequisites
 
-### Other Notes
+Ensure you have the system dependencies installed (see Requirements section above).
 
-- Upstream seems dead \-\- [https://github.com/fuse\-friends/fuse\-native/issues/36](https://github.com/fuse-friends/fuse-native/issues/36) 
-- On ARM64 linux upstream doesn't install, due to the shared library binary that they ship, which is wrong.  That's the reason I removed all use of shipping shared libraries in an npm module, which is really the wrong way to do things, obviously.
-- I added the `nonEmpty` option, which wasn't in upstream.
+### Building from Source
 
-## API
+```bash
+# Clone the repository
+git clone https://github.com/sagemathinc/fuse-native.git
+cd fuse-native
 
-In order to create a FUSE mountpoint, you first need to create a `Fuse` object that wraps a set of implemented FUSE syscall handlers:
+# Install dependencies
+pnpm install
 
-```js
-const fuse = new Fuse(mnt, handlers, opts = {})
+# Build native and TypeScript components
+pnpm run build
+
+# Run tests
+pnpm test
+
+# Run with coverage
+pnpm run test:coverage
 ```
 
-Create a new `Fuse` object.
+### Development Scripts
 
-`mnt` is the string path of your desired mountpoint.
+```bash
+# Clean build artifacts
+pnpm run clean
 
-`handlers` is an object mapping syscall names to implementations. The complete list of available syscalls is described below. As an example, if you wanted to implement a filesystem that only supports `getattr`, your handle object would look like:
+# Build only native module
+pnpm run build:native
 
-```js
-{
-  getattr: function (path, cb) {
-    if (path === '/') {
-        cb(0, stat({ mode: 'dir', size: 4096 }));
-        return;
-    }
-    if (path === '/test') {
-        cb(0, stat({ mode: 'file', size: 11 }));
-        return;
-    }
-    cb(Fuse.ENOENT);
-  }
+# Build only TypeScript
+pnpm run build:ts
+
+# Watch mode for TypeScript
+pnpm run dev
+
+# Linting and formatting
+pnpm run lint
+pnpm run format
+
+# Type checking
+pnpm run typecheck
+```
+
+### Testing Without FUSE
+
+The test suite includes comprehensive mock tests that don't require FUSE capabilities:
+
+```bash
+# Run mock tests (no mount required)
+pnpm test test/smoke.test.ts
+
+# Run specific operation tests
+pnpm test test/readdir.test.ts      # Readdir with pagination & d_type
+pnpm test test/helpers-dirent.test.ts  # Directory entry utilities
+pnpm test test/readdir-errors.test.ts  # Error handling & FUSE compliance
+
+# Run all tests
+pnpm test
+
+# Watch mode
+pnpm run test:watch
+```
+
+#### Comprehensive Test Coverage
+
+The test suite includes extensive coverage for all FUSE operations:
+
+- **📁 Readdir Operations**: Pagination, large directories (10k+ entries), `d_type` support
+- **🔧 Helper Functions**: DirentUtils, error handling, type safety
+- **⚡ Performance Tests**: Concurrent operations, memory efficiency
+- **❌ Error Scenarios**: All documented errno conditions with FUSE specification compliance
+
+## 📖 API Documentation
+
+### Core Types
+
+All file sizes, offsets, and inode numbers use `BigInt` for proper 64-bit support:
+
+```typescript
+import type { 
+  Ino,        // Branded BigInt for inode numbers
+  Fd,         // Branded number for file descriptors  
+  Mode,       // Branded number for file modes
+  Flags,      // Branded number for file flags
+  Timestamp   // BigInt nanoseconds since epoch
+} from '@cocalc/fuse-native';
+```
+
+### Operation Handlers
+
+Implement the operations your filesystem needs:
+
+```typescript
+interface FuseOperationHandlers {
+  lookup?: (parent: Ino, name: string, context: RequestContext) => Promise<LookupResult>;
+  getattr?: (ino: Ino, context: RequestContext, fi?: FileInfo) => Promise<GetattrResult>;
+  setattr?: (ino: Ino, attr: Partial<StatResult>, context: RequestContext) => Promise<SetattrResult>;
+  read?: (ino: Ino, context: RequestContext, options: ReadOptions) => Promise<ArrayBuffer>;
+  write?: (ino: Ino, data: ArrayBuffer, context: RequestContext, options: WriteOptions) => Promise<number>;
+  // ... and many more
 }
 ```
 
-`opts` can be include:
+### Error Handling
 
-```js
-  displayFolder: 'Folder Name', // Add a name/icon to the mount volume on OSX,
-  debug: false,  // Enable detailed tracing of operations.
-  force: false,  // Attempt to unmount a the mountpoint before remounting.
-  mkdir: false   // Create the mountpoint before mounting.
-```
+Use standard POSIX errno codes:
 
-I'm making extensive use of these bindings in [WebSocketFS](https://github.com/sagemathinc/websocketfs/blob/main/lib/fuse/sftp-fuse.ts), which is _**like sshfs, but over a WebSocket and implemented in Typescript.**_ Look at code here: https://github.com/sagemathinc/websocketfs/tree/main/lib/fuse 
+```typescript
+import { errno } from '@cocalc/fuse-native';
 
-### FUSE API
+// Throw errors with proper errno codes
+throw new FuseErrno('ENOENT');  // File not found
+throw new FuseErrno('EACCES');  // Permission denied
+throw new FuseErrno('EEXIST');  // File exists
 
-Most of the [FUSE api](http://fuse.sourceforge.net/doxygen/structfuse__operations.html) is supported. In general the callback for each op should be called with `cb(returnCode, [value])` where the return code is a number (`0` for OK and `< 0` for errors). See below for a list of POSIX error codes.
-
-Typescript: see [index.d.ts](./index.d.ts).
-
-#### `ops.init(cb)`
-
-Called on filesystem init.
-
-#### `ops.access(path, mode, cb)`
-
-Called before the filesystem accessed a file
-
-#### `ops.statfs(path, cb)`
-
-Called when the filesystem is being stat'ed. Accepts a fs stat object after the return code in the callback.
-
-``` js
-ops.statfs = function (path, cb) {
-  cb(0, {
-    bsize: 1000000,
-    frsize: 1000000,
-    blocks: 1000000,
-    bfree: 1000000,
-    bavail: 1000000,
-    files: 1000000,
-    ffree: 1000000,
-    favail: 1000000,
-    fsid: 1000000,
-    flag: 1000000,
-    namemax: 1000000
-  })
+// Or use errno constants directly
+if (someCondition) {
+  throw new Error(`ERRNO:${errno.EINVAL}`);
 }
 ```
 
-#### `ops.getattr(path, cb)`
+### Session Management
 
-Called when a path is being stat'ed. Accepts a stat object (similar to the one returned in `fs.stat(path, cb)`) after the return code in the callback.
+```typescript
+const session = createSession(mountpoint, operations, options);
 
-``` js
-ops.getattr = function (path, cb) {
-  cb(0, {
-    mtime: new Date(),
-    atime: new Date(),
-    ctime: new Date(),
-    size: 100,
-    mode: 16877,
-    uid: process.getuid(),
-    gid: process.getgid()
-  })
-}
+// Mount the filesystem
+await session.mount({
+  timeout: 30000  // 30 second timeout
+});
+
+// Check status
+console.log('Mounted:', session.mounted);
+console.log('Ready:', session.ready);
+
+// Unmount gracefully
+await session.unmount({
+  force: false,  // Graceful unmount
+  lazy: false    // Not lazy
+});
+
+// Clean up resources
+await session.destroy();
 ```
 
-#### `ops.fgetattr(path, fd, cb)`
+## 🧪 Testing
 
-Same as above but is called when someone stats a file descriptor
+### Unit Tests
 
-#### `ops.flush(path, fd, cb)`
+```bash
+# Run all tests
+pnpm test
 
-Called when a file descriptor is being flushed
+# Run specific test files  
+pnpm test test/smoke.test.ts
 
-#### `ops.fsync(path, datasync, fd, cb)`
+# Run with verbose output
+pnpm test --verbose
 
-Called when a file descriptor is being fsync'ed.
-
-#### `ops.fsyncdir(path, datasync, fd, cb)`
-
-Same as above but on a directory
-
-#### `ops.readdir(path, cb)`
-
-Called when a directory is being listed. Accepts an array of file/directory names after the return code in the callback
-
-``` js
-ops.readdir = function (path, cb) {
-  cb(0, ['file-1.txt', 'dir'])
-}
+# Watch mode
+pnpm run test:watch
 ```
 
-#### `ops.truncate(path, size, cb)`
+### Integration Tests
 
-Called when a path is being truncated to a specific size
+Integration tests require FUSE capabilities and mount permissions:
 
-#### `ops.ftruncate(path, fd, size, cb)`
+```bash
+# Run integration tests (requires mount permissions)
+sudo pnpm test test/integration/
 
-Same as above but on a file descriptor
-
-#### `ops.readlink(path, cb)`
-
-Called when a symlink is being resolved. Accepts a pathname (that the link should resolve to) after the return code in the callback
-
-``` js
-ops.readlink = function (path, cb) {
-  cb(null, 'file.txt') // make link point to file.txt
-}
+# Or use user namespaces (if available)
+unshare -rm pnpm test test/integration/
 ```
 
-#### `ops.chown(path, uid, gid, cb)`
+### Mock Testing
 
-Called when ownership of a path is being changed
+The library includes comprehensive mocking utilities:
 
-#### `ops.chmod(path:string, mode:number, cb)`
+```typescript
+import { createMockStat, createMockContext, createMockFileInfo } from '../test/setup.js';
 
-Called when the mode of a path is being changed.  Always called
-with mode a number (not a string).
-
-#### `ops.mknod(path, mode, dev, cb)`
-
-Called when a new device file is being made.
-
-#### `ops.setxattr(path, name, value, position, flags, cb)`
-
-Called when extended attributes is being set (see the extended docs for your platform).
-
-Copy the `value` buffer somewhere to store it.
-
-The position argument is mostly a legacy argument only used on MacOS but see the getxattr docs
-on Mac for more on that (you probably don't need to use that).
-
-#### `ops.getxattr(path, name, position, cb)`
-
-Called when extended attributes is being read.
-
-Return the extended attribute as the second argument to the callback (needs to be a buffer).
-If no attribute is stored return `null` as the second argument.
-
-The position argument is mostly a legacy argument only used on MacOS but see the getxattr docs
-on Mac for more on that (you probably don't need to use that).
-
-#### `ops.listxattr(path, cb)`
-
-Called when extended attributes of a path are being listed.
-
-Return a list of strings of the names of the attributes you have stored as the second argument to the callback.
-
-#### `ops.removexattr(path, name, cb)`
-
-Called when an extended attribute is being removed.
-
-#### `ops.open(path, flags, cb)`
-
-Called when a path is being opened. `flags` in a number containing the permissions being requested. Accepts a file descriptor after the return code in the callback.
-
-``` js
-var toFlag = function(flags) {
-  flags = flags & 3
-  if (flags === 0) return 'r'
-  if (flags === 1) return 'w'
-  return 'r+'
-}
-
-ops.open = function (path, flags, cb) {
-  var flag = toFlag(flags) // convert flags to a node style string
-  ...
-  cb(0, 42) // 42 is a file descriptor
-}
+const mockStat = createMockStat();
+const mockContext = createMockContext();
+const mockFileInfo = createMockFileInfo();
 ```
 
-#### `ops.opendir(path, flags, cb)`
+## ⚡ Performance
 
-Same as above but for directories
+### Optimization Guidelines
 
-#### `ops.read(path, fd, buffer, length, position, cb)`
+1. **Use BigInt for 64-bit values**: Proper handling prevents precision loss
+2. **Implement Zero-Copy patterns**: Return ArrayBuffer directly when possible  
+3. **Batch operations**: Group related filesystem operations
+4. **Use appropriate timeouts**: Balance cache efficiency with data freshness
+5. **Handle AbortSignal**: Support cancellation for long-running operations
 
-Called when contents of a file is being read. You should write the result of the read to the `buffer` and return the number of bytes written as the first argument in the callback.
-If no bytes were written (read is complete) return 0 in the callback.
+### Benchmarking
 
-``` js
-var data = new Buffer('hello world')
+```bash
+# Run performance benchmarks
+pnpm run bench
 
-ops.read = function (path, fd, buffer, length, position, cb) {
-  if (position >= data.length) return cb(0) // done
-  var part = data.slice(position, position + length)
-  part.copy(buffer) // write the result of the read to the result buffer
-  cb(part.length) // return the number of bytes read
-}
+# Profile memory usage
+pnpm run bench:memory
+
+# I/O performance tests
+pnpm run bench:io
 ```
 
-#### `ops.write(path, fd, buffer, length, position, cb)`
+## 🔧 Configuration
 
-Called when a file is being written to. You can get the data being written in `buffer` and you should return the number of bytes written in the callback as the first argument.
+### Session Options
 
-``` js
-ops.write = function (path, fd, buffer, length, position, cb) {
-  console.log('writing', buffer.slice(0, length))
-  cb(length) // we handled all the data
-}
+```typescript
+const options: FuseSessionOptions = {
+  // Access control
+  allowOther: false,          // Allow other users to access
+  allowRoot: false,           // Allow root access
+  defaultPermissions: true,   // Use default permission checking
+
+  // Performance
+  maxRead: 131072,           // Maximum read size (128KB)  
+  maxWrite: 131072,          // Maximum write size (128KB)
+  timeout: 1.0,              // Attribute/entry cache timeout
+
+  // Behavior
+  debug: false,              // Enable debug logging
+  singleThreaded: false,     // Force single-threaded mode
+  autoUnmount: true,         // Auto-unmount on exit
+
+  // Custom mount options
+  mountOptions: [
+    'default_permissions',
+    'allow_other'
+  ]
+};
 ```
 
-#### `ops.release(path, fd, cb)`
+## 🚨 Troubleshooting
 
-Called when a file descriptor is being released. Happens when a read/write is done etc.
+### Common Issues
 
-#### `ops.releasedir(path, fd, cb)`
+**Build Failures:**
+```bash
+# Ensure FUSE3 development headers are installed
+sudo apt-get install libfuse3-dev
 
-Same as above but for directories
-
-#### `ops.create(path, mode, cb)`
-
-Called when a new file is being opened.
-
-#### `ops.utimens(path, atime, mtime, cb)`
-
-Called when the atime/mtime of a file is being changed.
-
-#### `ops.unlink(path, cb)`
-
-Called when a file is being unlinked.
-
-#### `ops.rename(src, dest, cb)`
-
-Called when a file is being renamed.
-
-#### `ops.link(src, dest, cb)`
-
-Called when a new link is created.
-
-#### `ops.symlink(src, dest, cb)`
-
-Called when a new symlink is created
-
-#### `ops.mkdir(path, mode, cb)`
-
-Called when a new directory is being created
-
-#### `ops.rmdir(path, cb)`
-
-Called when a directory is being removed
-
-### Newly Added Operations
-
-The following operations have been recently added and are available for use:
-
-#### `ops.lock(path, fd, cmd, flock, cb)`
-
-Called to perform POSIX file locking. `flock` is an object with the following properties:
-
-```js
-{
-  l_type: 0, // F_RDLCK, F_WRLCK, F_UNLCK
-  l_whence: 0, // SEEK_SET, SEEK_CUR, SEEK_END
-  l_start: 0,
-  l_len: 0,
-  l_pid: 0
-}
+# Clear build cache
+pnpm run clean
+pnpm install --force
+pnpm run build
 ```
 
-#### `ops.bmap(path, blocksize, cb)`
+**Permission Errors:**
+```bash
+# Add user to fuse group
+sudo usermod -a -G fuse $USER
 
-Called to map a block in the file to a block on the device.
+# Or run with appropriate permissions
+sudo node your-app.js
+```
 
-#### `ops.ioctl(path, cmd, arg, fd, flags, data, cb)`
+**Mount Issues:**
+```bash
+# Check if mountpoint is already in use
+mountpoint /tmp/my-fs
 
-Called to perform an ioctl on a file descriptor. `arg` and `data` are buffers.
+# Force unmount if needed
+sudo fusermount -u /tmp/my-fs
 
-#### `ops.poll(path, fd, ph, reventsp, cb)`
+# Check FUSE is available
+ls -la /dev/fuse
+```
 
-Called to poll for I/O readiness. `ph` and `reventsp` are buffers.
+### Debug Mode
 
-#### `ops.write_buf(path, buf, offset, fd, cb)`
+Enable debug logging for detailed operation traces:
 
-Called to write the contents of a buffer to a file. `buf` is a `fuse_bufvec` structure, passed as a buffer.
+```typescript
+const session = createSession('/tmp/debug-fs', operations, {
+  debug: true
+});
+```
 
-#### `ops.read_buf(path, bufp, len, offset, fd, cb)`
+### Logging
 
-Called to read the contents of a file into a buffer. `bufp` is a `fuse_bufvec` structure, passed as a buffer.
+The library uses structured logging. Configure your log level:
 
-#### `ops.flock(path, fd, op, cb)`
+```bash
+export DEBUG=fuse-native:*
+node your-app.js
+```
 
-Called to perform BSD file locking.
+## 🤝 Contributing
 
-#### `ops.fallocate(path, mode, offset, length, fd, cb)`
+We welcome contributions! Please see [CONTRIBUTING.md](./CONTRIBUTING.md) for guidelines.
 
-Called to allocate space for a file.
+### Development Workflow
 
-#### `ops.lseek(path, offset, whence, fd, cb)`
+1. Fork the repository
+2. Create a feature branch: `git checkout -b feature/amazing-feature`
+3. Make your changes following the coding standards
+4. Add tests for new functionality
+5. Ensure all tests pass: `pnpm test`
+6. Commit with conventional commits: `feat: add amazing feature`
+7. Push and create a Pull Request
 
-Called to find the next data or hole in a file.
+### Code Style
 
-#### `ops.copy_file_range(path, fd, offsetIn, pathOut, fdOut, offsetOut, len, flags, cb)`
+- **TypeScript**: Strict mode with comprehensive type annotations
+- **C++**: C++17 with RAII patterns and proper error handling
+- **Testing**: Jest with comprehensive mock and integration tests
+- **Documentation**: JSDoc for all public APIs
 
-Called to copy a range of data from one file to another.
+## 📄 License
 
-## Error Codes
+MIT License - see [LICENSE](./LICENSE) file for details.
 
-FUSE operations should return appropriate POSIX error codes. Here are common ones used in the tests:
+## 🙏 Acknowledgments
 
-- `0` - Success
-- `-2` (ENOENT) - File/directory not found
-- `-9` (EBADF) - Bad file descriptor
-- `-13` (EACCES) - Access denied
-- `-17` (EEXIST) - File exists
-- `-20` (ENOTDIR) - Not a directory
-- `-21` (EISDIR) - Is a directory
-- `-22` (EINVAL) - Invalid argument
-- `-25` (ENOTTY) - Not a terminal
-- `-39` (ENOTEMPTY) - Directory not empty
-- `-61` (ENODATA) - No data available
+- **FUSE Project**: For the excellent filesystem framework
+- **Node.js Team**: For the stable N-API
+- **TypeScript Team**: For the amazing type system
+- **Original fuse-bindings**: Inspiration for the API design
 
-## Testing and Development
+## 📚 Related Projects
 
-See `test/README.md` for detailed information about the testing framework and how to use the in-memory filesystem for development and testing.
+- [libfuse](https://github.com/libfuse/libfuse) - The original FUSE library
+- [node-fuse-bindings](https://github.com/mafintosh/fuse-bindings) - Original Node.js FUSE bindings  
+- [go-fuse](https://github.com/hanwen/go-fuse) - FUSE bindings for Go
+- [python-fuse](https://github.com/libfuse/python-fuse) - FUSE bindings for Python
 
-## License
+## 📞 Support
 
-MIT for these bindings.
+- **Issues**: [GitHub Issues](https://github.com/sagemathinc/fuse-native/issues)
+- **Discussions**: [GitHub Discussions](https://github.com/sagemathinc/fuse-native/discussions)
+- **Security**: Report security issues to security@sagemathinc.com
 
-See the [libfuse](https://github.com/libfuse/libfuse) license for Linux/BSD
-for the FUSE shared library license, which is LGPL
+---
 
+**Built with ❤️ by the FUSE Native team**
