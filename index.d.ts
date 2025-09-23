@@ -16,6 +16,20 @@ declare namespace Fuse {
     ctime: Date;
   }
 
+  export interface Lock {
+    type: number;
+    whence: number;
+    start: number;
+    len: number;
+    pid: number;
+    owner: bigint;
+  }
+
+  export interface PollHandle {
+    value: bigint;
+    buffer: Buffer;
+  }
+
   export interface OPERATIONS {
     init?: (cb: (err: number) => void) => void;
     error?: (cb: (err: number) => void) => void;
@@ -51,7 +65,11 @@ declare namespace Fuse {
     flush?: (path: string, fd: number, cb: (err: number) => void) => void;
     fsync?: (path: string, dataSync: boolean, fd: number, cb: (err: number) => void) => void;
     fsyncdir?: (path: string, dataSync: boolean, fd: number, cb: (err: number) => void) => void;
-    readdir?: (path: string, cb: (err: number, names?: string[], stats?: Stats[]) => void) => void;
+    readdir?: (
+        path: string,
+        flagsOrCallback: number | ((err: number, names?: string[], stats?: Stats[]) => void),
+        cb?: (err: number, names?: string[], stats?: Stats[]) => void
+    ) => void;
     truncate?: (path: string, size: number, cb: (err: number) => void) => void;
     ftruncate?: (path: string, fd: number, size: number, cb: (err: number) => void) => void;
     utimens?: (path: string, atime: Date, mtime: Date, cb: (err: number) => void) => void;
@@ -104,11 +122,87 @@ declare namespace Fuse {
         cb: (err: number, fd?: number, modePassedOn?: number) => void
     ) => void;
     unlink?: (path: string, cb: (err: number) => void) => void;
-    rename?: (src: string, dest: string, cb: (err: number) => void) => void;
+    rename?: (
+        src: string,
+        dest: string,
+        flagsOrCallback: number | ((err: number) => void),
+        cb?: (err: number) => void
+    ) => void;
     link?: (src: string, dest: string, cb: (err: number) => void) => void;
     symlink?: (src: string, dest: string, cb: (err: number) => void) => void;
     mkdir?: (path: string, mode: number, cb: (err: number) => void) => void;
     rmdir?: (path: string, cb: (err: number) => void) => void;
+    lock?: (
+        path: string,
+        fd: number,
+        cmd: number,
+        lock: Lock,
+        cb: (err: number, updatedLock?: Partial<Lock>) => void
+    ) => void;
+    bmap?: (
+        path: string,
+        blockSize: number,
+        idx: number,
+        cb: (err: number, idx?: number) => void
+    ) => void;
+    ioctl?: (
+        path: string,
+        fd: number,
+        cmd: number,
+        arg: bigint,
+        flags: number,
+        data: Buffer,
+        cb: (err: number, result?: number) => void
+    ) => void;
+    poll?: (
+        path: string,
+        fd: number,
+        events: number,
+        handle: PollHandle,
+        cb: (err: number, revents?: number) => void
+    ) => void;
+    write_buf?: (
+        path: string,
+        fd: number,
+        buffer: Buffer,
+        length: number,
+        position: number,
+        cb: (bytesWritten?: number) => void
+    ) => void;
+    read_buf?: (
+        path: string,
+        fd: number,
+        size: number,
+        position: number,
+        cb: (err: number, buffer?: Buffer) => void
+    ) => void;
+    flock?: (path: string, fd: number, op: number, owner: bigint, cb: (err: number) => void) => void;
+    fallocate?: (
+        path: string,
+        fd: number,
+        mode: number,
+        offset: number,
+        length: number,
+        cb: (err: number) => void
+    ) => void;
+    copy_file_range?: (
+        pathIn: string,
+        fdIn: number,
+        offsetIn: number,
+        pathOut: string,
+        fdOut: number,
+        offsetOut: number,
+        size: number,
+        flags: number,
+        cb: (err: number, bytesCopied?: number) => void
+    ) => void;
+    lseek?: (
+        path: string,
+        fd: number,
+        offset: number,
+        whence: number,
+        cb: (err: number, newOffset?: number | bigint) => void
+    ) => void;
   }
 
   // See https://github.com/refinio/fuse-native

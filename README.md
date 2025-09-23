@@ -136,12 +136,16 @@ Called when a file descriptor is being fsync'ed.
 
 Same as above but on a directory
 
-#### `ops.readdir(path, cb)`
+#### `ops.readdir(path[, flags], cb)`
 
-Called when a directory is being listed. Accepts an array of file/directory names after the return code in the callback
+Called when a directory is being listed. The optional `flags` parameter exposes
+the raw `enum fuse_readdir_flags` bits provided by libfuse 3. Pass your callback
+as either the second argument (legacy signature) or the third argument. Accepts
+an array of file/directory names after the return code in the callback.
 
 ``` js
-ops.readdir = function (path, cb) {
+ops.readdir = function (path, flags, cb) {
+  if (typeof flags === 'function') return ops.readdir(path, 0, flags)
   cb(0, ['file-1.txt', 'dir'])
 }
 ```
@@ -276,9 +280,11 @@ Called when the atime/mtime of a file is being changed.
 
 Called when a file is being unlinked.
 
-#### `ops.rename(src, dest, cb)`
+#### `ops.rename(src, dest[, flags], cb)`
 
-Called when a file is being renamed.
+Called when a file is being renamed. On libfuse 3 the optional `flags` argument
+contains the rename mask (`RENAME_NOREPLACE`, `RENAME_EXCHANGE`, ...). Pass your
+callback as either the third or fourth argument.
 
 #### `ops.link(src, dest, cb)`
 
@@ -295,6 +301,62 @@ Called when a new directory is being created
 #### `ops.rmdir(path, cb)`
 
 Called when a directory is being removed
+
+#### `ops.lock(path, fd, cmd, lock, cb)`
+
+Called for POSIX record locking operations. `lock` is an object with the
+properties `type`, `whence`, `start`, `len`, `pid`, and `owner` (a `BigInt`).
+Update the fields of this object or return a partial replacement to control the
+lock state reported back to the kernel. The callback should be invoked with
+`cb(err, updatedLock?)`.
+
+#### `ops.bmap(path, blockSize, idx, cb)`
+
+Translate a file-relative block index to a device block index. Invoke the
+callback with the mapped block number.
+
+#### `ops.ioctl(path, fd, cmd, arg, flags, data, cb)`
+
+Handle FUSE `ioctl` requests. `arg` is exposed as a `BigInt` representing the
+raw pointer passed by the kernel. `data` is a `Buffer` backed directly by the
+kernel-provided memory region whose size is derived from `_IOC_SIZE(cmd)`.
+Mutating this buffer updates the memory returned to the caller.
+
+#### `ops.poll(path, fd, events, handle, cb)`
+
+Handle poll notifications. `handle.value` is the raw poll handle as a `BigInt`
+and `handle.buffer` is the underlying `Buffer`. Return the ready event mask via
+the callback.
+
+#### `ops.write_buf(path, fd, buffer, length, position, cb)`
+
+Zero-copy variant of `write`. `buffer` contains the kernel data to persist.
+Invoke the callback with the number of bytes written.
+
+#### `ops.read_buf(path, fd, size, position, cb)`
+
+Zero-copy variant of `read`. Provide a `Buffer` in the callback containing the
+requested data.
+
+#### `ops.flock(path, fd, op, owner, cb)`
+
+Handle BSD `flock` operations. `owner` is exposed as a `BigInt` mirroring the
+kernel-provided lock owner identifier.
+
+#### `ops.fallocate(path, fd, mode, offset, length, cb)`
+
+Allocate space for a file range.
+
+#### `ops.copy_file_range(pathIn, fdIn, offsetIn, pathOut, fdOut, offsetOut, size, flags, cb)`
+
+Handle in-kernel `copy_file_range` operations. Use the provided offsets and
+length to copy data between open file handles without routing it through user
+space. Invoke the callback with the number of bytes copied.
+
+#### `ops.lseek(path, fd, offset, whence, cb)`
+
+Process `lseek` requests and return the resulting file offset (number or
+`BigInt`) via the callback.
 
 ## License
 
