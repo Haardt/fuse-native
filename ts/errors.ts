@@ -32,7 +32,11 @@ export class FuseErrno extends Error {
   ) {
     // Convert code to errno number if string
     const errno = typeof code === 'string' ? getErrnoFromCode(code) : code;
-    const errorCode = typeof code === 'string' ? code : getCodeFromErrno(errno);
+    // Handle both positive and negative errno values - normalize to negative
+    const normalizedErrno =
+      typeof code === 'number' && code > 0 ? -code : errno;
+    const errorCode =
+      typeof code === 'string' ? code : getCodeFromErrno(normalizedErrno);
 
     // Create descriptive message
     const fullMessage = message || `${errorCode}: ${getErrnoMessage(errno)}`;
@@ -40,7 +44,7 @@ export class FuseErrno extends Error {
     super(fullMessage);
 
     this.name = 'FuseErrno';
-    this.errno = errno;
+    this.errno = normalizedErrno;
     this.code = errorCode;
     this.syscall = syscall;
     this.path = path;
@@ -356,7 +360,9 @@ export function getCodeFromErrno(errno: number): string {
  * Get human-readable message for errno
  */
 export function getErrnoMessage(errno: number): string {
-  return ERRNO_MESSAGES[errno] || `Unknown error ${errno}`;
+  // Handle both positive and negative errno values
+  const normalizedErrno = errno > 0 ? -errno : errno;
+  return ERRNO_MESSAGES[normalizedErrno] || `Unknown error ${errno}`;
 }
 
 /**

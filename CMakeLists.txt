@@ -62,6 +62,10 @@ set(SOURCE_FILES
     src/session_manager.cc
     src/buffer_bridge.cc
     src/copy_file_range.cc
+    src/tsfn_dispatcher.cc
+    src/write_queue.cc
+    src/shutdown.cc
+    src/xattr_bridge.cc
 )
 
 # Create the addon

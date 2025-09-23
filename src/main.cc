@@ -10,6 +10,7 @@
 #include <napi.h>
 #include <fuse3/fuse.h>
 #include <fuse3/fuse_lowlevel.h>
+#include <sys/xattr.h>
 
 #include "fuse_bridge.h"
 #include "napi_helpers.h"
@@ -18,6 +19,10 @@
 #include "errno_mapping.h"
 #include "buffer_bridge.h"
 #include "copy_file_range.h"
+#include "tsfn_dispatcher.h"
+#include "write_queue.h"
+#include "shutdown.h"
+#include "xattr_bridge.h"
 
 namespace fuse_native {
 
@@ -56,6 +61,32 @@ napi_value Init(napi_env env, napi_value exports) {
     napiExports.Set("setOperationHandler", Napi::Function::New(napiEnv, SetOperationHandler));
     napiExports.Set("removeOperationHandler", Napi::Function::New(napiEnv, RemoveOperationHandler));
     
+    // Register TSFN dispatcher functions
+    napiExports.Set("initializeDispatcher", Napi::Function::New(napiEnv, InitializeDispatcher));
+    napiExports.Set("shutdownDispatcher", Napi::Function::New(napiEnv, ShutdownDispatcher));
+    napiExports.Set("getDispatcherStats", Napi::Function::New(napiEnv, GetDispatcherStats));
+    napiExports.Set("resetDispatcherStats", Napi::Function::New(napiEnv, ResetDispatcherStats));
+    napiExports.Set("setDispatcherConfig", Napi::Function::New(napiEnv, SetDispatcherConfig));
+    
+    // Register write queue functions
+    napiExports.Set("enqueueWrite", Napi::Function::New(napiEnv, EnqueueWrite));
+    napiExports.Set("processWriteQueues", Napi::Function::New(napiEnv, ProcessWriteQueues));
+    napiExports.Set("flushWriteQueue", Napi::Function::New(napiEnv, FlushWriteQueue));
+    napiExports.Set("flushAllWriteQueues", Napi::Function::New(napiEnv, FlushAllWriteQueues));
+    napiExports.Set("getWriteQueueStats", Napi::Function::New(napiEnv, GetWriteQueueStats));
+    napiExports.Set("resetWriteQueueStats", Napi::Function::New(napiEnv, ResetWriteQueueStats));
+    napiExports.Set("configureWriteQueues", Napi::Function::New(napiEnv, ConfigureWriteQueues));
+    
+    // Register shutdown management functions
+    napiExports.Set("initializeShutdownManager", Napi::Function::New(napiEnv, InitializeShutdownManager));
+    napiExports.Set("initiateGracefulShutdown", Napi::Function::New(napiEnv, InitiateGracefulShutdown));
+    napiExports.Set("forceImmediateShutdown", Napi::Function::New(napiEnv, ForceImmediateShutdown));
+    napiExports.Set("getShutdownState", Napi::Function::New(napiEnv, GetShutdownState));
+    napiExports.Set("getShutdownStats", Napi::Function::New(napiEnv, GetShutdownStats));
+    napiExports.Set("registerShutdownCallback", Napi::Function::New(napiEnv, RegisterShutdownCallback));
+    napiExports.Set("waitForShutdownCompletion", Napi::Function::New(napiEnv, WaitForShutdownCompletion));
+    napiExports.Set("configureShutdownTimeouts", Napi::Function::New(napiEnv, ConfigureShutdownTimeouts));
+    
     // Register utility functions
     napiExports.Set("getVersion", Napi::Function::New(napiEnv, GetVersion));
     
@@ -73,6 +104,12 @@ napi_value Init(napi_env env, napi_value exports) {
     napiExports.Set("getCopyChunkSize", Napi::Function::New(napiEnv, GetCopyChunkSize));
     napiExports.Set("getCopyStats", Napi::Function::New(napiEnv, GetCopyStats));
     napiExports.Set("resetCopyStats", Napi::Function::New(napiEnv, ResetCopyStats));
+    
+    // Register xattr functions
+    napiExports.Set("getxattr", Napi::Function::New(napiEnv, GetXAttr));
+    napiExports.Set("setxattr", Napi::Function::New(napiEnv, SetXAttr));
+    napiExports.Set("listxattr", Napi::Function::New(napiEnv, ListXAttr));
+    napiExports.Set("removexattr", Napi::Function::New(napiEnv, RemoveXAttr));
     
     // Register errno constants using errno_mapping
     Napi::Object errno_constants = Napi::Object::New(napiEnv);
@@ -101,8 +138,16 @@ napi_value Init(napi_env env, napi_value exports) {
     errno_constants.Set("EXDEV", Napi::Number::New(napiEnv, normalize_fuse_errno(EXDEV)));
     errno_constants.Set("ENOSYS", Napi::Number::New(napiEnv, normalize_fuse_errno(ENOSYS)));
     errno_constants.Set("ERANGE", Napi::Number::New(napiEnv, normalize_fuse_errno(ERANGE)));
+    errno_constants.Set("ENOATTR", Napi::Number::New(napiEnv, normalize_fuse_errno(ENOATTR)));
     
     napiExports.Set("errno", errno_constants);
+    
+    // Register xattr flags constants
+    Napi::Object xattr_constants = Napi::Object::New(napiEnv);
+    xattr_constants.Set("XATTR_CREATE", Napi::Number::New(napiEnv, XATTR_CREATE));
+    xattr_constants.Set("XATTR_REPLACE", Napi::Number::New(napiEnv, XATTR_REPLACE));
+    
+    napiExports.Set("xattr", xattr_constants);
     
     // Register file mode constants
     Napi::Object mode_constants = Napi::Object::New(napiEnv);
@@ -148,6 +193,11 @@ napi_value Init(napi_env env, napi_value exports) {
     flag_constants.Set("O_NOFOLLOW", Napi::Number::New(napiEnv, O_NOFOLLOW));
     
     napiExports.Set("flags", flag_constants);
+    
+    // Initialize global components
+    InitializeGlobalDispatcher(napiEnv);
+    InitializeGlobalWriteQueueManager();
+    InitializeGlobalShutdownManager();
     
     return exports;
 }

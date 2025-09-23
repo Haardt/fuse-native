@@ -269,9 +269,368 @@ DoD:
 
 ---
 
-## 13) Glossar (Kurz)
+## 13) Build-System & Technische Details
+
+### 13.1 Build-Systeme
+
+Das Projekt unterstützt zwei Build-Systeme:
+
+**CMake (Empfohlen für Entwicklung):**
+```bash
+npm run build:native  # CMake-basiert, schneller
+```
+
+**node-gyp (für Prebuilds):**
+```bash
+npm run prebuild      # Für Distribution
+```
+
+### 13.2 Kritische Build-Definitionen
+
+**FUSE_USE_VERSION=31** muss definiert sein, sonst:
+```
+error: FUSE_USE_VERSION not defined
+error: only API version 30 or greater is supported
+```
+
+**CMakeLists.txt essentiell:**
+```cmake
+add_definitions(-DFUSE_USE_VERSION=31)
+add_definitions(-DNAPI_VERSION=8)
+```
+
+### 13.3 Namespace-Konventionen
+
+**C++ Namespaces:**
+- Hauptnamespace: `fuse_native`
+- Funktionen: `fuse_native::errno_to_string()`, `fuse_native::NapiHelpers::`
+- Klassen: `fuse_native::BufferBridge`, `fuse_native::SessionManager`
+
+**N-API Export Pattern:**
+```cpp
+// In main.cc
+napiExports.Set("functionName", Napi::Function::New(napiEnv, FunctionWrapper));
+```
+
+### 13.4 64-Bit Helper-Funktionen (NapiHelpers)
+
+**Verfügbare BigInt-Helpers in `src/napi_helpers.h`:**
+
+```cpp
+// Basis-Konversionen
+static int32_t GetInt32(Napi::Env env, Napi::Value value);
+static uint32_t GetUint32(Napi::Env env, Napi::Value value);
+static uint64_t GetBigUint64(Napi::Env env, Napi::Value value);
+static double GetDouble(Napi::Env env, Napi::Value value);
+static bool GetBoolean(Napi::Env env, Napi::Value value);
+
+// BigInt-Erstellung
+static Napi::BigInt CreateBigInt64(Napi::Env env, int64_t value);
+static Napi::BigInt CreateBigIntU64(Napi::Env env, uint64_t value);
+static Napi::BigInt CreateBigUint64(Napi::Env env, uint64_t value);
+
+// Sichere Konversionen mit bounds-checking
+static std::optional<int64_t> SafeGetBigInt64(Napi::Value value);
+static std::optional<uint64_t> SafeGetBigIntU64(Napi::Value value);
+```
+
+**Verwendungsbeispiel:**
+```cpp
+uint64_t offset = fuse_native::NapiHelpers::GetBigUint64(env, info[0]);
+return fuse_native::NapiHelpers::CreateBigUint64(env, result);
+```
+
+### 13.5 Modul-Architektur
+
+**Hauptmodule und ihre Exports:**
+
+**Buffer Bridge (`buffer_bridge.*`):**
+- `createExternalBuffer()` - Zero-Copy Buffer
+- `createManagedBuffer()` - Managed Buffer
+- `validateBuffer()` - Buffer-Validierung
+- `getBufferStats()` - Buffer-Statistiken
+
+**Copy File Range (`copy_file_range.*`):**
+- `copyFileRange()` - Kernel syscall + Fallback
+- `setCopyChunkSize()` - Performance-Tuning
+- `getCopyStats()` - Statistiken
+
+**Session Manager (`session_manager.*`):**
+- `createSession()` - FUSE Session erstellen
+- `mount()` / `unmount()` - Mount-Management
+- `isReady()` - Status-Abfrage
+
+### 13.6 Include-Pfade und Dependencies
+
+**Kritische Include-Reihenfolge:**
+```cpp
+#define FUSE_USE_VERSION 31  // VOR allen FUSE includes!
+#include <napi.h>
+#include <fuse3/fuse.h>
+#include <fuse3/fuse_lowlevel.h>
+```
+
+**CMake Include-Setup:**
+```cmake
+include_directories(${CMAKE_JS_INC})                    # Node headers
+include_directories(${NODE_ADDON_API_DIR})              # node-addon-api
+include_directories(${FUSE3_INCLUDE_DIRS})              # FUSE3
+```
+
+### 13.7 Symbol-Export Troubleshooting
+
+**Häufige Linker-Fehler:**
+- `undefined symbol: _ZN11fuse_native...` → Funktion nicht in main.cc exportiert
+- `FUSE_USE_VERSION not defined` → Definition fehlt
+- `napi.h: file not found` → Include-Pfade falsch
+
+**Debug-Befehle:**
+```bash
+# Symbole in gebauter Library prüfen
+nm build/Release/fuse-native.node | grep CreateManagedBuffer
+
+# Include-Pfade testen
+echo '#include <napi.h>' | g++ -x c++ -E - -I./node_modules/node-addon-api
+```
+
+### 13.8 Threading & TSFN Patterns
+
+**Thread-sichere Callbacks:**
+```cpp
+// TSFN für C++ → JavaScript Calls
+Napi::ThreadSafeFunction tsfn = Napi::ThreadSafeFunction::New(
+    env, callback, "FuseOperation", 0, 1);
+    
+// Aufruf aus C++ Thread
+tsfn.BlockingCall([](Napi::Env env, Napi::Function jsCallback) {
+    // Sichere Ausführung im JS Thread
+});
+```
+
+### 13.9 Prebuilt-Management
+
+**Nach CMake-Build Prebuilt updaten (WICHTIG!):**
+```bash
+cp build/Release/fuse-native.node prebuilds/linux-x64/@cocalc+fuse-native.node
+```
+
+**Warum kritisch:**
+- Tests nutzen Prebuilt-Verzeichnis, nicht build/
+- Native Tests schlagen fehl mit "undefined symbol" wenn vergessen
+- CMake und node-gyp erzeugen verschiedene Binaries
+- Neue C++ Exports müssen in Prebuilds verfügbar sein
+
+---
+
+## 14) Troubleshooting & Häufige Probleme
+
+### 14.1 Build-Fehler
+
+**"FUSE_USE_VERSION not defined"**
+```bash
+# Lösung: CMakeLists.txt prüfen
+add_definitions(-DFUSE_USE_VERSION=31)
+```
+
+**"napi.h: file not found"**
+```bash
+# Lösung: Node-Addon-API installiert?
+npm install
+# Include-Pfade in CMake prüfen
+include_directories(${CMAKE_JS_INC})
+```
+
+**"undefined symbol: _ZN11fuse_native..."**
+```bash
+# Lösung: Funktion nicht in main.cc exportiert
+napiExports.Set("functionName", Napi::Function::New(napiEnv, WrapperFunction));
+# Oder Prebuilt updaten:
+cp build/Release/fuse-native.node prebuilds/linux-x64/@cocalc+fuse-native.node
+```
+
+### 14.2 Test-Fehler
+
+**"Cannot access 'mockBinding' before initialization"**
+- Mock-Deklaration VOR jest.mock() verschieben
+- Import-Statements NACH Mocks platzieren
+
+**"Worker process failed to exit gracefully"**
+- Normal bei FUSE-Tests (Threading-Artefakte)
+- Mit `--detectOpenHandles` analysieren falls nötig
+
+### 14.3 Runtime-Fehler
+
+**TypeError: Expected BigInt**
+```typescript
+// Falsch: number verwenden
+await copyFileRange(fd1, 0, fd2, 0, 1024);
+
+// Richtig: BigInt verwenden
+await copyFileRange(fd1, 0n, fd2, 0n, 1024n);
+```
+
+**"Transport endpoint is not connected"**
+- FUSE Session nicht gemountet
+- `isReady()` vor Operation prüfen
+
+### 14.4 Debug-Kommandos
+
+```bash
+# Build-Status prüfen
+npm run build 2>&1 | grep -E "(error|Error)"
+
+# Symbole in Binary prüfen  
+nm build/Release/fuse-native.node | grep -i "symbol_name"
+
+# CMake Cache löschen bei hartnäckigen Problemen
+rm -rf build/ && npm run build:native
+
+# Node-Gyp vs CMake Unterschiede
+ls -la build/Release/ prebuilds/linux-x64/
+```
+
+### 14.5 Performance Issues
+
+**Langsame Builds:**
+- CMake bevorzugen: `npm run build:native`
+- Ninja Generator nutzen (automatisch wenn verfügbar)
+
+**Hoher Speicherverbrauch:**
+- Buffer-Validierung: `validateBuffer()` regelmäßig
+- External ArrayBuffer für große Daten
+- Stats monitoren: `getBufferStats()`
+
+### 14.6 Typische Stolperfallen
+
+**1. Namespace-Vergessen:**
+```cpp
+// Falsch
+errno_to_string(err)
+
+// Richtig  
+fuse_native::errno_to_string(err)
+```
+
+**2. FUSE_USE_VERSION Position:**
+```cpp
+// Falsch: Nach includes
+#include <fuse3/fuse.h>
+#define FUSE_USE_VERSION 31
+
+// Richtig: Vor allen FUSE includes
+#define FUSE_USE_VERSION 31
+#include <fuse3/fuse.h>
+```
+
+**3. BigInt vs Number Verwechslung:**
+```typescript
+// Falsch: Precision Loss bei > 2^53
+const offset = Number(offsetBigInt);
+
+// Richtig: BigInt durchgängig
+const result = await operation(offset); // offset bleibt BigInt
+```
+
+---
+
+## 15) Quick Reference für Agenten
+
+### 15.1 Schnelle Build-Kommandos
+```bash
+# Vollständiger Build
+npm run build
+
+# Nur Native (schneller bei C++ Änderungen)
+npm run build:native
+
+# Tests ausführen
+npm test
+
+# Prebuilt nach CMake-Build updaten (KRITISCH nach Symbol-Änderungen!)
+cp build/Release/fuse-native.node prebuilds/linux-x64/@cocalc+fuse-native.node
+
+# Build-Cache löschen bei Problemen
+rm -rf build/ && npm run build:native
+```
+
+### 15.2 Häufigste Code-Pattern
+```cpp
+// C++ BigInt Helper verwenden
+uint64_t value = fuse_native::NapiHelpers::GetBigUint64(env, info[0]);
+return fuse_native::NapiHelpers::CreateBigUint64(env, result);
+
+// Funktion in main.cc exportieren
+napiExports.Set("functionName", Napi::Function::New(napiEnv, WrapperFunc));
+
+// Namespace korrekt verwenden
+fuse_native::errno_to_string(err)  // Nie vergessen: fuse_native::
+```
+
+### 15.3 Kritische Definitionen
+```cpp
+// Immer VOR allen FUSE includes!
+#define FUSE_USE_VERSION 31
+#include <napi.h>
+#include <fuse3/fuse.h>
+```
+
+### 15.4 TypeScript BigInt Pattern
+```typescript
+// Immer BigInt für 64-bit Werte
+const offset = 0n;  // nicht: 0
+const size = BigInt(fileSize);  // Conversion falls nötig
+await copyFileRange(fd1, offset, fd2, 0n, size);
+```
+
+### 15.5 Test-Fix Pattern
+```typescript
+// Mock VOR jest.mock() deklarieren
+const mockBinding = { /* ... */ };
+jest.mock('../build/Release/fuse-native.node', () => mockBinding);
+// Import NACH Mocks
+import { functionName } from '../ts/index.js';
+```
+
+---
+
+## 16) Jest & Testing Troubleshooting
+
+### 16.1 BigInt Serialization Issues
+```bash
+# Fehler: "Do not know how to serialize a BigInt"
+# Lösung: Vermeiden von BigInt in mockReturnValue() calls
+mockBinding.func.mockReturnValue(42n);  # ✓ OK - direkte BigInt
+mockBinding.func.mockReturnValue({size: BigInt(x)});  # ❌ Fehler
+
+# Workaround: Literale verwenden
+mockBinding.func.mockReturnValue({size: 42n});  # ✓ OK
+```
+
+### 16.2 Errno Handling in Tests
+```typescript
+// FuseErrno akzeptiert positive UND negative errno-Werte
+new FuseErrno(2)    // wird zu errno: -2, code: 'ENOENT'  
+new FuseErrno(-2)   // wird zu errno: -2, code: 'ENOENT'
+
+// Tests sollten error.code prüfen, nicht error.message
+expect(error.code).toBe('ENOENT');  // ✓ Richtig
+expect(error.message).toContain('ENOENT');  // ❌ Falsch
+```
+
+### 16.3 Mock-Isolation
+```typescript
+// Beide Binding-Pfade mocken für Isolation
+jest.mock('../build/Release/fuse-native.node', () => mockBinding);
+jest.mock('../prebuilds/linux-x64/@cocalc+fuse-native.node', () => mockBinding);
+```
+
+---
+
+## 17) Glossar (Kurz)
 
 * **TSFN**: ThreadSafeFunction (N-API Mechanismus für C→JS).
 * **errno**: POSIX Fehlercode, negativ zurück an FUSE.
 * **ns-epoch**: Nanosekunden seit Unix-Epoch (BigInt).
 * **External ArrayBuffer**: JS-Buffer, der auf native Speicher zeigt.
+* **Prebuilds**: Vorkompilierte Binaries für verschiedene Plattformen.
+* **Symbol Mangling**: C++ Namen-Kodierung im Linker (z.B. `_ZN11fuse_native...`).

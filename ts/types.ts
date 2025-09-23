@@ -366,6 +366,39 @@ export type StatfsHandler = (
   options?: BaseOperationOptions
 ) => Promise<StatvfsResult>;
 
+/** Get extended attribute handler */
+export type GetxattrHandler = (
+  ino: Ino,
+  name: string,
+  context: RequestContext,
+  options?: XattrOptions
+) => Promise<{ data?: Buffer; size: bigint }>;
+
+/** Set extended attribute handler */
+export type SetxattrHandler = (
+  ino: Ino,
+  name: string,
+  value: Buffer,
+  flags: number,
+  context: RequestContext,
+  options?: BaseOperationOptions
+) => Promise<void>;
+
+/** List extended attributes handler */
+export type ListxattrHandler = (
+  ino: Ino,
+  context: RequestContext,
+  options?: XattrOptions
+) => Promise<{ names?: string[]; size: bigint }>;
+
+/** Remove extended attribute handler */
+export type RemovexattrHandler = (
+  ino: Ino,
+  name: string,
+  context: RequestContext,
+  options?: BaseOperationOptions
+) => Promise<void>;
+
 // =============================================================================
 // Complete Operation Handlers Interface
 // =============================================================================
@@ -400,6 +433,15 @@ export interface FuseOperationHandlers {
   rename?: RenameHandler;
   /** Get filesystem statistics */
   statfs?: StatfsHandler;
+
+  /** Get extended attribute */
+  getxattr?: GetxattrHandler;
+  /** Set extended attribute */
+  setxattr?: SetxattrHandler;
+  /** List extended attributes */
+  listxattr?: ListxattrHandler;
+  /** Remove extended attribute */
+  removexattr?: RemovexattrHandler;
 
   // Additional handlers can be added as needed
   /** Flush file data */
@@ -511,3 +553,256 @@ export type HandlerFor<T extends FuseOperationName> = NonNullable<
 /** Promise return type for a specific operation handler */
 export type HandlerResult<T extends FuseOperationName> =
   HandlerFor<T> extends (...args: any[]) => Promise<infer R> ? R : never;
+
+// =============================================================================
+// Phase 7: Concurrency and Shutdown Types
+// =============================================================================
+
+// TSFN Dispatcher Types
+// =============================================================================
+
+/** Callback priority levels for operation ordering */
+export type CallbackPriority = 'HIGH' | 'NORMAL' | 'LOW';
+
+/** TSFN dispatcher options */
+export interface TSFNDispatcherOptions {
+  /** Maximum queue size (0 = unlimited) */
+  maxQueueSize?: number;
+  /** Number of worker threads for callback processing */
+  workerThreads?: number;
+  /** Enable priority ordering */
+  priorityOrdering?: boolean;
+}
+
+/** TSFN dispatcher statistics */
+export interface DispatcherStats {
+  /** Total number of dispatched operations */
+  totalDispatched: bigint;
+  /** Total number of completed operations */
+  totalCompleted: bigint;
+  /** Total number of errors */
+  totalErrors: bigint;
+  /** Current queue size */
+  queueSize: bigint;
+  /** Maximum queue size reached */
+  maxQueueSize: bigint;
+  /** Average latency in milliseconds */
+  avgLatencyMs: number;
+  /** Uptime in milliseconds */
+  uptimeMs: number;
+}
+
+/** TSFN dispatcher configuration */
+export interface DispatcherConfig {
+  /** Maximum queue size */
+  maxQueueSize?: number;
+  /** Enable or disable priority ordering */
+  priorityOrdering?: boolean;
+}
+
+// Write Queue Types
+// =============================================================================
+
+/** Write operation priority levels */
+export type WriteOperationPriority = 'URGENT' | 'HIGH' | 'NORMAL' | 'LOW';
+
+/** Write queue statistics for a single FD or aggregate */
+export interface WriteQueueStats {
+  /** File descriptor (only present for FD-specific stats) */
+  fd?: bigint;
+  /** Total number of operations */
+  totalOperations: bigint;
+  /** Number of completed operations */
+  completedOperations: bigint;
+  /** Number of failed operations */
+  failedOperations: bigint;
+  /** Total bytes written */
+  bytesWritten: bigint;
+  /** Current queue size */
+  queueSize: bigint;
+  /** Maximum queue size reached */
+  maxQueueSize: bigint;
+  /** Average latency in milliseconds */
+  avgLatencyMs: number;
+  /** Active file descriptors (only for aggregate stats) */
+  activeFDs?: bigint[];
+}
+
+/** Write queue configuration */
+export interface FDWriteQueueConfig {
+  /** Default maximum queue size for new FDs */
+  defaultMaxQueueSize?: number;
+  /** Per-FD maximum queue sizes */
+  fdMaxQueueSize?: Record<string, number>;
+}
+
+/** Write operation completion callback */
+export type WriteCompletionCallback = (result: number) => void;
+
+// Shutdown Management Types
+// =============================================================================
+
+/** Shutdown state enumeration */
+export type ShutdownState = 'RUNNING' | 'DRAINING' | 'UNMOUNTING' | 'CLOSED';
+
+/** Shutdown phase duration information */
+export interface ShutdownPhaseDuration {
+  /** Shutdown state/phase */
+  state: ShutdownState;
+  /** Duration in milliseconds */
+  durationMs: number;
+}
+
+/** Shutdown statistics */
+export interface ShutdownStats {
+  /** Final shutdown state reached */
+  finalState: ShutdownState;
+  /** Whether shutdown completed gracefully */
+  gracefulCompletion: boolean;
+  /** Failure reason (if not graceful) */
+  failureReason: string;
+  /** Duration of each shutdown phase */
+  phaseDurations: ShutdownPhaseDuration[];
+  /** Total shutdown duration in milliseconds (if completed) */
+  totalDurationMs?: number;
+}
+
+/** Shutdown timeout configuration */
+export interface ShutdownTimeouts {
+  /** Draining phase timeout in milliseconds */
+  draining?: number;
+  /** Unmounting phase timeout in milliseconds */
+  unmounting?: number;
+}
+
+/** Shutdown callback interface */
+export interface ShutdownCallback {
+  /** Called when shutdown begins */
+  onShutdownBegin?: (reason: string) => void;
+  /** Called when entering each shutdown phase */
+  onShutdownPhase?: (phase: {
+    state: ShutdownState;
+    description: string;
+  }) => void;
+  /** Called when shutdown completes */
+  onShutdownComplete?: (stats: ShutdownStats) => void;
+  /** Called if shutdown fails or times out */
+  onShutdownFailed?: (state: ShutdownState, reason: string) => void;
+}
+
+// =============================================================================
+// Phase 7: Function Signatures for Concurrency and Shutdown
+// =============================================================================
+
+// TSFN Dispatcher Functions
+// =============================================================================
+
+/** Initialize TSFN dispatcher */
+export type InitializeDispatcher = (
+  options?: TSFNDispatcherOptions
+) => Promise<boolean>;
+
+/** Shutdown TSFN dispatcher */
+export type ShutdownDispatcher = (timeout?: number) => Promise<boolean>;
+
+/** Get TSFN dispatcher statistics */
+export type GetDispatcherStats = () => Promise<DispatcherStats>;
+
+/** Reset TSFN dispatcher statistics */
+export type ResetDispatcherStats = () => Promise<boolean>;
+
+/** Set TSFN dispatcher configuration */
+export type SetDispatcherConfig = (
+  config: DispatcherConfig
+) => Promise<boolean>;
+
+/** Set operation handler */
+export type SetOperationHandler = (
+  operation: FuseOperationName,
+  handler: Function
+) => Promise<boolean>;
+
+/** Remove operation handler */
+export type RemoveOperationHandler = (
+  operation: FuseOperationName
+) => Promise<boolean>;
+
+// Write Queue Functions
+// =============================================================================
+
+/** Enqueue write operation */
+export type EnqueueWrite = (
+  fd: bigint,
+  offset: bigint,
+  size: bigint,
+  buffer: ArrayBuffer | ArrayBufferView,
+  priority?: WriteOperationPriority,
+  callback?: WriteCompletionCallback
+) => Promise<bigint>;
+
+/** Process write queues with executor function */
+export type ProcessWriteQueues = (
+  executor: (operation: {
+    fd: bigint;
+    offset: bigint;
+    size: bigint;
+    buffer: ArrayBuffer;
+    priority: WriteOperationPriority;
+  }) => number
+) => Promise<number>;
+
+/** Flush write queue for specific FD */
+export type FlushWriteQueue = (
+  fd: bigint,
+  timeout?: number
+) => Promise<boolean>;
+
+/** Flush all write queues */
+export type FlushAllWriteQueues = (timeout?: number) => Promise<boolean>;
+
+/** Get write queue statistics */
+export type GetWriteQueueStats = (
+  fd?: bigint
+) => Promise<WriteQueueStats | null>;
+
+/** Reset write queue statistics */
+export type ResetWriteQueueStats = () => Promise<boolean>;
+
+/** Configure write queues */
+export type ConfigureWriteQueues = (
+  config: FDWriteQueueConfig
+) => Promise<boolean>;
+
+// Shutdown Management Functions
+// =============================================================================
+
+/** Initialize shutdown manager */
+export type InitializeShutdownManager = () => Promise<boolean>;
+
+/** Initiate graceful shutdown */
+export type InitiateGracefulShutdown = (
+  reason?: string,
+  timeout?: number
+) => Promise<boolean>;
+
+/** Force immediate shutdown */
+export type ForceImmediateShutdown = (reason?: string) => Promise<boolean>;
+
+/** Get current shutdown state */
+export type GetShutdownState = () => Promise<ShutdownState>;
+
+/** Get shutdown statistics */
+export type GetShutdownStats = () => Promise<ShutdownStats>;
+
+/** Register shutdown callback */
+export type RegisterShutdownCallback = (
+  callback: ShutdownCallback
+) => Promise<boolean>;
+
+/** Wait for shutdown completion */
+export type WaitForShutdownCompletion = (timeout?: number) => Promise<boolean>;
+
+/** Configure shutdown timeouts */
+export type ConfigureShutdownTimeouts = (
+  timeouts: ShutdownTimeouts
+) => Promise<boolean>;
