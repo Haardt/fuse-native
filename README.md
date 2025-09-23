@@ -12,7 +12,7 @@ A modern, high-performance **FUSE3** binding for Node.js built with **N-API** an
 - **📊 BigInt Support**: Native 64-bit file sizes, offsets, and timestamps
 - **⚡ High Performance**: Zero-copy data paths and optimized I/O operations
 - **🛡️ Type Safety**: Comprehensive TypeScript types with branded types for safety
-- **🔄 Promise-Based**: Clean async/await API with AbortSignal support
+- **🔄 Promise-Based**: Clean async/await API with AbortSignal and timeout support
 - **📈 Observability**: Built-in structured logging and metrics
 - **🧪 Well Tested**: Comprehensive test suite with mock testing capabilities
 - **🔧 POSIX Compliant**: Consistent errno error handling and POSIX semantics
@@ -98,6 +98,123 @@ const operations: FuseOperationHandlers = {
       return {
         attr: {
           ino: 1n,
+          mode: mode.S_IFDIR | 0o755,
+          nlink: 2n,
+          size: 0n,
+          blocks: 0n,
+          atime: BigInt(Date.now()) * 1000000n,
+          mtime: BigInt(Date.now()) * 1000000n,
+          ctime: BigInt(Date.now()) * 1000000n,
+        }
+      };
+    }
+    
+    const file = files.get(ino);
+    if (file) {
+      return { attr: file.stat };
+    }
+    
+    throw new Error('ENOENT');
+  },
+
+  async readdir(ino, context) {
+    if (ino !== 1n) throw new Error('ENOTDIR');
+    
+    const entries = [];
+    for (const [fileIno, file] of files) {
+      entries.push({
+        name: file.name,
+        ino: fileIno,
+        type: mode.S_IFREG
+      });
+    }
+    
+    return entries;
+  }
+};
+
+// Create and mount session
+const session = createSession('/tmp/my-fuse-fs', operations, {
+  debug: true,
+  allowOther: false
+});
+
+try {
+  await session.mount();
+  console.log('Filesystem mounted successfully');
+  
+  // Keep running until interrupted
+  process.on('SIGINT', async () => {
+    console.log('Unmounting filesystem...');
+    await session.unmount();
+    process.exit(0);
+  });
+  
+} catch (error) {
+  console.error('Failed to mount filesystem:', error);
+}
+```
+
+### AbortSignal and Timeout Examples
+
+All async operations support cancellation and timeouts:
+
+```typescript
+import { 
+  copyFileRange, 
+  getxattr, 
+  setxattr,
+  AbortError,
+  TimeoutError 
+} from '@cocalc/fuse-native';
+
+// Example 1: Manual cancellation
+const controller = new AbortController();
+
+const copyPromise = copyFileRange(1, 0n, 2, 0n, 1024n, 0, {
+  signal: controller.signal
+});
+
+// Cancel after 5 seconds
+setTimeout(() => controller.abort(), 5000);
+
+try {
+  const bytesCopied = await copyPromise;
+  console.log(`Copied ${bytesCopied} bytes`);
+} catch (error) {
+  if (error instanceof AbortError) {
+    console.log('Copy operation was cancelled');
+  }
+}
+
+// Example 2: Timeout
+try {
+  const result = await getxattr('/slow/file', 'user.metadata', undefined, {
+    timeout: 3000  // 3 second timeout
+  });
+  console.log('Attribute value:', result);
+} catch (error) {
+  if (error instanceof TimeoutError) {
+    console.log('Operation timed out after 3 seconds');
+  }
+}
+
+// Example 3: Combined signal and timeout
+const userController = new AbortController();
+
+try {
+  await setxattr('/file', 'user.test', Buffer.from('value'), 0, {
+    signal: userController.signal,  // Can be cancelled by user
+    timeout: 10000                  // Or times out after 10 seconds
+  });
+  console.log('Attribute set successfully');
+} catch (error) {
+  if (error instanceof TimeoutError) {
+    console.log('Setting attribute timed out');
+  } else if (error instanceof AbortError) {
+    console.log('Operation was cancelled by user');
+  }
+}
           mode: mode.S_IFDIR | 0o755,
           nlink: 2,
           uid: context.uid,

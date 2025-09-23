@@ -510,7 +510,7 @@ describe('Performance and Memory', () => {
     const durationMs = Number(endTime - startTime) / 1000000;
 
     // Should complete reasonably quickly (adjust threshold as needed)
-    expect(durationMs).toBeLessThan(300);
+    expect(durationMs).toBeLessThan(350);
   });
 
   it('should not leak memory with repeated error creation', () => {

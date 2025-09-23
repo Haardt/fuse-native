@@ -6,18 +6,26 @@
  * BigInt support for 64-bit values, and strict TypeScript types.
  */
 
+// Use simple require for both Jest and Node.js environments
+// Jest mocks will override the actual require calls
 let binding: any;
+
 try {
-  // Try to load prebuilt binary first
-  binding = require('../prebuilds/linux-x64/@cocalc+fuse-native.node');
-} catch {
+  // This will work in Jest (with mocks) and Node.js CJS environments
+  // For pure ESM, the binding will be handled by the build system
+  const req = eval('require');
   try {
-    // Fallback to compiled binary
-    binding = require('../build/Release/fuse-native.node');
+    binding = req('../prebuilds/linux-x64/@cocalc+fuse-native.node');
   } catch {
-    // Final fallback to Debug build
-    binding = require('../build/Debug/fuse-native.node');
+    try {
+      binding = req('../build/Release/fuse-native.node');
+    } catch {
+      binding = req('../build/Debug/fuse-native.node');
+    }
   }
+} catch (error) {
+  console.warn('Failed to load native binding:', error);
+  binding = {}; // Fallback for tests or pure ESM without require
 }
 
 // Re-export types
@@ -37,6 +45,7 @@ export * from './operations.js';
 export * from './session.js';
 export * from './helpers.js';
 export * from './time.js';
+export * from './abort.js';
 export {
   errno as getErrno,
   errname,
@@ -59,6 +68,12 @@ export {
 } from './errno.js';
 
 import { FuseErrno } from './errors.js';
+import {
+  createEffectiveSignal,
+  withAbort,
+  validateAbortOptions,
+  type AbortOptions,
+} from './abort.js';
 
 // Import types
 import type {
@@ -305,6 +320,7 @@ export function getMountOptions(): { available: string[]; defaults: string[] } {
  * @param offsetOut - Destination offset (null to use current position)
  * @param length - Number of bytes to copy
  * @param flags - Optional copy flags
+ * @param options - Abort and timeout options
  * @returns Promise resolving to number of bytes copied
  */
 export async function copyFileRange(
@@ -313,9 +329,13 @@ export async function copyFileRange(
   fdOut: number,
   offsetOut: bigint | null,
   length: bigint,
-  flags: number = 0
+  flags: number = 0,
+  options?: AbortOptions
 ): Promise<bigint> {
-  return new Promise((resolve, reject) => {
+  validateAbortOptions(options);
+  const effectiveSignal = createEffectiveSignal(options);
+
+  const copyPromise = new Promise<bigint>((resolve, reject) => {
     try {
       const offsetInValue = offsetIn === null ? 0xffffffffffffffffn : offsetIn;
       const offsetOutValue =
@@ -335,6 +355,8 @@ export async function copyFileRange(
       reject(error);
     }
   });
+
+  return withAbort(copyPromise, effectiveSignal);
 }
 
 /**
@@ -447,8 +469,13 @@ export async function shutdownDispatcher(
  * Get TSFN dispatcher statistics
  * @returns Promise resolving to current statistics
  */
-export async function getDispatcherStats(): Promise<DispatcherStats> {
-  return new Promise((resolve, reject) => {
+export async function getDispatcherStats(
+  options?: AbortOptions
+): Promise<DispatcherStats> {
+  validateAbortOptions(options);
+  const effectiveSignal = createEffectiveSignal(options);
+
+  const statsPromise = new Promise<DispatcherStats>((resolve, reject) => {
     try {
       const stats = binding.getDispatcherStats();
       resolve(stats);
@@ -456,14 +483,21 @@ export async function getDispatcherStats(): Promise<DispatcherStats> {
       reject(error);
     }
   });
+
+  return withAbort(statsPromise, effectiveSignal);
 }
 
 /**
  * Reset TSFN dispatcher statistics
  * @returns Promise resolving to true if reset succeeded
  */
-export async function resetDispatcherStats(): Promise<boolean> {
-  return new Promise((resolve, reject) => {
+export async function resetDispatcherStats(
+  options?: AbortOptions
+): Promise<boolean> {
+  validateAbortOptions(options);
+  const effectiveSignal = createEffectiveSignal(options);
+
+  const resetPromise = new Promise<boolean>((resolve, reject) => {
     try {
       const result = binding.resetDispatcherStats();
       resolve(result);
@@ -471,6 +505,8 @@ export async function resetDispatcherStats(): Promise<boolean> {
       reject(error);
     }
   });
+
+  return withAbort(resetPromise, effectiveSignal);
 }
 
 /**
@@ -734,8 +770,13 @@ export async function getWriteQueueStats(
  * Reset write queue statistics
  * @returns Promise resolving to true if reset succeeded
  */
-export async function resetWriteQueueStats(): Promise<boolean> {
-  return new Promise((resolve, reject) => {
+export async function resetWriteQueueStats(
+  options?: AbortOptions
+): Promise<boolean> {
+  validateAbortOptions(options);
+  const effectiveSignal = createEffectiveSignal(options);
+
+  const resetPromise = new Promise<boolean>((resolve, reject) => {
     try {
       const result = binding.resetWriteQueueStats();
       resolve(result);
@@ -743,6 +784,8 @@ export async function resetWriteQueueStats(): Promise<boolean> {
       reject(error);
     }
   });
+
+  return withAbort(resetPromise, effectiveSignal);
 }
 
 /**
@@ -788,8 +831,13 @@ export async function configureWriteQueues(
  * Initialize shutdown manager
  * @returns Promise resolving to true if initialization succeeded
  */
-export async function initializeShutdownManager(): Promise<boolean> {
-  return new Promise((resolve, reject) => {
+export async function initializeShutdownManager(
+  options?: AbortOptions
+): Promise<boolean> {
+  validateAbortOptions(options);
+  const effectiveSignal = createEffectiveSignal(options);
+
+  const initPromise = new Promise<boolean>((resolve, reject) => {
     try {
       const result = binding.initializeShutdownManager();
       resolve(result);
@@ -797,6 +845,8 @@ export async function initializeShutdownManager(): Promise<boolean> {
       reject(error);
     }
   });
+
+  return withAbort(initPromise, effectiveSignal);
 }
 
 /**
@@ -845,8 +895,13 @@ export async function forceImmediateShutdown(
  * Get current shutdown state
  * @returns Promise resolving to current shutdown state
  */
-export async function getShutdownState(): Promise<ShutdownState> {
-  return new Promise((resolve, reject) => {
+export async function getShutdownState(
+  options?: AbortOptions
+): Promise<ShutdownState> {
+  validateAbortOptions(options);
+  const effectiveSignal = createEffectiveSignal(options);
+
+  const statePromise = new Promise<ShutdownState>((resolve, reject) => {
     try {
       const stateValue = binding.getShutdownState();
       const states: ShutdownState[] = [
@@ -861,14 +916,21 @@ export async function getShutdownState(): Promise<ShutdownState> {
       reject(error);
     }
   });
+
+  return withAbort(statePromise, effectiveSignal);
 }
 
 /**
  * Get shutdown statistics
  * @returns Promise resolving to shutdown statistics
  */
-export async function getShutdownStats(): Promise<ShutdownStats> {
-  return new Promise((resolve, reject) => {
+export async function getShutdownStats(
+  options?: AbortOptions
+): Promise<ShutdownStats> {
+  validateAbortOptions(options);
+  const effectiveSignal = createEffectiveSignal(options);
+
+  const statsPromise = new Promise<ShutdownStats>((resolve, reject) => {
     try {
       const stats = binding.getShutdownStats();
       resolve(stats);
@@ -876,6 +938,8 @@ export async function getShutdownStats(): Promise<ShutdownStats> {
       reject(error);
     }
   });
+
+  return withAbort(statsPromise, effectiveSignal);
 }
 
 /**
@@ -960,12 +1024,14 @@ export async function configureShutdownTimeouts(
  * @param path File path
  * @param name Attribute name
  * @param size Optional buffer size (0 for size query)
+ * @param options Abort and timeout options
  * @returns Object with size and optional data buffer
  */
 export async function getxattr(
   path: string,
   name: string,
-  size?: bigint
+  size?: bigint,
+  options?: AbortOptions
 ): Promise<{ size: bigint; data?: Buffer }> {
   if (typeof path !== 'string' || !path.length) {
     throw new Error('Path must be a non-empty string');
@@ -975,22 +1041,31 @@ export async function getxattr(
     throw new Error('Attribute name must be a non-empty string');
   }
 
-  const result = binding.getxattr(path, name, size || 0n);
+  validateAbortOptions(options);
+  const effectiveSignal = createEffectiveSignal(options);
 
-  if (typeof result === 'bigint') {
-    // Check if it's an error (negative value)
-    if (result < 0n) {
-      throw new FuseErrno(Number(-result), 'getxattr failed');
+  const getxattrPromise = Promise.resolve(
+    binding.getxattr(path, name, size || 0n)
+  );
+
+  const processResult = getxattrPromise.then(result => {
+    if (typeof result === 'bigint') {
+      // Check if it's an error (negative value)
+      if (result < 0n) {
+        throw new FuseErrno(Number(-result), 'getxattr failed');
+      }
+      // Size query result - positive or zero values are success
+      return { size: result };
     }
-    // Size query result - positive or zero values are success
-    return { size: result };
-  }
 
-  // Success with data
-  return {
-    size: result.size,
-    data: result.data,
-  };
+    // Success with data
+    return {
+      size: result.size,
+      data: result.data,
+    };
+  });
+
+  return withAbort(processResult, effectiveSignal);
 }
 
 /**
@@ -1000,12 +1075,14 @@ export async function getxattr(
  * @param name Attribute name
  * @param value Attribute value
  * @param flags Creation flags (XATTR_CREATE, XATTR_REPLACE)
+ * @param options Abort and timeout options
  */
 export async function setxattr(
   path: string,
   name: string,
   value: Buffer,
-  flags: number = 0
+  flags: number = 0,
+  options?: AbortOptions
 ): Promise<void> {
   if (typeof path !== 'string' || !path.length) {
     throw new Error('Path must be a non-empty string');
@@ -1019,15 +1096,18 @@ export async function setxattr(
     throw new Error('Value must be a Buffer');
   }
 
-  const result = binding.setxattr(path, name, value, flags);
+  validateAbortOptions(options);
+  const effectiveSignal = createEffectiveSignal(options);
 
-  if (typeof result === 'bigint') {
-    // Check if it's an error (negative value)
+  const setxattrPromise = Promise.resolve(
+    binding.setxattr(path, name, value, flags)
+  ).then(result => {
     if (result < 0n) {
       throw new FuseErrno(Number(-result), 'setxattr failed');
     }
-    // Success case - result is 0 or positive
-  }
+  });
+
+  return withAbort(setxattrPromise, effectiveSignal);
 }
 
 /**
@@ -1035,31 +1115,41 @@ export async function setxattr(
  *
  * @param path File path
  * @param size Optional buffer size (0 for size query)
+ * @param options Abort and timeout options
  * @returns Object with size and optional names array
  */
 export async function listxattr(
   path: string,
-  size?: bigint
+  size?: bigint,
+  options?: AbortOptions
 ): Promise<{ size: bigint; names?: string[] }> {
   if (typeof path !== 'string' || !path.length) {
     throw new Error('Path must be a non-empty string');
   }
-  const result = binding.listxattr(path, size || 0n);
 
-  if (typeof result === 'bigint') {
-    // Check if it's an error (negative value)
-    if (result < 0n) {
-      throw new FuseErrno(Number(-result), 'listxattr failed');
+  validateAbortOptions(options);
+  const effectiveSignal = createEffectiveSignal(options);
+
+  const listxattrPromise = Promise.resolve(
+    binding.listxattr(path, size || 0n)
+  ).then(result => {
+    if (typeof result === 'bigint') {
+      // Check if it's an error (negative value)
+      if (result < 0n) {
+        throw new FuseErrno(Number(-result), 'listxattr failed');
+      }
+      // Size query result
+      return { size: result };
     }
-    // Size query result - positive or zero values are success
-    return { size: result };
-  }
 
-  // Success with names
-  return {
-    size: result.size,
-    names: result.names,
-  };
+    // Success with names
+    return {
+      size: result.size,
+      names: result.names,
+    };
+  });
+
+  return withAbort(listxattrPromise, effectiveSignal);
 }
 
 /**
@@ -1067,8 +1157,13 @@ export async function listxattr(
  *
  * @param path File path
  * @param name Attribute name
+ * @param options Abort and timeout options
  */
-export async function removexattr(path: string, name: string): Promise<void> {
+export async function removexattr(
+  path: string,
+  name: string,
+  options?: AbortOptions
+): Promise<void> {
   if (typeof path !== 'string' || !path.length) {
     throw new Error('Path must be a non-empty string');
   }
@@ -1077,15 +1172,18 @@ export async function removexattr(path: string, name: string): Promise<void> {
     throw new Error('Attribute name must be a non-empty string');
   }
 
-  const result = binding.removexattr(path, name);
+  validateAbortOptions(options);
+  const effectiveSignal = createEffectiveSignal(options);
 
-  if (typeof result === 'bigint') {
-    // Check if it's an error (negative value)
+  const removexattrPromise = Promise.resolve(
+    binding.removexattr(path, name)
+  ).then(result => {
     if (result < 0n) {
       throw new FuseErrno(Number(-result), 'removexattr failed');
     }
-    // Success case - result is 0 or positive
-  }
+  });
+
+  return withAbort(removexattrPromise, effectiveSignal);
 }
 
 /**
