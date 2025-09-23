@@ -17,6 +17,7 @@
 #include "errno_mapping.h"
 #include "timespec_codec.h"
 #include "operations.h"
+#include "fuse_bridge.h"
 
 namespace fuse_native {
 
@@ -368,7 +369,132 @@ Napi::Value TestTimespecParsing(const Napi::CallbackInfo& info) {
 }
 
 /**
- * Test function: Operations basic functionality
+ * Test function: FUSE Bridge FuseOpType conversion
+ */
+Napi::Value TestFuseOpTypeConversion(const Napi::CallbackInfo& info) {
+    Napi::Env env = info.Env();
+    
+    Napi::Object result = Napi::Object::New(env);
+    
+    // Test string to FuseOpType conversion
+    FuseOpType lookup_op = StringToFuseOpType("lookup");
+    FuseOpType getattr_op = StringToFuseOpType("getattr");
+    FuseOpType read_op = StringToFuseOpType("read");
+    FuseOpType write_op = StringToFuseOpType("write");
+    FuseOpType readdir_op = StringToFuseOpType("readdir");
+    FuseOpType statfs_op = StringToFuseOpType("statfs");
+    FuseOpType invalid_op = StringToFuseOpType("invalid_operation");
+    
+    result.Set("lookupOp", Napi::Number::New(env, static_cast<int>(lookup_op)));
+    result.Set("getattrOp", Napi::Number::New(env, static_cast<int>(getattr_op)));
+    result.Set("readOp", Napi::Number::New(env, static_cast<int>(read_op)));
+    result.Set("writeOp", Napi::Number::New(env, static_cast<int>(write_op)));
+    result.Set("readdirOp", Napi::Number::New(env, static_cast<int>(readdir_op)));
+    result.Set("statfsOp", Napi::Number::New(env, static_cast<int>(statfs_op)));
+    result.Set("invalidOp", Napi::Number::New(env, static_cast<int>(invalid_op)));
+    
+    // Test FuseOpType to string conversion
+    result.Set("lookupName", Napi::String::New(env, FuseOpTypeToString(lookup_op)));
+    result.Set("getattrName", Napi::String::New(env, FuseOpTypeToString(getattr_op)));
+    result.Set("readName", Napi::String::New(env, FuseOpTypeToString(read_op)));
+    result.Set("writeName", Napi::String::New(env, FuseOpTypeToString(write_op)));
+    result.Set("readdirName", Napi::String::New(env, FuseOpTypeToString(readdir_op)));
+    result.Set("statfsName", Napi::String::New(env, FuseOpTypeToString(statfs_op)));
+    
+    return result;
+}
+
+/**
+ * Test function: FUSE Request Context creation
+ */
+Napi::Value TestFuseRequestContext(const Napi::CallbackInfo& info) {
+    Napi::Env env = info.Env();
+    
+    Napi::Object result = Napi::Object::New(env);
+    
+    // Create a test context (without actual FUSE request)
+    FuseRequestContext context(FuseOpType::LOOKUP, nullptr);
+    context.ino = 42;
+    context.path = "test/path.txt";
+    context.offset = 1024;
+    context.size = 4096;
+    context.flags = 2; // O_RDWR
+    context.mode = 33188; // Regular file, 644 permissions
+    context.uid = 1000;
+    context.gid = 1000;
+    
+    result.Set("opType", Napi::Number::New(env, static_cast<int>(context.op_type)));
+    result.Set("opName", Napi::String::New(env, FuseOpTypeToString(context.op_type)));
+    result.Set("ino", Napi::String::New(env, std::to_string(context.ino)));
+    result.Set("path", Napi::String::New(env, context.path));
+    result.Set("offset", Napi::String::New(env, std::to_string(context.offset)));
+    result.Set("size", Napi::Number::New(env, context.size));
+    result.Set("flags", Napi::Number::New(env, context.flags));
+    result.Set("mode", Napi::Number::New(env, context.mode));
+    result.Set("uid", Napi::Number::New(env, context.uid));
+    result.Set("gid", Napi::Number::New(env, context.gid));
+    result.Set("hasBuffer", Napi::Boolean::New(env, context.buffer != nullptr));
+    result.Set("bufferOwned", Napi::Boolean::New(env, context.buffer_owned));
+    
+    return result;
+}
+
+/**
+ * Test function: FUSE Response creation and manipulation
+ */
+Napi::Value TestFuseResponse(const Napi::CallbackInfo& info) {
+    Napi::Env env = info.Env();
+    
+    Napi::Object result = Napi::Object::New(env);
+    
+    // Test default FuseResponse
+    FuseResponse response;
+    result.Set("defaultErrno", Napi::Number::New(env, response.errno_result));
+    result.Set("defaultHasAttr", Napi::Boolean::New(env, response.has_attr));
+    result.Set("defaultHasData", Napi::Boolean::New(env, response.has_data));
+    result.Set("defaultHasBuffer", Napi::Boolean::New(env, response.has_buffer));
+    
+    // Test SetError
+    FuseResponse errorResponse;
+    errorResponse.SetError(2); // ENOENT
+    result.Set("errorErrno", Napi::Number::New(env, errorResponse.errno_result));
+    result.Set("errorHasAttr", Napi::Boolean::New(env, errorResponse.has_attr));
+    result.Set("errorHasData", Napi::Boolean::New(env, errorResponse.has_data));
+    
+    // Test SetData
+    FuseResponse dataResponse;
+    dataResponse.SetData("Hello, FUSE!");
+    result.Set("dataErrno", Napi::Number::New(env, dataResponse.errno_result));
+    result.Set("dataHasData", Napi::Boolean::New(env, dataResponse.has_data));
+    result.Set("dataContent", Napi::String::New(env, dataResponse.data));
+    result.Set("dataSize", Napi::Number::New(env, dataResponse.data.size()));
+    
+    // Test SetAttr
+    FuseResponse attrResponse;
+    struct stat testStat;
+    memset(&testStat, 0, sizeof(testStat));
+    testStat.st_ino = 42;
+    testStat.st_mode = 33188; // Regular file, 644 permissions
+    testStat.st_nlink = 1;
+    testStat.st_uid = 1000;
+    testStat.st_gid = 1000;
+    testStat.st_size = 1024;
+    testStat.st_blksize = 4096;
+    testStat.st_blocks = 8;
+    
+    attrResponse.SetAttr(testStat, 5.0);
+    result.Set("attrErrno", Napi::Number::New(env, attrResponse.errno_result));
+    result.Set("attrHasAttr", Napi::Boolean::New(env, attrResponse.has_attr));
+    result.Set("attrTimeout", Napi::Number::New(env, attrResponse.attr_timeout));
+    result.Set("attrIno", Napi::String::New(env, std::to_string(attrResponse.attr.st_ino)));
+    result.Set("attrMode", Napi::Number::New(env, attrResponse.attr.st_mode));
+    result.Set("attrSize", Napi::String::New(env, std::to_string(attrResponse.attr.st_size)));
+    
+    return result;
+}
+
+/**
+ * Module initialization
  */
 Napi::Value TestOperationsBasic(const Napi::CallbackInfo& info) {
     Napi::Env env = info.Env();
@@ -461,6 +587,11 @@ napi_value Init(napi_env env, napi_value exports) {
     // Export operations test functions
     napiExports.Set("testOperationsBasic", Napi::Function::New(napiEnv, TestOperationsBasic));
     napiExports.Set("testOperationValidation", Napi::Function::New(napiEnv, TestOperationValidation));
+    
+    // Export fuse bridge test functions
+    napiExports.Set("testFuseOpTypeConversion", Napi::Function::New(napiEnv, TestFuseOpTypeConversion));
+    napiExports.Set("testFuseRequestContext", Napi::Function::New(napiEnv, TestFuseRequestContext));
+    napiExports.Set("testFuseResponse", Napi::Function::New(napiEnv, TestFuseResponse));
     
     // Export operations functions
     napiExports.Set("setOperationHandler", Napi::Function::New(napiEnv, SetOperationHandler));

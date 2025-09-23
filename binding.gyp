@@ -8,7 +8,8 @@
         "src/napi_helpers.cc",
         "src/errno_mapping.cc",
         "src/timespec_codec.cc",
-        "src/operations.cc"
+        "src/operations.cc",
+        "src/fuse_bridge.cc"
       ],
       "include_dirs": [
         "<!@(node -p \"require('node-addon-api').include\")",
