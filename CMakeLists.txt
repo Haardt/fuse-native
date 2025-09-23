@@ -66,6 +66,7 @@ set(SOURCE_FILES
     src/write_queue.cc
     src/shutdown.cc
     src/xattr_bridge.cc
+    src/init_bridge.cc
 )
 
 # Create the addon

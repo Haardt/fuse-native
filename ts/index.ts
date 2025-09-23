@@ -94,6 +94,96 @@ export interface VersionInfo {
 }
 
 /**
+ * FUSE connection information from init callback
+ */
+export interface FuseConnectionInfo {
+  /** Protocol major version */
+  protoMajor: number;
+  /** Protocol minor version */
+  protoMinor: number;
+  /** Available capabilities */
+  capable: number;
+  /** Wanted capabilities */
+  want: number;
+  /** Maximum write size */
+  maxWrite: number;
+  /** Maximum read size */
+  maxRead: number;
+  /** Maximum readahead */
+  maxReadahead: number;
+  /** Maximum background requests */
+  maxBackground: number;
+  /** Congestion threshold */
+  congestionThreshold: number;
+  /** Time granularity in nanoseconds */
+  timeGranNs: number;
+  /** Available capability flags */
+  caps: number[];
+}
+
+/**
+ * FUSE configuration from init callback
+ */
+export interface FuseConfig {
+  /** Override GID flag */
+  setGid: number;
+  /** GID value */
+  gid: number;
+  /** Override UID flag */
+  setUid: number;
+  /** UID value */
+  uid: number;
+  /** Override mode flag */
+  setMode: number;
+  /** Umask value */
+  umask: number;
+  /** Entry timeout in seconds */
+  entryTimeout: number;
+  /** Negative timeout in seconds */
+  negativeTimeout: number;
+  /** Attribute timeout in seconds */
+  attrTimeout: number;
+  /** Use inode numbers */
+  useIno: number;
+  /** Readdir inode numbers */
+  readdirIno: number;
+  /** Direct I/O flag */
+  directIo: number;
+  /** Kernel cache flag */
+  kernelCache: number;
+  /** Auto cache flag */
+  autoCache: number;
+  /** AC attribute timeout set flag */
+  acAttrTimeoutSet: number;
+  /** AC attribute timeout */
+  acAttrTimeout: number;
+  /** Nullpath ok flag */
+  nullpathOk: number;
+  /** Show help flag */
+  showHelp: number;
+  /** Debug flag */
+  debug: number;
+}
+
+/**
+ * Mount options structure
+ */
+export interface MountOptions {
+  /** Available mount options */
+  available: string[];
+  /** Default recommended options */
+  defaults: string[];
+}
+
+/**
+ * Init callback function type
+ */
+export type InitCallback = (
+  connectionInfo: FuseConnectionInfo,
+  config: FuseConfig
+) => void | Promise<void>;
+
+/**
  * Get version information
  */
 export function getVersion(): VersionInfo {
@@ -117,32 +207,93 @@ export function createSession(
 /**
  * Check if the current process has the required capabilities for FUSE
  */
-export function checkCapabilities(): Promise<boolean> {
-  // TODO: Implement capability checking
-  return Promise.resolve(true);
+/**
+ * Check if specific FUSE capabilities are supported
+ * @param capabilities Array of capability flags to check
+ * @returns Promise resolving to true if all capabilities are supported
+ */
+export async function checkCapabilities(
+  capabilities?: number[]
+): Promise<boolean> {
+  if (!capabilities || capabilities.length === 0) {
+    return true;
+  }
+
+  return new Promise((resolve, reject) => {
+    try {
+      const result = binding.checkCapabilities(capabilities);
+      resolve(result);
+    } catch (error) {
+      reject(error);
+    }
+  });
 }
 
 /**
  * Get available mount options for the current system
+ * @returns Object with available and default mount options
  */
-export function getMountOptions(): string[] {
-  // TODO: Implement mount options detection
-  return [
-    'allow_other',
-    'allow_root',
-    'auto_unmount',
-    'default_permissions',
-    'dev',
-    'nodev',
-    'suid',
-    'nosuid',
-    'ro',
-    'rw',
-    'exec',
-    'noexec',
-    'sync',
-    'async',
-  ];
+export function getMountOptions(): { available: string[]; defaults: string[] } {
+  try {
+    return binding.getAvailableMountOptions();
+  } catch (error) {
+    // Fallback to static list if native call fails
+    return {
+      available: [
+        'allow_other',
+        'allow_root',
+        'auto_unmount',
+        'default_permissions',
+        'dev',
+        'nodev',
+        'suid',
+        'nosuid',
+        'ro',
+        'rw',
+        'exec',
+        'noexec',
+        'sync',
+        'async',
+        'atime',
+        'noatime',
+        'diratime',
+        'nodiratime',
+        'relatime',
+        'norelatime',
+        'strictatime',
+        'nostrictatime',
+        'uid',
+        'gid',
+        'umask',
+        'entry_timeout',
+        'negative_timeout',
+        'attr_timeout',
+        'ac_attr_timeout',
+        'auto_cache',
+        'noauto_cache',
+        'cache_timeout',
+        'max_write',
+        'max_read',
+        'max_readahead',
+        'async_read',
+        'sync_read',
+        'atomic_o_trunc',
+        'big_writes',
+        'no_remote_lock',
+        'no_remote_flock',
+        'no_remote_posix_lock',
+        'splice_write',
+        'splice_move',
+        'splice_read',
+      ],
+      defaults: [
+        'default_permissions',
+        'auto_unmount',
+        'async_read',
+        'atomic_o_trunc',
+      ],
+    };
+  }
 }
 
 /**
@@ -937,6 +1088,113 @@ export async function removexattr(path: string, name: string): Promise<void> {
   }
 }
 
+/**
+ * Initialize the init bridge for FUSE init callbacks
+ */
+export async function initializeInitBridge(): Promise<void> {
+  return new Promise((resolve, reject) => {
+    try {
+      binding.initializeInitBridge();
+      resolve();
+    } catch (error) {
+      reject(error);
+    }
+  });
+}
+
+/**
+ * Set callback function to be called during FUSE init
+ * @param callback Function to call with connection info and config
+ */
+export async function setInitCallback(callback: InitCallback): Promise<void> {
+  return new Promise((resolve, reject) => {
+    try {
+      const wrappedCallback = (
+        connInfo: FuseConnectionInfo,
+        config: FuseConfig
+      ) => {
+        try {
+          const result = callback(connInfo, config);
+          if (result instanceof Promise) {
+            result.catch(console.error); // Log async errors but don't block FUSE
+          }
+        } catch (error) {
+          console.error('Init callback error:', error);
+        }
+      };
+
+      binding.setInitCallback(wrappedCallback);
+      resolve();
+    } catch (error) {
+      reject(error);
+    }
+  });
+}
+
+/**
+ * Remove the init callback
+ */
+export async function removeInitCallback(): Promise<void> {
+  return new Promise((resolve, reject) => {
+    try {
+      binding.removeInitCallback();
+      resolve();
+    } catch (error) {
+      reject(error);
+    }
+  });
+}
+
+/**
+ * Get current FUSE connection information
+ * @returns Connection info or null if not available
+ */
+export function getConnectionInfo(): FuseConnectionInfo | null {
+  try {
+    return binding.getConnectionInfo();
+  } catch (error) {
+    return null;
+  }
+}
+
+/**
+ * Get current FUSE configuration
+ * @returns Config or null if not available
+ */
+export function getFuseConfig(): FuseConfig | null {
+  try {
+    return binding.getFuseConfig();
+  } catch (error) {
+    return null;
+  }
+}
+
+/**
+ * Get capability names as human-readable strings
+ * @returns Array of capability names
+ */
+export function getCapabilityNames(): string[] {
+  try {
+    return binding.getCapabilityNames();
+  } catch (error) {
+    return [];
+  }
+}
+
+/**
+ * Reset the init bridge state
+ */
+export async function resetInitBridge(): Promise<void> {
+  return new Promise((resolve, reject) => {
+    try {
+      binding.resetInitBridge();
+      resolve();
+    } catch (error) {
+      reject(error);
+    }
+  });
+}
+
 // Re-export native constants
 export const errno = binding.errno;
 export const mode = binding.mode;
@@ -981,11 +1239,20 @@ const fuseNative = {
   registerShutdownCallback,
   waitForShutdownCompletion,
   configureShutdownTimeouts,
-  // Phase 8: Extended Attributes
+  // Phase 8: Extended Attributes (xattr)
   getxattr,
   setxattr,
   listxattr,
   removexattr,
+  // Phase 9: Init/Capabilities & Mount-Optionen
+  initializeInitBridge,
+  setInitCallback,
+  removeInitCallback,
+  getConnectionInfo,
+  getFuseConfig,
+  getCapabilityNames,
+  resetInitBridge,
+  // Constants
   errno,
   mode,
   flags,

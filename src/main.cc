@@ -23,6 +23,7 @@
 #include "write_queue.h"
 #include "shutdown.h"
 #include "xattr_bridge.h"
+#include "init_bridge.h"
 
 namespace fuse_native {
 
@@ -110,6 +111,17 @@ napi_value Init(napi_env env, napi_value exports) {
     napiExports.Set("setxattr", Napi::Function::New(napiEnv, SetXAttr));
     napiExports.Set("listxattr", Napi::Function::New(napiEnv, ListXAttr));
     napiExports.Set("removexattr", Napi::Function::New(napiEnv, RemoveXAttr));
+    
+    // Register init bridge functions
+    napiExports.Set("initializeInitBridge", Napi::Function::New(napiEnv, InitializeInitBridge));
+    napiExports.Set("setInitCallback", Napi::Function::New(napiEnv, SetInitCallback));
+    napiExports.Set("removeInitCallback", Napi::Function::New(napiEnv, RemoveInitCallback));
+    napiExports.Set("getConnectionInfo", Napi::Function::New(napiEnv, GetConnectionInfo));
+    napiExports.Set("getFuseConfig", Napi::Function::New(napiEnv, GetFuseConfig));
+    napiExports.Set("getAvailableMountOptions", Napi::Function::New(napiEnv, GetAvailableMountOptions));
+    napiExports.Set("checkCapabilities", Napi::Function::New(napiEnv, CheckCapabilities));
+    napiExports.Set("getCapabilityNames", Napi::Function::New(napiEnv, GetCapabilityNames));
+    napiExports.Set("resetInitBridge", Napi::Function::New(napiEnv, ResetInitBridge));
     
     // Register errno constants using errno_mapping
     Napi::Object errno_constants = Napi::Object::New(napiEnv);
