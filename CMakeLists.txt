@@ -11,25 +11,27 @@ find_package(PkgConfig REQUIRED)
 # Check for FUSE3
 pkg_check_modules(FUSE3 REQUIRED fuse3)
 
-# Include Node-API headers
+# Include Node-API headers - use cmake-js provided variables
+include_directories(${CMAKE_JS_INC})
+
+# Try to get node-addon-api include directory
 execute_process(
     COMMAND node -p "require('node-addon-api').include"
     WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
     OUTPUT_VARIABLE NODE_ADDON_API_DIR
     OUTPUT_STRIP_TRAILING_WHITESPACE
+    ERROR_QUIET
 )
 
-# Get Node.js include directory
-execute_process(
-    COMMAND node -p "process.execPath.replace(/[^\/]+$/, '') + '../include/node'"
-    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
-    OUTPUT_VARIABLE NODE_INCLUDE_DIR
-    OUTPUT_STRIP_TRAILING_WHITESPACE
-)
-
-# Node.js and N-API setup
-include_directories(${NODE_INCLUDE_DIR})
-include_directories(${NODE_ADDON_API_DIR})
+# If we got a result, include it
+if(NODE_ADDON_API_DIR)
+    # Remove quotes if present
+    string(REPLACE "\"" "" NODE_ADDON_API_DIR "${NODE_ADDON_API_DIR}")
+    include_directories(${NODE_ADDON_API_DIR})
+else()
+    # Fallback to local node_modules
+    include_directories("${CMAKE_SOURCE_DIR}/node_modules/node-addon-api")
+endif()
 
 # FUSE3 setup
 include_directories(${FUSE3_INCLUDE_DIRS})
@@ -58,6 +60,8 @@ set(SOURCE_FILES
     src/errno_mapping.cc
     src/operations.cc
     src/session_manager.cc
+    src/buffer_bridge.cc
+    src/copy_file_range.cc
 )
 
 # Create the addon
@@ -77,6 +81,7 @@ endif()
 # Definitions
 add_definitions(-DNODE_ADDON_API_DISABLE_DEPRECATED)
 add_definitions(-DNAPI_VERSION=8)
+add_definitions(-DFUSE_USE_VERSION=31)
 
 # Additional compiler warnings
 if(CMAKE_COMPILER_IS_GNUCXX OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")

@@ -106,7 +106,7 @@ bool SessionManager::Initialize() {
         }
         
         // Parse FUSE arguments
-        struct fuse_args args = FUSE_ARGS_INIT(argv.size(), argv.data());
+        struct fuse_args args = FUSE_ARGS_INIT(static_cast<int>(argv.size()), argv.data());
         
         // Create FUSE session
         fuse_session_ = fuse_session_new(&args, bridge_->GetFuseOperations(), 
@@ -257,7 +257,7 @@ void SessionManager::RunFuseLoop() {
 /**
  * Create session (N-API exposed function)
  */
-napi_value CreateSession(const Napi::CallbackInfo& info) {
+Napi::Value CreateSession(const Napi::CallbackInfo& info) {
     Napi::Env env = info.Env();
     
     if (info.Length() < 1) {
@@ -326,7 +326,7 @@ napi_value CreateSession(const Napi::CallbackInfo& info) {
 /**
  * Destroy session (N-API exposed function)
  */
-napi_value DestroySession(const Napi::CallbackInfo& info) {
+Napi::Value DestroySession(const Napi::CallbackInfo& info) {
     Napi::Env env = info.Env();
     
     if (info.Length() < 1) {
@@ -363,7 +363,7 @@ napi_value DestroySession(const Napi::CallbackInfo& info) {
 /**
  * Mount session (N-API exposed function)
  */
-napi_value Mount(const Napi::CallbackInfo& info) {
+Napi::Value Mount(const Napi::CallbackInfo& info) {
     Napi::Env env = info.Env();
     
     if (info.Length() < 1) {
@@ -390,7 +390,7 @@ napi_value Mount(const Napi::CallbackInfo& info) {
 /**
  * Unmount session (N-API exposed function)
  */
-napi_value Unmount(const Napi::CallbackInfo& info) {
+Napi::Value Unmount(const Napi::CallbackInfo& info) {
     Napi::Env env = info.Env();
     
     if (info.Length() < 1) {
@@ -417,7 +417,7 @@ napi_value Unmount(const Napi::CallbackInfo& info) {
 /**
  * Check if session is ready (N-API exposed function)
  */
-napi_value IsReady(const Napi::CallbackInfo& info) {
+Napi::Value IsReady(const Napi::CallbackInfo& info) {
     Napi::Env env = info.Env();
     
     if (info.Length() < 1) {

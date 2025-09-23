@@ -3,13 +3,15 @@
     {
       "target_name": "fuse-native",
       "sources": [
-        "src/statfs_only.cc",
+        "src/main.cc",
         "src/napi_bigint.cc",
         "src/napi_helpers.cc",
         "src/errno_mapping.cc",
         "src/timespec_codec.cc",
         "src/operations.cc",
-        "src/fuse_bridge.cc"
+        "src/fuse_bridge.cc",
+        "src/statfs_bridge.cc",
+        "src/session_manager.cc"
       ],
       "include_dirs": [
         "<!@(node -p \"require('node-addon-api').include\")",

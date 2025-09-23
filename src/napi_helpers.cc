@@ -42,6 +42,10 @@ Napi::BigInt NapiHelpers::CreateBigIntU64(Napi::Env env, uint64_t value) {
     return Napi::BigInt::New(env, value);
 }
 
+Napi::BigInt NapiHelpers::CreateBigUint64(Napi::Env env, uint64_t value) {
+    return Napi::BigInt::New(env, value);
+}
+
 bool NapiHelpers::GetBigInt64(Napi::BigInt bigint, int64_t* result) {
     if (!bigint.IsBigInt()) {
         return false;
@@ -61,6 +65,55 @@ bool NapiHelpers::GetBigIntU64(Napi::BigInt bigint, uint64_t* result) {
     *result = bigint.Uint64Value(&lossless);
     return lossless;
 }
+
+uint64_t NapiHelpers::GetBigUint64(Napi::Env env, Napi::Value value) {
+    if (!value.IsBigInt()) {
+        ThrowTypeError(env, "Expected BigInt");
+        return 0;
+    }
+    
+    bool lossless = false;
+    uint64_t result = value.As<Napi::BigInt>().Uint64Value(&lossless);
+    if (!lossless) {
+        ThrowError(env, "BigInt value out of range for uint64_t");
+        return 0;
+    }
+    return result;
+}
+
+int32_t NapiHelpers::GetInt32(Napi::Env env, Napi::Value value) {
+    if (!value.IsNumber()) {
+        ThrowTypeError(env, "Expected number");
+        return 0;
+    }
+    return value.As<Napi::Number>().Int32Value();
+}
+
+uint32_t NapiHelpers::GetUint32(Napi::Env env, Napi::Value value) {
+    if (!value.IsNumber()) {
+        ThrowTypeError(env, "Expected number");
+        return 0;
+    }
+    return value.As<Napi::Number>().Uint32Value();
+}
+
+double NapiHelpers::GetDouble(Napi::Env env, Napi::Value value) {
+    if (!value.IsNumber()) {
+        ThrowTypeError(env, "Expected number");
+        return 0.0;
+    }
+    return value.As<Napi::Number>().DoubleValue();
+}
+
+bool NapiHelpers::GetBoolean(Napi::Env env, Napi::Value value) {
+    if (!value.IsBoolean()) {
+        ThrowTypeError(env, "Expected boolean");
+        return false;
+    }
+    return value.As<Napi::Boolean>().Value();
+}
+
+
 
 /**
  * Safe BigInt conversions with bounds checking

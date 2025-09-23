@@ -45,6 +45,44 @@ export declare function checkCapabilities(): Promise<boolean>;
  */
 export declare function getMountOptions(): string[];
 /**
+ * Copy data between file descriptors using copy_file_range
+ *
+ * @param fdIn - Source file descriptor
+ * @param offsetIn - Source offset (null to use current position)
+ * @param fdOut - Destination file descriptor
+ * @param offsetOut - Destination offset (null to use current position)
+ * @param length - Number of bytes to copy
+ * @param flags - Optional copy flags
+ * @returns Promise resolving to number of bytes copied
+ */
+export declare function copyFileRange(fdIn: number, offsetIn: bigint | null, fdOut: number, offsetOut: bigint | null, length: bigint, flags?: number): Promise<bigint>;
+/**
+ * Set chunk size for copy_file_range fallback operations
+ *
+ * @param chunkSize - Size of chunks for read/write fallback operations
+ */
+export declare function setCopyChunkSize(chunkSize: bigint): void;
+/**
+ * Get current chunk size for copy_file_range fallback operations
+ *
+ * @returns Current chunk size in bytes
+ */
+export declare function getCopyChunkSize(): bigint;
+/**
+ * Get copy_file_range operation statistics
+ *
+ * @returns Statistics object with operation counts and performance data
+ */
+export declare function getCopyStats(): {
+    totalOperations: bigint;
+    totalBytesCopied: bigint;
+    kernelCopySupported: boolean;
+};
+/**
+ * Reset copy_file_range operation statistics
+ */
+export declare function resetCopyStats(): void;
+/**
  * Check if a directory is currently mounted as a FUSE filesystem
  */
 export declare function isMounted(_path: string): Promise<boolean>;
@@ -62,6 +100,11 @@ declare const fuseNative: {
     getMountOptions: typeof getMountOptions;
     isMounted: typeof isMounted;
     listMounts: typeof listMounts;
+    copyFileRange: typeof copyFileRange;
+    setCopyChunkSize: typeof setCopyChunkSize;
+    getCopyChunkSize: typeof getCopyChunkSize;
+    getCopyStats: typeof getCopyStats;
+    resetCopyStats: typeof resetCopyStats;
     errno: any;
     mode: any;
     flags: any;

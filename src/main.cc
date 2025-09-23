@@ -15,114 +15,139 @@
 #include "napi_helpers.h"
 #include "session_manager.h"
 #include "operations.h"
+#include "errno_mapping.h"
+#include "buffer_bridge.h"
+#include "copy_file_range.h"
 
 namespace fuse_native {
 
 /**
- * Initialize the FUSE Native module
- * Registers all FUSE operations and helper functions
+ * Get version information
  */
-Napi::Object Init(Napi::Env env, Napi::Object exports) {
+Napi::Value GetVersion(const Napi::CallbackInfo& info) {
+    Napi::Env env = info.Env();
+    
+    Napi::Object version = Napi::Object::New(env);
+    version.Set("fuse", Napi::String::New(env, std::to_string(fuse_version())));
+    version.Set("binding", Napi::String::New(env, "3.0.0-alpha.1"));
+    version.Set("napi", Napi::String::New(env, std::to_string(NAPI_VERSION)));
+    
+    return version;
+}
+
+/**
+ * Module initialization
+ */
+napi_value Init(napi_env env, napi_value exports) {
+    Napi::Env napiEnv(env);
+    Napi::Object napiExports = Napi::Object(napiEnv, exports);
+    
     // Initialize error handling
-    NapiHelpers::InitializeErrorHandling(env);
+    NapiHelpers::InitializeErrorHandling(napiEnv);
     
     // Register FUSE session management functions
-    // Session management functions - placeholder for now
-    // exports.Set("createSession", Napi::Function::New(env, SessionManager::CreateSession));
-    // exports.Set("destroySession", Napi::Function::New(env, SessionManager::DestroySession));
-    // exports.Set("mount", Napi::Function::New(env, SessionManager::Mount));
-    // exports.Set("unmount", Napi::Function::New(env, SessionManager::Unmount));
-    // exports.Set("isReady", Napi::Function::New(env, SessionManager::IsReady));
+    napiExports.Set("createSession", Napi::Function::New(napiEnv, CreateSession));
+    napiExports.Set("destroySession", Napi::Function::New(napiEnv, DestroySession));
+    napiExports.Set("mount", Napi::Function::New(napiEnv, Mount));
+    napiExports.Set("unmount", Napi::Function::New(napiEnv, Unmount));
+    napiExports.Set("isReady", Napi::Function::New(napiEnv, IsReady));
     
-    // Operation management functions - placeholder for now
-    // exports.Set("setOperationHandler", Napi::Function::New(env, Operations::SetOperationHandler));
-    // exports.Set("removeOperationHandler", Napi::Function::New(env, Operations::RemoveOperationHandler));
+    // Register operation management functions
+    napiExports.Set("setOperationHandler", Napi::Function::New(napiEnv, SetOperationHandler));
+    napiExports.Set("removeOperationHandler", Napi::Function::New(napiEnv, RemoveOperationHandler));
     
     // Register utility functions
-    exports.Set("getVersion", Napi::Function::New(env, [](const Napi::CallbackInfo& info) -> Napi::Value {
-        Napi::Env env = info.Env();
-        Napi::Object version = Napi::Object::New(env);
-        
-        version.Set("fuse", Napi::String::New(env, std::to_string(fuse_version())));
-        version.Set("binding", Napi::String::New(env, "3.0.0-alpha.1"));
-        version.Set("napi", Napi::String::New(env, std::to_string(NAPI_VERSION)));
-        
-        return version;
-    }));
+    napiExports.Set("getVersion", Napi::Function::New(napiEnv, GetVersion));
     
-    // Register errno constants
-    Napi::Object errno_constants = Napi::Object::New(env);
-    errno_constants.Set("ENOENT", Napi::Number::New(env, -ENOENT));
-    errno_constants.Set("EACCES", Napi::Number::New(env, -EACCES));
-    errno_constants.Set("EEXIST", Napi::Number::New(env, -EEXIST));
-    errno_constants.Set("EISDIR", Napi::Number::New(env, -EISDIR));
-    errno_constants.Set("ENOTDIR", Napi::Number::New(env, -ENOTDIR));
-    errno_constants.Set("ENOTEMPTY", Napi::Number::New(env, -ENOTEMPTY));
-    errno_constants.Set("EPERM", Napi::Number::New(env, -EPERM));
-    errno_constants.Set("EIO", Napi::Number::New(env, -EIO));
-    errno_constants.Set("ENOMEM", Napi::Number::New(env, -ENOMEM));
-    errno_constants.Set("ENOSPC", Napi::Number::New(env, -ENOSPC));
-    errno_constants.Set("EINVAL", Napi::Number::New(env, -EINVAL));
-    errno_constants.Set("ENODEV", Napi::Number::New(env, -ENODEV));
-    errno_constants.Set("EROFS", Napi::Number::New(env, -EROFS));
-    errno_constants.Set("EAGAIN", Napi::Number::New(env, -EAGAIN));
-    errno_constants.Set("EWOULDBLOCK", Napi::Number::New(env, -EWOULDBLOCK));
-    errno_constants.Set("EMFILE", Napi::Number::New(env, -EMFILE));
-    errno_constants.Set("ENFILE", Napi::Number::New(env, -ENFILE));
-    errno_constants.Set("EBADF", Napi::Number::New(env, -EBADF));
-    errno_constants.Set("EFAULT", Napi::Number::New(env, -EFAULT));
-    errno_constants.Set("ELOOP", Napi::Number::New(env, -ELOOP));
-    errno_constants.Set("ENAMETOOLONG", Napi::Number::New(env, -ENAMETOOLONG));
-    errno_constants.Set("ENOTSUPP", Napi::Number::New(env, -ENOTSUP));
-    errno_constants.Set("EXDEV", Napi::Number::New(env, -EXDEV));
-    errno_constants.Set("ENOSYS", Napi::Number::New(env, -ENOSYS));
+    // Register buffer bridge functions
+    napiExports.Set("createExternalBuffer", Napi::Function::New(napiEnv, CreateExternalBuffer));
+    napiExports.Set("createManagedBuffer", Napi::Function::New(napiEnv, CreateManagedBuffer));
+    napiExports.Set("validateBuffer", Napi::Function::New(napiEnv, ValidateBuffer));
+    napiExports.Set("validateBufferRange", Napi::Function::New(napiEnv, ValidateBufferRange));
+    napiExports.Set("createBufferSlice", Napi::Function::New(napiEnv, CreateBufferSlice));
+    napiExports.Set("getBufferStats", Napi::Function::New(napiEnv, GetBufferStats));
     
-    exports.Set("errno", errno_constants);
+    // Register copy file range functions
+    napiExports.Set("copyFileRange", Napi::Function::New(napiEnv, CopyFileRange));
+    napiExports.Set("setCopyChunkSize", Napi::Function::New(napiEnv, SetCopyChunkSize));
+    napiExports.Set("getCopyChunkSize", Napi::Function::New(napiEnv, GetCopyChunkSize));
+    napiExports.Set("getCopyStats", Napi::Function::New(napiEnv, GetCopyStats));
+    napiExports.Set("resetCopyStats", Napi::Function::New(napiEnv, ResetCopyStats));
+    
+    // Register errno constants using errno_mapping
+    Napi::Object errno_constants = Napi::Object::New(napiEnv);
+    errno_constants.Set("ENOENT", Napi::Number::New(napiEnv, normalize_fuse_errno(ENOENT)));
+    errno_constants.Set("EACCES", Napi::Number::New(napiEnv, normalize_fuse_errno(EACCES)));
+    errno_constants.Set("EEXIST", Napi::Number::New(napiEnv, normalize_fuse_errno(EEXIST)));
+    errno_constants.Set("EISDIR", Napi::Number::New(napiEnv, normalize_fuse_errno(EISDIR)));
+    errno_constants.Set("ENOTDIR", Napi::Number::New(napiEnv, normalize_fuse_errno(ENOTDIR)));
+    errno_constants.Set("ENOTEMPTY", Napi::Number::New(napiEnv, normalize_fuse_errno(ENOTEMPTY)));
+    errno_constants.Set("EPERM", Napi::Number::New(napiEnv, normalize_fuse_errno(EPERM)));
+    errno_constants.Set("EIO", Napi::Number::New(napiEnv, normalize_fuse_errno(EIO)));
+    errno_constants.Set("ENOMEM", Napi::Number::New(napiEnv, normalize_fuse_errno(ENOMEM)));
+    errno_constants.Set("ENOSPC", Napi::Number::New(napiEnv, normalize_fuse_errno(ENOSPC)));
+    errno_constants.Set("EINVAL", Napi::Number::New(napiEnv, normalize_fuse_errno(EINVAL)));
+    errno_constants.Set("ENODEV", Napi::Number::New(napiEnv, normalize_fuse_errno(ENODEV)));
+    errno_constants.Set("EROFS", Napi::Number::New(napiEnv, normalize_fuse_errno(EROFS)));
+    errno_constants.Set("EAGAIN", Napi::Number::New(napiEnv, normalize_fuse_errno(EAGAIN)));
+    errno_constants.Set("EWOULDBLOCK", Napi::Number::New(napiEnv, normalize_fuse_errno(EWOULDBLOCK)));
+    errno_constants.Set("EMFILE", Napi::Number::New(napiEnv, normalize_fuse_errno(EMFILE)));
+    errno_constants.Set("ENFILE", Napi::Number::New(napiEnv, normalize_fuse_errno(ENFILE)));
+    errno_constants.Set("EBADF", Napi::Number::New(napiEnv, normalize_fuse_errno(EBADF)));
+    errno_constants.Set("EFAULT", Napi::Number::New(napiEnv, normalize_fuse_errno(EFAULT)));
+    errno_constants.Set("ELOOP", Napi::Number::New(napiEnv, normalize_fuse_errno(ELOOP)));
+    errno_constants.Set("ENAMETOOLONG", Napi::Number::New(napiEnv, normalize_fuse_errno(ENAMETOOLONG)));
+    errno_constants.Set("ENOTSUPP", Napi::Number::New(napiEnv, normalize_fuse_errno(ENOTSUP)));
+    errno_constants.Set("EXDEV", Napi::Number::New(napiEnv, normalize_fuse_errno(EXDEV)));
+    errno_constants.Set("ENOSYS", Napi::Number::New(napiEnv, normalize_fuse_errno(ENOSYS)));
+    errno_constants.Set("ERANGE", Napi::Number::New(napiEnv, normalize_fuse_errno(ERANGE)));
+    
+    napiExports.Set("errno", errno_constants);
     
     // Register file mode constants
-    Napi::Object mode_constants = Napi::Object::New(env);
-    mode_constants.Set("S_IFMT", Napi::Number::New(env, S_IFMT));
-    mode_constants.Set("S_IFREG", Napi::Number::New(env, S_IFREG));
-    mode_constants.Set("S_IFDIR", Napi::Number::New(env, S_IFDIR));
-    mode_constants.Set("S_IFLNK", Napi::Number::New(env, S_IFLNK));
-    mode_constants.Set("S_IFBLK", Napi::Number::New(env, S_IFBLK));
-    mode_constants.Set("S_IFCHR", Napi::Number::New(env, S_IFCHR));
-    mode_constants.Set("S_IFIFO", Napi::Number::New(env, S_IFIFO));
-    mode_constants.Set("S_IFSOCK", Napi::Number::New(env, S_IFSOCK));
-    mode_constants.Set("S_ISUID", Napi::Number::New(env, S_ISUID));
-    mode_constants.Set("S_ISGID", Napi::Number::New(env, S_ISGID));
-    mode_constants.Set("S_ISVTX", Napi::Number::New(env, S_ISVTX));
-    mode_constants.Set("S_IRWXU", Napi::Number::New(env, S_IRWXU));
-    mode_constants.Set("S_IRUSR", Napi::Number::New(env, S_IRUSR));
-    mode_constants.Set("S_IWUSR", Napi::Number::New(env, S_IWUSR));
-    mode_constants.Set("S_IXUSR", Napi::Number::New(env, S_IXUSR));
-    mode_constants.Set("S_IRWXG", Napi::Number::New(env, S_IRWXG));
-    mode_constants.Set("S_IRGRP", Napi::Number::New(env, S_IRGRP));
-    mode_constants.Set("S_IWGRP", Napi::Number::New(env, S_IWGRP));
-    mode_constants.Set("S_IXGRP", Napi::Number::New(env, S_IXGRP));
-    mode_constants.Set("S_IRWXO", Napi::Number::New(env, S_IRWXO));
-    mode_constants.Set("S_IROTH", Napi::Number::New(env, S_IROTH));
-    mode_constants.Set("S_IWOTH", Napi::Number::New(env, S_IWOTH));
-    mode_constants.Set("S_IXOTH", Napi::Number::New(env, S_IXOTH));
+    Napi::Object mode_constants = Napi::Object::New(napiEnv);
+    mode_constants.Set("S_IFMT", Napi::Number::New(napiEnv, S_IFMT));
+    mode_constants.Set("S_IFREG", Napi::Number::New(napiEnv, S_IFREG));
+    mode_constants.Set("S_IFDIR", Napi::Number::New(napiEnv, S_IFDIR));
+    mode_constants.Set("S_IFLNK", Napi::Number::New(napiEnv, S_IFLNK));
+    mode_constants.Set("S_IFBLK", Napi::Number::New(napiEnv, S_IFBLK));
+    mode_constants.Set("S_IFCHR", Napi::Number::New(napiEnv, S_IFCHR));
+    mode_constants.Set("S_IFIFO", Napi::Number::New(napiEnv, S_IFIFO));
+    mode_constants.Set("S_IFSOCK", Napi::Number::New(napiEnv, S_IFSOCK));
+    mode_constants.Set("S_ISUID", Napi::Number::New(napiEnv, S_ISUID));
+    mode_constants.Set("S_ISGID", Napi::Number::New(napiEnv, S_ISGID));
+    mode_constants.Set("S_ISVTX", Napi::Number::New(napiEnv, S_ISVTX));
+    mode_constants.Set("S_IRWXU", Napi::Number::New(napiEnv, S_IRWXU));
+    mode_constants.Set("S_IRUSR", Napi::Number::New(napiEnv, S_IRUSR));
+    mode_constants.Set("S_IWUSR", Napi::Number::New(napiEnv, S_IWUSR));
+    mode_constants.Set("S_IXUSR", Napi::Number::New(napiEnv, S_IXUSR));
+    mode_constants.Set("S_IRWXG", Napi::Number::New(napiEnv, S_IRWXG));
+    mode_constants.Set("S_IRGRP", Napi::Number::New(napiEnv, S_IRGRP));
+    mode_constants.Set("S_IWGRP", Napi::Number::New(napiEnv, S_IWGRP));
+    mode_constants.Set("S_IXGRP", Napi::Number::New(napiEnv, S_IXGRP));
+    mode_constants.Set("S_IRWXO", Napi::Number::New(napiEnv, S_IRWXO));
+    mode_constants.Set("S_IROTH", Napi::Number::New(napiEnv, S_IROTH));
+    mode_constants.Set("S_IWOTH", Napi::Number::New(napiEnv, S_IWOTH));
+    mode_constants.Set("S_IXOTH", Napi::Number::New(napiEnv, S_IXOTH));
     
-    exports.Set("mode", mode_constants);
+    napiExports.Set("mode", mode_constants);
     
     // Register open flags constants
-    Napi::Object flag_constants = Napi::Object::New(env);
-    flag_constants.Set("O_RDONLY", Napi::Number::New(env, O_RDONLY));
-    flag_constants.Set("O_WRONLY", Napi::Number::New(env, O_WRONLY));
-    flag_constants.Set("O_RDWR", Napi::Number::New(env, O_RDWR));
-    flag_constants.Set("O_CREAT", Napi::Number::New(env, O_CREAT));
-    flag_constants.Set("O_EXCL", Napi::Number::New(env, O_EXCL));
-    flag_constants.Set("O_TRUNC", Napi::Number::New(env, O_TRUNC));
-    flag_constants.Set("O_APPEND", Napi::Number::New(env, O_APPEND));
-    flag_constants.Set("O_NONBLOCK", Napi::Number::New(env, O_NONBLOCK));
-    flag_constants.Set("O_SYNC", Napi::Number::New(env, O_SYNC));
-    flag_constants.Set("O_DIRECT", Napi::Number::New(env, O_DIRECT));
-    flag_constants.Set("O_DIRECTORY", Napi::Number::New(env, O_DIRECTORY));
-    flag_constants.Set("O_NOFOLLOW", Napi::Number::New(env, O_NOFOLLOW));
+    Napi::Object flag_constants = Napi::Object::New(napiEnv);
+    flag_constants.Set("O_RDONLY", Napi::Number::New(napiEnv, O_RDONLY));
+    flag_constants.Set("O_WRONLY", Napi::Number::New(napiEnv, O_WRONLY));
+    flag_constants.Set("O_RDWR", Napi::Number::New(napiEnv, O_RDWR));
+    flag_constants.Set("O_CREAT", Napi::Number::New(napiEnv, O_CREAT));
+    flag_constants.Set("O_EXCL", Napi::Number::New(napiEnv, O_EXCL));
+    flag_constants.Set("O_TRUNC", Napi::Number::New(napiEnv, O_TRUNC));
+    flag_constants.Set("O_APPEND", Napi::Number::New(napiEnv, O_APPEND));
+    flag_constants.Set("O_NONBLOCK", Napi::Number::New(napiEnv, O_NONBLOCK));
+    flag_constants.Set("O_SYNC", Napi::Number::New(napiEnv, O_SYNC));
+    flag_constants.Set("O_DIRECT", Napi::Number::New(napiEnv, O_DIRECT));
+    flag_constants.Set("O_DIRECTORY", Napi::Number::New(napiEnv, O_DIRECTORY));
+    flag_constants.Set("O_NOFOLLOW", Napi::Number::New(napiEnv, O_NOFOLLOW));
     
-    exports.Set("flags", flag_constants);
+    napiExports.Set("flags", flag_constants);
     
     return exports;
 }
@@ -130,4 +155,4 @@ Napi::Object Init(Napi::Env env, Napi::Object exports) {
 } // namespace fuse_native
 
 // Register the module with Node.js
-NODE_API_MODULE(fuse-native, fuse_native::Init)
+NAPI_MODULE(NODE_GYP_MODULE_NAME, fuse_native::Init)

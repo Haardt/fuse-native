@@ -29,58 +29,60 @@ void FuseBridge::ProcessStatfsRequest(std::unique_ptr<FuseRequestContext> contex
     auto tsfn = operation_handlers_.at(FuseOpType::STATFS);
     
     // Call JavaScript handler asynchronously
-    napi_status status = tsfn.NonBlockingCall([context = std::move(context)](
+    // Process the statfs request  
+    FuseRequestContext* contextPtr = context.release();
+    napi_status status = tsfn.NonBlockingCall([contextPtr](
         Napi::Env env, Napi::Function jsCallback) {
-        
+
+        std::unique_ptr<FuseRequestContext> context(contextPtr);
+
         try {
             // Prepare arguments for JavaScript callback
             Napi::Object contextObj = Napi::Object::New(env);
             contextObj.Set("uid", Napi::Number::New(env, context->uid));
             contextObj.Set("gid", Napi::Number::New(env, context->gid));
             contextObj.Set("pid", Napi::Number::New(env, 0)); // TODO: Get actual PID
-            
+
             // Create options object
             Napi::Object options = Napi::Object::New(env);
             // No specific options for statfs currently
             
             // Call JavaScript handler: statfs(ino, context, options)
             std::vector<napi_value> args = {
-                NapiBigInt::CreateBigIntU64(env, context->ino),
-                contextObj,
-                options
+                fuse_native::u64_to_bigint(env, context->ino),
+                contextObj.operator napi_value(),
+                options.operator napi_value()
             };
-            
+
             Napi::Value result = jsCallback.Call(args);
-            
+
             // Handle the result
             if (result.IsPromise()) {
                 auto promise = result.As<Napi::Promise>();
-                
+
                 // Create promise handlers
-                auto onResolve = Napi::Function::New(env, [context = context.get()](
+                FuseRequestContext* rawContext = context.release();
+                auto onResolve = Napi::Function::New(env, [rawContext](
                     const Napi::CallbackInfo& info) -> Napi::Value {
-                    
-                    HandleStatfsSuccess(info.Env(), info[0], context);
+
+                    HandleStatfsSuccess(info.Env(), info[0], rawContext);
                     return info.Env().Undefined();
                 });
-                
-                auto onReject = Napi::Function::New(env, [context = context.get()](
+
+                auto onReject = Napi::Function::New(env, [rawContext](
                     const Napi::CallbackInfo& info) -> Napi::Value {
-                    
-                    HandleStatfsError(info.Env(), info[0], context);
+
+                    HandleStatfsError(info.Env(), info[0], rawContext);
                     return info.Env().Undefined();
                 });
-                
-                // Release context ownership - handlers will manage it
-                context.release();
-                
+
                 promise.Get("then").As<Napi::Function>().Call(promise, { onResolve });
                 promise.Get("catch").As<Napi::Function>().Call(promise, { onReject });
             } else {
                 // Synchronous result
                 HandleStatfsSuccess(env, result, context.get());
             }
-            
+
         } catch (const Napi::Error& e) {
             HandleStatfsError(env, e.Value(), context.get());
         } catch (const std::exception& e) {
@@ -124,7 +126,7 @@ void FuseBridge::HandleStatfsSuccess(Napi::Env env, Napi::Value result, FuseRequ
             Napi::Value blocks_val = statfs_obj.Get("blocks");
             if (blocks_val.IsBigInt()) {
                 bool lossless;
-                stvfs.f_blocks = NapiBigInt::GetBigIntU64(env, blocks_val.As<Napi::BigInt>(), &lossless);
+                lossless = fuse_native::bigint_to_u64(env, blocks_val.operator napi_value(), &stvfs.f_blocks);
                 if (!lossless) {
                     fuse_reply_err(context->req, ERANGE);
                     delete context;
@@ -137,7 +139,7 @@ void FuseBridge::HandleStatfsSuccess(Napi::Env env, Napi::Value result, FuseRequ
             Napi::Value bfree_val = statfs_obj.Get("bfree");
             if (bfree_val.IsBigInt()) {
                 bool lossless;
-                stvfs.f_bfree = NapiBigInt::GetBigIntU64(env, bfree_val.As<Napi::BigInt>(), &lossless);
+                lossless = fuse_native::bigint_to_u64(env, bfree_val.operator napi_value(), &stvfs.f_bfree);
                 if (!lossless) {
                     fuse_reply_err(context->req, ERANGE);
                     delete context;
@@ -150,7 +152,7 @@ void FuseBridge::HandleStatfsSuccess(Napi::Env env, Napi::Value result, FuseRequ
             Napi::Value bavail_val = statfs_obj.Get("bavail");
             if (bavail_val.IsBigInt()) {
                 bool lossless;
-                stvfs.f_bavail = NapiBigInt::GetBigIntU64(env, bavail_val.As<Napi::BigInt>(), &lossless);
+                lossless = fuse_native::bigint_to_u64(env, bavail_val.operator napi_value(), &stvfs.f_bavail);
                 if (!lossless) {
                     fuse_reply_err(context->req, ERANGE);
                     delete context;
@@ -163,7 +165,7 @@ void FuseBridge::HandleStatfsSuccess(Napi::Env env, Napi::Value result, FuseRequ
             Napi::Value files_val = statfs_obj.Get("files");
             if (files_val.IsBigInt()) {
                 bool lossless;
-                stvfs.f_files = NapiBigInt::GetBigIntU64(env, files_val.As<Napi::BigInt>(), &lossless);
+                lossless = fuse_native::bigint_to_u64(env, files_val.operator napi_value(), &stvfs.f_files);
                 if (!lossless) {
                     fuse_reply_err(context->req, ERANGE);
                     delete context;
@@ -176,7 +178,7 @@ void FuseBridge::HandleStatfsSuccess(Napi::Env env, Napi::Value result, FuseRequ
             Napi::Value ffree_val = statfs_obj.Get("ffree");
             if (ffree_val.IsBigInt()) {
                 bool lossless;
-                stvfs.f_ffree = NapiBigInt::GetBigIntU64(env, ffree_val.As<Napi::BigInt>(), &lossless);
+                lossless = fuse_native::bigint_to_u64(env, ffree_val.operator napi_value(), &stvfs.f_ffree);
                 if (!lossless) {
                     fuse_reply_err(context->req, ERANGE);
                     delete context;
@@ -189,7 +191,7 @@ void FuseBridge::HandleStatfsSuccess(Napi::Env env, Napi::Value result, FuseRequ
             Napi::Value favail_val = statfs_obj.Get("favail");
             if (favail_val.IsBigInt()) {
                 bool lossless;
-                stvfs.f_favail = NapiBigInt::GetBigIntU64(env, favail_val.As<Napi::BigInt>(), &lossless);
+                lossless = fuse_native::bigint_to_u64(env, favail_val.operator napi_value(), &stvfs.f_favail);
                 if (!lossless) {
                     fuse_reply_err(context->req, ERANGE);
                     delete context;
@@ -202,7 +204,7 @@ void FuseBridge::HandleStatfsSuccess(Napi::Env env, Napi::Value result, FuseRequ
             Napi::Value fsid_val = statfs_obj.Get("fsid");
             if (fsid_val.IsBigInt()) {
                 bool lossless;
-                stvfs.f_fsid = NapiBigInt::GetBigIntU64(env, fsid_val.As<Napi::BigInt>(), &lossless);
+                lossless = fuse_native::bigint_to_u64(env, fsid_val.operator napi_value(), &stvfs.f_fsid);
                 if (!lossless) {
                     fuse_reply_err(context->req, ERANGE);
                     delete context;
@@ -255,7 +257,7 @@ void FuseBridge::HandleStatfsError(Napi::Env env, Napi::Value error, FuseRequest
                 Napi::Value code_prop = error_obj.Get("code");
                 if (code_prop.IsString()) {
                     std::string code = code_prop.As<Napi::String>().Utf8Value();
-                    errno_val = ErrnoMapping::StringToErrno(code);
+                    errno_val = fuse_native::string_to_errno(code);
                 }
             }
         } else if (error.IsNumber()) {

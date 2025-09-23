@@ -33,8 +33,16 @@ public:
     // BigInt conversions for 64-bit values
     static Napi::BigInt CreateBigInt64(Napi::Env env, int64_t value);
     static Napi::BigInt CreateBigIntU64(Napi::Env env, uint64_t value);
+    static Napi::BigInt CreateBigUint64(Napi::Env env, uint64_t value);
     static bool GetBigInt64(Napi::BigInt bigint, int64_t* result);
     static bool GetBigIntU64(Napi::BigInt bigint, uint64_t* result);
+    static uint64_t GetBigUint64(Napi::Env env, Napi::Value value);
+    
+    // Basic type conversions
+    static int32_t GetInt32(Napi::Env env, Napi::Value value);
+    static uint32_t GetUint32(Napi::Env env, Napi::Value value);
+    static double GetDouble(Napi::Env env, Napi::Value value);
+    static bool GetBoolean(Napi::Env env, Napi::Value value);
     
     // Safe BigInt conversions with bounds checking
     static std::optional<int64_t> SafeGetBigInt64(Napi::Value value);

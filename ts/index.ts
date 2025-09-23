@@ -132,6 +132,85 @@ export function getMountOptions(): string[] {
 }
 
 /**
+ * Copy data between file descriptors using copy_file_range
+ *
+ * @param fdIn - Source file descriptor
+ * @param offsetIn - Source offset (null to use current position)
+ * @param fdOut - Destination file descriptor
+ * @param offsetOut - Destination offset (null to use current position)
+ * @param length - Number of bytes to copy
+ * @param flags - Optional copy flags
+ * @returns Promise resolving to number of bytes copied
+ */
+export async function copyFileRange(
+  fdIn: number,
+  offsetIn: bigint | null,
+  fdOut: number,
+  offsetOut: bigint | null,
+  length: bigint,
+  flags: number = 0
+): Promise<bigint> {
+  return new Promise((resolve, reject) => {
+    try {
+      const offsetInValue = offsetIn === null ? 0xffffffffffffffffn : offsetIn;
+      const offsetOutValue =
+        offsetOut === null ? 0xffffffffffffffffn : offsetOut;
+
+      const result = binding.copyFileRange(
+        fdIn,
+        offsetInValue,
+        fdOut,
+        offsetOutValue,
+        length,
+        flags
+      );
+
+      resolve(result);
+    } catch (error) {
+      reject(error);
+    }
+  });
+}
+
+/**
+ * Set chunk size for copy_file_range fallback operations
+ *
+ * @param chunkSize - Size of chunks for read/write fallback operations
+ */
+export function setCopyChunkSize(chunkSize: bigint): void {
+  binding.setCopyChunkSize(chunkSize);
+}
+
+/**
+ * Get current chunk size for copy_file_range fallback operations
+ *
+ * @returns Current chunk size in bytes
+ */
+export function getCopyChunkSize(): bigint {
+  return binding.getCopyChunkSize();
+}
+
+/**
+ * Get copy_file_range operation statistics
+ *
+ * @returns Statistics object with operation counts and performance data
+ */
+export function getCopyStats(): {
+  totalOperations: bigint;
+  totalBytesCopied: bigint;
+  kernelCopySupported: boolean;
+} {
+  return binding.getCopyStats();
+}
+
+/**
+ * Reset copy_file_range operation statistics
+ */
+export function resetCopyStats(): void {
+  binding.resetCopyStats();
+}
+
+/**
  * Check if a directory is currently mounted as a FUSE filesystem
  */
 export async function isMounted(_path: string): Promise<boolean> {
@@ -160,6 +239,11 @@ const fuseNative = {
   getMountOptions,
   isMounted,
   listMounts,
+  copyFileRange,
+  setCopyChunkSize,
+  getCopyChunkSize,
+  getCopyStats,
+  resetCopyStats,
   errno,
   mode,
   flags,

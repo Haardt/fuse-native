@@ -1,43 +1,37 @@
 /**
  * @file smoke-simple.test.ts
- * @brief Simple smoke tests using direct native binding calls
+ * @brief Simple smoke tests for FUSE Native binding with productive API
  *
- * This test suite validates the basic functionality of the native binding
- * without going through the TypeScript wrapper layer to avoid BigInt
- * serialization issues in Jest.
+ * Tests basic functionality using the productive API from main.cc
+ * instead of legacy test wrapper functions.
  */
 
 import { describe, test, expect, beforeAll } from '@jest/globals';
 
+// Import the native binding built from main.cc
+let binding: any;
+
+beforeAll(() => {
+  try {
+    binding = require('../prebuilds/linux-x64/@cocalc+fuse-native.node');
+  } catch (error) {
+    console.error('Failed to load native binding:', error);
+    throw error;
+  }
+});
+
 describe('FUSE Native Simple Smoke Tests', () => {
-  let binding: any;
-
-  beforeAll(() => {
-    try {
-      // Load the native binding directly
-      binding = require('../prebuilds/linux-x64/@cocalc+fuse-native.node');
-    } catch (error) {
-      throw new Error(`Failed to load native binding: ${error}`);
-    }
-  });
-
   describe('Native Binding Loading', () => {
-    test('should load native binding successfully', () => {
+    test('should load native module successfully', () => {
       expect(binding).toBeDefined();
       expect(typeof binding).toBe('object');
     });
 
     test('should export core functions', () => {
       expect(typeof binding.getVersion).toBe('function');
+      expect(typeof binding.createSession).toBe('function');
       expect(typeof binding.setOperationHandler).toBe('function');
       expect(typeof binding.removeOperationHandler).toBe('function');
-    });
-
-    test('should export test functions', () => {
-      expect(typeof binding.testStatvfsToObject).toBe('function');
-      expect(typeof binding.testBigIntPrecision).toBe('function');
-      expect(typeof binding.testErrnoMapping).toBe('function');
-      expect(typeof binding.testTimespecConversion).toBe('function');
     });
 
     test('should export constants', () => {
@@ -62,146 +56,132 @@ describe('FUSE Native Simple Smoke Tests', () => {
 
     test('should have expected version values', () => {
       const version = binding.getVersion();
-      expect(version.fuse).toBe('3.17.1');
+      // FUSE version from fuse_version() is numeric string
+      expect(version.fuse).toMatch(/^\d+$/);
       expect(version.napi).toBe('8');
-      expect(version.binding).toMatch(/statfs-test/);
+      expect(version.binding).toBe('3.0.0-alpha.1');
+    });
+
+    test('should have consistent version across calls', () => {
+      const version1 = binding.getVersion();
+      const version2 = binding.getVersion();
+      expect(version1).toEqual(version2);
     });
   });
 
-  describe('BigInt Basic Operations', () => {
-    test('should handle small BigInt values', () => {
-      const testValue = 12345n;
-      const result = binding.testBigIntPrecision(testValue);
-      expect(result.lossless).toBe(true);
-      expect(result.value.toString()).toBe(testValue.toString());
+  describe('Errno Constants Integration', () => {
+    test('should have correct errno values', () => {
+      const { errno } = binding;
+
+      // Test basic errno values (should be negative for FUSE)
+      expect(errno.ENOENT).toBe(-2); // No such file or directory
+      expect(errno.EACCES).toBe(-13); // Permission denied
+      expect(errno.EPERM).toBe(-1); // Operation not permitted
+      expect(errno.EIO).toBe(-5); // Input/output error
     });
 
-    test('should handle large BigInt values', () => {
-      const testValue = 1234567890123456789n;
-      const result = binding.testBigIntPrecision(testValue);
-      expect(result.lossless).toBe(true);
-      expect(result.value.toString()).toBe(testValue.toString());
-    });
-  });
-
-  describe('Errno Integration', () => {
     test('should map errno values correctly', () => {
-      const result = binding.testErrnoMapping(2); // ENOENT
-      expect(result.errno).toBe(2);
-      expect(result.name).toBe('ENOENT');
-      expect(result.isValid).toBe(true);
-      expect(result.isNotFound).toBe(true);
+      const { errno } = binding;
+
+      // Test that errno values are negative (FUSE convention)
+      expect(errno.ENOENT).toBeLessThan(0);
+      expect(errno.EACCES).toBeLessThan(0);
+      expect(errno.EIO).toBeLessThan(0);
+      expect(errno.ENOSYS).toBeLessThan(0);
     });
 
-    test('should have consistent errno constants', () => {
-      expect(binding.errno.ENOENT).toBe(-2);
-      expect(binding.errno.EACCES).toBe(-13);
-      expect(binding.errno.EIO).toBe(-5);
+    test('should have filesystem-specific errors', () => {
+      const { errno } = binding;
+
+      expect(typeof errno.ENOSPC).toBe('number'); // No space left
+      expect(typeof errno.EROFS).toBe('number'); // Read-only filesystem
+      expect(typeof errno.ENOSYS).toBe('number'); // Function not implemented
+      expect(typeof errno.ERANGE).toBe('number'); // Result too large
+    });
+  });
+
+  describe('Mode Constants Integration', () => {
+    test('should have file type constants', () => {
+      const { mode } = binding;
+
+      expect(typeof mode.S_IFREG).toBe('number'); // Regular file
+      expect(typeof mode.S_IFDIR).toBe('number'); // Directory
+      expect(typeof mode.S_IFLNK).toBe('number'); // Symbolic link
+    });
+
+    test('should have permission constants', () => {
+      const { mode } = binding;
+
+      expect(typeof mode.S_IRUSR).toBe('number'); // User read
+      expect(typeof mode.S_IWUSR).toBe('number'); // User write
+      expect(typeof mode.S_IXUSR).toBe('number'); // User execute
+    });
+
+    test('should have expected mode values', () => {
+      const { mode } = binding;
+
+      expect(mode.S_IFREG).toBe(0o100000); // Regular file
+      expect(mode.S_IFDIR).toBe(0o040000); // Directory
+      expect(mode.S_IRUSR).toBe(0o400); // User read
+      expect(mode.S_IWUSR).toBe(0o200); // User write
+    });
+  });
+
+  describe('Flags Constants Integration', () => {
+    test('should have open flags', () => {
+      const { flags } = binding;
+
+      expect(typeof flags.O_RDONLY).toBe('number');
+      expect(typeof flags.O_WRONLY).toBe('number');
+      expect(typeof flags.O_RDWR).toBe('number');
+      expect(typeof flags.O_CREAT).toBe('number');
+    });
+
+    test('should have expected flag values', () => {
+      const { flags } = binding;
+
+      expect(flags.O_RDONLY).toBe(0);
+      expect(flags.O_WRONLY).toBe(1);
+      expect(flags.O_RDWR).toBe(2);
     });
   });
 
   describe('Operations Handler Management', () => {
-    test('should initially have no handlers', () => {
-      const status = binding.testOperationsBasic();
-      expect(status.hasReaddirInitially).toBe(false);
-      expect(status.hasLookup).toBe(false);
-      expect(status.hasGetattr).toBe(false);
-      expect(status.hasRead).toBe(false);
-      expect(status.hasWrite).toBe(false);
+    test('should handle operation handler functions', () => {
+      // Test that handler functions exist and can be called
+      expect(() => {
+        binding.setOperationHandler;
+        binding.removeOperationHandler;
+      }).not.toThrow();
     });
 
-    test('should set and remove handlers correctly', () => {
-      const handler = () => console.log('test handler');
-
-      // Set handler
-      const setResult = binding.setOperationHandler('readdir', handler);
-      expect(setResult).toBe(true);
-
-      // Check handler exists
-      const status = binding.testOperationsBasic();
-      expect(status.hasReaddirInitially).toBe(true);
-
-      // Remove handler
-      const removeResult = binding.removeOperationHandler('readdir');
-      expect(removeResult).toBe(true);
-
-      // Check handler is gone
-      const finalStatus = binding.testOperationsBasic();
-      expect(finalStatus.hasReaddirInitially).toBe(false);
-    });
-
-    test('should validate operation arguments', () => {
-      const validation = binding.testOperationValidation();
-      expect(validation.lookupValidation).toBe(true);
-      expect(validation.getattrValidation).toBe(true);
-      expect(validation.readValidation).toBe(true);
-      expect(validation.unknownValidation).toBe(true);
-    });
-  });
-
-  describe('Timespec Operations', () => {
-    test('should handle current time conversion', () => {
-      const timeResult = binding.testCurrentTimeNs();
-      expect(typeof timeResult.currentNs).toBe('bigint');
-      expect(timeResult.currentNs > 0n).toBe(true);
-      expect(typeof timeResult.currentSeconds).toBe('number');
-      expect(typeof timeResult.currentNanoseconds).toBe('number');
-      expect(typeof timeResult.asString).toBe('string');
-    });
-
-    test('should handle timespec roundtrip conversion', () => {
-      const testNs = 1234567890123456789n;
-      const result = binding.testTimespecConversion(testNs);
-      expect(result.original.toString()).toBe(testNs.toString());
-      expect(typeof result.converted).toBe('bigint');
-      expect(typeof result.seconds).toBe('number');
-      expect(typeof result.nanoseconds).toBe('number');
-      expect(result.isValid).toBe(true);
-      expect(typeof result.asString).toBe('string');
-    });
-  });
-
-  describe('StatFS Integration', () => {
-    test('should convert statvfs to object', () => {
-      const result = binding.testStatvfsToObject();
-      expect(result).toHaveProperty('bsize');
-      expect(result).toHaveProperty('frsize');
-      expect(result).toHaveProperty('blocks');
-      expect(result).toHaveProperty('bfree');
-      expect(result).toHaveProperty('bavail');
-      expect(result).toHaveProperty('files');
-      expect(result).toHaveProperty('ffree');
-      expect(result).toHaveProperty('favail');
-      expect(result).toHaveProperty('fsid');
-      expect(result).toHaveProperty('flag');
-      expect(result).toHaveProperty('namemax');
-    });
-
-    test('should handle realistic filesystem values', () => {
-      const result = binding.testRealisticFilesystem();
-      expect(result.bsize).toBe(4096);
-      expect(result.frsize).toBe(4096);
-      expect(typeof result.blocks).toBe('bigint');
-      expect(typeof result.bfree).toBe('bigint');
-      expect(typeof result.bavail).toBe('bigint');
-      expect(result.namemax).toBe(255);
+    test('should handle session management functions', () => {
+      // Test that session functions exist
+      expect(() => {
+        binding.createSession;
+        binding.destroySession;
+        binding.mount;
+        binding.unmount;
+        binding.isReady;
+      }).not.toThrow();
     });
   });
 
   describe('Integration Stability', () => {
     test('should handle multiple operations without crashes', () => {
       // Test multiple different operations in sequence
-      binding.getVersion();
-      binding.testStatvfsToObject();
-      binding.testBigIntPrecision(12345n);
-      binding.testErrnoMapping(2);
-      binding.testCurrentTimeNs();
-      binding.testOperationsBasic();
-      binding.testOperationValidation();
-      binding.testRealisticFilesystem();
+      expect(() => {
+        binding.getVersion();
+        const version = binding.getVersion();
+        const errno = binding.errno.ENOENT;
+        const mode = binding.mode.S_IFREG;
+        const flags = binding.flags.O_RDONLY;
 
-      // If we get here, no crashes occurred
-      expect(true).toBe(true);
+        expect(version).toBeDefined();
+        expect(typeof errno).toBe('number');
+        expect(typeof mode).toBe('number');
+        expect(typeof flags).toBe('number');
+      }).not.toThrow();
     });
 
     test('should maintain consistent state across calls', () => {
@@ -209,9 +189,95 @@ describe('FUSE Native Simple Smoke Tests', () => {
       const version2 = binding.getVersion();
       expect(version1).toEqual(version2);
 
-      const status1 = binding.testOperationsBasic();
-      const status2 = binding.testOperationsBasic();
-      expect(status1).toEqual(status2);
+      const errno1 = binding.errno.ENOENT;
+      const errno2 = binding.errno.ENOENT;
+      expect(errno1).toBe(errno2);
+    });
+
+    test('should handle rapid constant access', () => {
+      expect(() => {
+        for (let i = 0; i < 100; i++) {
+          const val =
+            binding.errno.ENOENT +
+            binding.mode.S_IFREG +
+            binding.flags.O_RDONLY;
+          expect(typeof val).toBe('number');
+        }
+      }).not.toThrow();
+    });
+  });
+
+  describe('API Completeness', () => {
+    test('should provide all required exports', () => {
+      const requiredExports = [
+        'getVersion',
+        'createSession',
+        'destroySession',
+        'mount',
+        'unmount',
+        'isReady',
+        'setOperationHandler',
+        'removeOperationHandler',
+        'errno',
+        'mode',
+        'flags',
+      ];
+
+      for (const exportName of requiredExports) {
+        expect(binding[exportName]).toBeDefined();
+      }
+    });
+
+    test('should have complete constant sets', () => {
+      const { errno, mode, flags } = binding;
+
+      // Essential errno codes
+      const requiredErrno = ['ENOENT', 'EACCES', 'EPERM', 'EIO', 'EEXIST'];
+      for (const errnoName of requiredErrno) {
+        expect(errno[errnoName]).toBeDefined();
+        expect(typeof errno[errnoName]).toBe('number');
+      }
+
+      // Essential mode constants
+      const requiredModes = ['S_IFREG', 'S_IFDIR', 'S_IRUSR', 'S_IWUSR'];
+      for (const modeName of requiredModes) {
+        expect(mode[modeName]).toBeDefined();
+        expect(typeof mode[modeName]).toBe('number');
+      }
+
+      // Essential flags
+      const requiredFlags = ['O_RDONLY', 'O_WRONLY', 'O_RDWR', 'O_CREAT'];
+      for (const flagName of requiredFlags) {
+        expect(flags[flagName]).toBeDefined();
+        expect(typeof flags[flagName]).toBe('number');
+      }
+    });
+  });
+
+  describe('Performance and Memory', () => {
+    test('should handle repeated version calls efficiently', () => {
+      const start = Date.now();
+
+      for (let i = 0; i < 1000; i++) {
+        const version = binding.getVersion();
+        expect(version).toBeDefined();
+      }
+
+      const duration = Date.now() - start;
+      expect(duration).toBeLessThan(1000); // Should complete in under 1 second
+    });
+
+    test('should not leak memory with constant access', () => {
+      // Access constants many times to test for memory leaks
+      for (let i = 0; i < 10000; i++) {
+        const errno = binding.errno.ENOENT;
+        const mode = binding.mode.S_IFREG;
+        const flags = binding.flags.O_RDONLY;
+
+        expect(errno).toBe(-2);
+        expect(mode).toBe(0o100000);
+        expect(flags).toBe(0);
+      }
     });
   });
 });

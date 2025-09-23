@@ -162,77 +162,38 @@ private:
  * @param info N-API callback info containing session options
  * @return Session handle object
  */
-napi_value CreateSession(const Napi::CallbackInfo& info);
+Napi::Value CreateSession(const Napi::CallbackInfo& info);
 
 /**
  * Destroy session (N-API exposed function)
  * @param info N-API callback info containing session handle
  * @return Boolean indicating success
  */
-napi_value DestroySession(const Napi::CallbackInfo& info);
+Napi::Value DestroySession(const Napi::CallbackInfo& info);
 
 /**
  * Mount session (N-API exposed function)
  * @param info N-API callback info containing session handle and mount options
  * @return Boolean indicating success
  */
-napi_value Mount(const Napi::CallbackInfo& info);
+Napi::Value Mount(const Napi::CallbackInfo& info);
 
 /**
  * Unmount session (N-API exposed function)
  * @param info N-API callback info containing session handle and unmount options
  * @return Boolean indicating success
  */
-napi_value Unmount(const Napi::CallbackInfo& info);
+Napi::Value Unmount(const Napi::CallbackInfo& info);
 
 /**
  * Check if session is ready (N-API exposed function)
  * @param info N-API callback info containing session handle
  * @return Boolean indicating readiness
  */
-napi_value IsReady(const Napi::CallbackInfo& info);
-
-/**
- * SessionManager namespace for exposed N-API functions
- */
-namespace SessionManager {
-
-/**
- * Create session (exposed to N-API)
- * @param info N-API callback info
- * @return N-API value
- */
-Napi::Value CreateSession(const Napi::CallbackInfo& info);
-
-/**
- * Destroy session (exposed to N-API)
- * @param info N-API callback info
- * @return N-API value
- */
-Napi::Value DestroySession(const Napi::CallbackInfo& info);
-
-/**
- * Mount session (exposed to N-API)
- * @param info N-API callback info
- * @return N-API value
- */
-Napi::Value Mount(const Napi::CallbackInfo& info);
-
-/**
- * Unmount session (exposed to N-API)
- * @param info N-API callback info
- * @return N-API value
- */
-Napi::Value Unmount(const Napi::CallbackInfo& info);
-
-/**
- * Check if session is ready (exposed to N-API)
- * @param info N-API callback info
- * @return N-API value
- */
 Napi::Value IsReady(const Napi::CallbackInfo& info);
 
-} // namespace SessionManager
+// SessionManager namespace removed to avoid naming conflicts
+// Functions are exposed directly from the main namespace
 
 } // namespace fuse_native
 
