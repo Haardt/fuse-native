@@ -28,12 +28,40 @@ struct OperationMapping {
     FuseOpType type;
 };
 
-constexpr std::array<OperationMapping, 23> kOperationMappings = {{{"lookup", FuseOpType::LOOKUP},
+#if defined(__APPLE__)
+inline struct timespec GetStatAtime(const struct stat& st) {
+    return st.st_atimespec;
+}
+
+inline struct timespec GetStatMtime(const struct stat& st) {
+    return st.st_mtimespec;
+}
+
+inline struct timespec GetStatCtime(const struct stat& st) {
+    return st.st_ctimespec;
+}
+#else
+inline struct timespec GetStatAtime(const struct stat& st) {
+    return st.st_atim;
+}
+
+inline struct timespec GetStatMtime(const struct stat& st) {
+    return st.st_mtim;
+}
+
+inline struct timespec GetStatCtime(const struct stat& st) {
+    return st.st_ctim;
+}
+#endif
+
+constexpr std::array<OperationMapping, 25> kOperationMappings = {{{"lookup", FuseOpType::LOOKUP},
                                                                   {"getattr", FuseOpType::GETATTR},
                                                                   {"setattr", FuseOpType::SETATTR},
                                                                   {"readlink", FuseOpType::READLINK},
                                                                   {"mknod", FuseOpType::MKNOD},
                                                                   {"mkdir", FuseOpType::MKDIR},
+                                                                  {"chmod", FuseOpType::CHMOD},
+                                                                  {"chown", FuseOpType::CHOWN},
                                                                   {"symlink", FuseOpType::SYMLINK},
                                                                   {"unlink", FuseOpType::UNLINK},
                                                                   {"rmdir", FuseOpType::RMDIR},
@@ -837,8 +865,14 @@ void FuseBridge::HandleLink(fuse_req_t req, fuse_ino_t ino, fuse_ino_t newparent
         Napi::Object options = Napi::Object::New(env);
 
         auto result = handler.Call({ino_value, new_parent_value, new_name_value, request_ctx, options});
-        ResolvePromiseOrValue(env, context, result, [context](Napi::Env, Napi::Value) {
-            context->ReplyUnsupported();
+        ResolvePromiseOrValue(env, context, result, [context](Napi::Env env_inner, Napi::Value value) {
+            struct fuse_entry_param entry{};
+            if (!PopulateEntryFromResult(env_inner, value, &entry)) {
+                context->ReplyError(EIO);
+                return;
+            }
+
+            context->ReplyEntry(entry);
         });
     });
 }
@@ -924,13 +958,35 @@ void FuseBridge::HandleGetattr(fuse_req_t req, fuse_ino_t ino, struct fuse_file_
 
 void FuseBridge::HandleSetattr(fuse_req_t req, fuse_ino_t ino, struct stat* attr, int to_set,
                                struct fuse_file_info* fi) {
+    const bool mode_requested = (to_set & FUSE_SET_ATTR_MODE) != 0;
+    const bool other_mode_bits = (to_set & ~FUSE_SET_ATTR_MODE) != 0;
+    const bool uid_requested = (to_set & FUSE_SET_ATTR_UID) != 0;
+    const bool gid_requested = (to_set & FUSE_SET_ATTR_GID) != 0;
+    const uint32_t chown_mask = FUSE_SET_ATTR_UID | FUSE_SET_ATTR_GID;
+    const bool only_chown_bits = (to_set & ~chown_mask) == 0;
+
+    if ((uid_requested || gid_requested) && only_chown_bits && attr &&
+        HasOperationHandler(FuseOpType::CHOWN)) {
+        HandleChown(req, ino, attr, to_set, fi);
+        return;
+    }
+
+    if (mode_requested && !other_mode_bits && attr && HasOperationHandler(FuseOpType::CHMOD)) {
+        HandleChmod(req, ino, attr->st_mode, fi, to_set);
+        return;
+    }
+
+    if (!attr) {
+        auto context = CreateContext(FuseOpType::SETATTR, req);
+        context->ReplyError(EINVAL);
+        return;
+    }
+
     auto context = CreateContext(FuseOpType::SETATTR, req);
     context->ino = ino;
     context->setattr_valid = static_cast<uint32_t>(to_set);
-    if (attr) {
-        context->attr = *attr;
-        context->has_attr = true;
-    }
+    context->attr = *attr;
+    context->has_attr = true;
     if (fi) {
         context->fi = *fi;
         context->has_fi = true;
@@ -938,19 +994,92 @@ void FuseBridge::HandleSetattr(fuse_req_t req, fuse_ino_t ino, struct stat* attr
 
     ProcessRequest(context, [context](Napi::Env env, Napi::Function handler) {
         Napi::Value ino_value = NapiHelpers::CreateBigUint64(env, ToUint64(context->ino));
-        Napi::Object attr_value = context->has_attr
-                                      ? NapiHelpers::StatToObject(env, context->attr)
-                                      : Napi::Object::New(env);
+        Napi::Object attr_object = Napi::Object::New(env);
+
+        if (context->has_attr) {
+            const struct stat& st = context->attr;
+            const uint32_t valid = context->setattr_valid;
+
+            if ((valid & FUSE_SET_ATTR_MODE) != 0) {
+                attr_object.Set("mode", Napi::Number::New(env, st.st_mode));
+            }
+            if ((valid & FUSE_SET_ATTR_UID) != 0) {
+                attr_object.Set("uid", Napi::Number::New(env, st.st_uid));
+            }
+            if ((valid & FUSE_SET_ATTR_GID) != 0) {
+                attr_object.Set("gid", Napi::Number::New(env, st.st_gid));
+            }
+            if ((valid & FUSE_SET_ATTR_SIZE) != 0) {
+                attr_object.Set("size", NapiHelpers::CreateBigInt64(env, st.st_size));
+            }
+            if ((valid & FUSE_SET_ATTR_ATIME) != 0) {
+                struct timespec ts = GetStatAtime(st);
+                attr_object.Set("atime", NapiHelpers::TimespecToNsBigInt(env, ts));
+            }
+            if ((valid & FUSE_SET_ATTR_MTIME) != 0) {
+                struct timespec ts = GetStatMtime(st);
+                attr_object.Set("mtime", NapiHelpers::TimespecToNsBigInt(env, ts));
+            }
+            if ((valid & FUSE_SET_ATTR_CTIME) != 0) {
+                struct timespec ts = GetStatCtime(st);
+                attr_object.Set("ctime", NapiHelpers::TimespecToNsBigInt(env, ts));
+            }
+        }
+
         Napi::Object request_ctx = CreateRequestContextObject(env, *context);
         Napi::Object options = Napi::Object::New(env);
         options.Set("valid", Napi::Number::New(env, context->setattr_valid));
         if (context->has_fi) {
             options.Set("fi", NapiHelpers::FileInfoToObject(env, context->fi));
         }
+        if ((context->setattr_valid & FUSE_SET_ATTR_ATIME_NOW) != 0) {
+            options.Set("atimeNow", Napi::Boolean::New(env, true));
+        }
+        if ((context->setattr_valid & FUSE_SET_ATTR_MTIME_NOW) != 0) {
+            options.Set("mtimeNow", Napi::Boolean::New(env, true));
+        }
 
-        auto result = handler.Call({ino_value, attr_value, request_ctx, options});
-        ResolvePromiseOrValue(env, context, result, [context](Napi::Env, Napi::Value) {
-            context->ReplyUnsupported();
+        auto result = handler.Call({ino_value, attr_object, request_ctx, options});
+        ResolvePromiseOrValue(env, context, result, [context](Napi::Env env_inner, Napi::Value value) {
+            if (!value.IsObject()) {
+                context->ReplyError(EIO);
+                return;
+            }
+
+            Napi::Object result_obj = value.As<Napi::Object>();
+            if (!result_obj.Has("attr")) {
+                context->ReplyError(EIO);
+                return;
+            }
+
+            Napi::Value attr_value = result_obj.Get("attr");
+            if (!attr_value.IsObject()) {
+                context->ReplyError(EIO);
+                return;
+            }
+
+            struct stat attr_result {};
+            if (!NapiHelpers::ObjectToStat(attr_value.As<Napi::Object>(), &attr_result)) {
+                context->ReplyError(EIO);
+                return;
+            }
+
+            double timeout = 1.0;
+            if (result_obj.Has("timeout")) {
+                Napi::Value timeout_value = result_obj.Get("timeout");
+                if (!timeout_value.IsNumber()) {
+                    context->ReplyError(EIO);
+                    return;
+                }
+
+                timeout = timeout_value.As<Napi::Number>().DoubleValue();
+                if (!std::isfinite(timeout) || timeout < 0.0) {
+                    context->ReplyError(EIO);
+                    return;
+                }
+            }
+
+            context->ReplyAttr(attr_result, timeout);
         });
     });
 }
@@ -1037,6 +1166,152 @@ void FuseBridge::HandleMkdir(fuse_req_t req, fuse_ino_t parent, const char* name
             }
 
             context->ReplyEntry(entry);
+        });
+    });
+}
+
+void FuseBridge::HandleChmod(fuse_req_t req, fuse_ino_t ino, mode_t mode, struct fuse_file_info* fi, int to_set) {
+    auto context = CreateContext(FuseOpType::CHMOD, req);
+    context->ino = ino;
+    context->mode = mode;
+    context->setattr_valid = static_cast<uint32_t>(to_set);
+    if (fi) {
+        context->fi = *fi;
+        context->has_fi = true;
+    }
+
+    ProcessRequest(context, [context](Napi::Env env, Napi::Function handler) {
+        Napi::Value ino_value = NapiHelpers::CreateBigUint64(env, ToUint64(context->ino));
+        Napi::Number mode_value = Napi::Number::New(env, context->mode);
+        Napi::Object request_ctx = CreateRequestContextObject(env, *context);
+        Napi::Object options = Napi::Object::New(env);
+        options.Set("valid", Napi::Number::New(env, context->setattr_valid));
+        if (context->has_fi) {
+            options.Set("fi", NapiHelpers::FileInfoToObject(env, context->fi));
+        }
+
+        auto result = handler.Call({ino_value, mode_value, request_ctx, options});
+        ResolvePromiseOrValue(env, context, result, [context](Napi::Env env_inner, Napi::Value value) {
+            if (!value.IsObject()) {
+                context->ReplyError(EIO);
+                return;
+            }
+
+            Napi::Object result_obj = value.As<Napi::Object>();
+            if (!result_obj.Has("attr")) {
+                context->ReplyError(EIO);
+                return;
+            }
+
+            Napi::Value attr_value = result_obj.Get("attr");
+            if (!attr_value.IsObject()) {
+                context->ReplyError(EIO);
+                return;
+            }
+
+            struct stat attr{};
+            if (!NapiHelpers::ObjectToStat(attr_value.As<Napi::Object>(), &attr)) {
+                context->ReplyError(EIO);
+                return;
+            }
+
+            double timeout = 1.0;
+            if (result_obj.Has("timeout")) {
+                Napi::Value timeout_value = result_obj.Get("timeout");
+                if (!timeout_value.IsNumber()) {
+                    context->ReplyError(EIO);
+                    return;
+                }
+
+                timeout = timeout_value.As<Napi::Number>().DoubleValue();
+                if (!std::isfinite(timeout) || timeout < 0.0) {
+                    context->ReplyError(EIO);
+                    return;
+                }
+            }
+
+            context->ReplyAttr(attr, timeout);
+        });
+    });
+}
+
+void FuseBridge::HandleChown(fuse_req_t req, fuse_ino_t ino, struct stat* attr, int to_set,
+                             struct fuse_file_info* fi) {
+    auto context = CreateContext(FuseOpType::CHOWN, req);
+    context->ino = ino;
+    context->setattr_valid = static_cast<uint32_t>(to_set);
+    if (attr) {
+        context->attr = *attr;
+        context->has_attr = true;
+    }
+    if (fi) {
+        context->fi = *fi;
+        context->has_fi = true;
+    }
+
+    ProcessRequest(context, [context](Napi::Env env, Napi::Function handler) {
+        Napi::Value ino_value = NapiHelpers::CreateBigUint64(env, ToUint64(context->ino));
+
+        Napi::Value uid_value = env.Null();
+        Napi::Value gid_value = env.Null();
+
+        if (context->has_attr) {
+            if ((context->setattr_valid & FUSE_SET_ATTR_UID) != 0) {
+                uid_value = Napi::Number::New(env, static_cast<double>(context->attr.st_uid));
+            }
+            if ((context->setattr_valid & FUSE_SET_ATTR_GID) != 0) {
+                gid_value = Napi::Number::New(env, static_cast<double>(context->attr.st_gid));
+            }
+        }
+
+        Napi::Object request_ctx = CreateRequestContextObject(env, *context);
+        Napi::Object options = Napi::Object::New(env);
+        options.Set("valid", Napi::Number::New(env, context->setattr_valid));
+        if (context->has_fi) {
+            options.Set("fi", NapiHelpers::FileInfoToObject(env, context->fi));
+        }
+
+        auto result = handler.Call({ino_value, uid_value, gid_value, request_ctx, options});
+        ResolvePromiseOrValue(env, context, result, [context](Napi::Env env_inner, Napi::Value value) {
+            if (!value.IsObject()) {
+                context->ReplyError(EIO);
+                return;
+            }
+
+            Napi::Object result_obj = value.As<Napi::Object>();
+            if (!result_obj.Has("attr")) {
+                context->ReplyError(EIO);
+                return;
+            }
+
+            Napi::Value attr_value = result_obj.Get("attr");
+            if (!attr_value.IsObject()) {
+                context->ReplyError(EIO);
+                return;
+            }
+
+            struct stat attr_result {};
+            if (!NapiHelpers::ObjectToStat(attr_value.As<Napi::Object>(), &attr_result)) {
+                context->ReplyError(EIO);
+                return;
+            }
+
+            double timeout = 1.0;
+            if (result_obj.Has("timeout")) {
+                Napi::Value timeout_value = result_obj.Get("timeout");
+                if (!timeout_value.IsNumber()) {
+                    context->ReplyError(EIO);
+                    return;
+                }
+
+                timeout = timeout_value.As<Napi::Number>().DoubleValue();
+                if (!std::isfinite(timeout) || timeout < 0.0) {
+                    context->ReplyError(EIO);
+                    return;
+                }
+            }
+
+            context->ReplyAttr(attr_result, timeout);
         });
     });
 }

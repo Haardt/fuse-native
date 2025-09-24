@@ -35,6 +35,8 @@ enum class FuseOpType {
     READLINK,
     MKNOD,
     MKDIR,
+    CHMOD,
+    CHOWN,
     SYMLINK,
     UNLINK,
     RMDIR,
@@ -165,6 +167,9 @@ private:
     void HandleReadlink(fuse_req_t req, fuse_ino_t ino);
     void HandleMknod(fuse_req_t req, fuse_ino_t parent, const char* name, mode_t mode, dev_t rdev);
     void HandleMkdir(fuse_req_t req, fuse_ino_t parent, const char* name, mode_t mode);
+    void HandleChmod(fuse_req_t req, fuse_ino_t ino, mode_t mode, struct fuse_file_info* fi, int to_set);
+    void HandleChown(fuse_req_t req, fuse_ino_t ino, struct stat* attr, int to_set,
+                     struct fuse_file_info* fi);
     void HandleSymlink(fuse_req_t req, const char* link, fuse_ino_t parent, const char* name);
     void HandleUnlink(fuse_req_t req, fuse_ino_t parent, const char* name);
     void HandleRmdir(fuse_req_t req, fuse_ino_t parent, const char* name);

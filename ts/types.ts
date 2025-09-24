@@ -235,6 +235,10 @@ export interface SetattrOptions extends BaseOperationOptions {
   valid: number;
   /** File info (if called during file operation) */
   fi?: FileInfo;
+  /** Use current time for atime */
+  atimeNow?: boolean;
+  /** Use current time for mtime */
+  mtimeNow?: boolean;
 }
 
 /** Options for extended attributes */
@@ -346,6 +350,16 @@ export type MkdirHandler = (
   options?: BaseOperationOptions
 ) => Promise<{ attr: StatResult; timeout: Timeout }>;
 
+/** Link operation handler */
+export type LinkHandler = (
+  ino: Ino,
+  newparent: Ino,
+  newname: string,
+  context: RequestContext,
+  options?: BaseOperationOptions
+) => Promise<{ attr: StatResult; timeout: Timeout }>;
+
+/** Symlink operation handler */
 export type SymlinkHandler = (
   target: string,
   parent: Ino,
@@ -360,6 +374,23 @@ export type MknodHandler = (
   name: string,
   mode: Mode,
   rdev: Dev,
+  context: RequestContext,
+  options?: BaseOperationOptions
+) => Promise<{ attr: StatResult; timeout: Timeout }>;
+
+/** Chmod operation handler */
+export type ChmodHandler = (
+  ino: Ino,
+  mode: Mode,
+  context: RequestContext,
+  options?: BaseOperationOptions
+) => Promise<{ attr: StatResult; timeout: Timeout }>;
+
+/** Chown operation handler */
+export type ChownHandler = (
+  ino: Ino,
+  uid: Uid | null,
+  gid: Gid | null,
   context: RequestContext,
   options?: BaseOperationOptions
 ) => Promise<{ attr: StatResult; timeout: Timeout }>;
@@ -448,8 +479,14 @@ export interface FuseOperationHandlers {
   readdir?: ReaddirHandler;
   /** Create a directory */
   mkdir?: MkdirHandler;
+  /** Change file mode */
+  chmod?: ChmodHandler;
+  /** Change file ownership */
+  chown?: ChownHandler;
   /** Create a symbolic link */
   symlink?: SymlinkHandler;
+  /** Create a hard link */
+  link?: LinkHandler;
   /** Create a special file (device node) */
   mknod?: MknodHandler;
   create?: CreateHandler;

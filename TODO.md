@@ -36,25 +36,27 @@ Verifizieren, dass **alle FUSE3-Funktionen** korrekt durch die Ebenen **C/N-API 
 - rmdir   - DONE
 - symlink - DONE
 - rename - DONE  
-- link ❌
-- chmod ❌
-- chown ❌
+- link  - DONE
+- chmod - DONE
+- chown - DONE
+- setattr - DONE
+- readdir ❌ 
+- opendir ❌
+- releasedir ❌
+- create ❌
+- open ❌ 
+- read ❌ 
+- write ❌ 
+- utimens ❌
+- release ❌
 - truncate ❌
-- open ❌ (nur TS-Handler definiert)
-- read ❌ (nur TS-Handler definiert)
-- write ❌ (nur TS-Handler definiert)
+
 - statfs ❌ (nur statfs_bridge.cc Fragment)
 - flush ❌
-- release ❌ (nur TS-Handler definiert)
 - fsync ❌ (nur TS-Handler definiert)
-- opendir ❌
-- readdir ❌ (nur TS-Handler definiert)
-- releasedir ❌
 - fsyncdir ❌
 - access ❌ (nur TS-Handler definiert)
-- create ❌ (nur TS-Handler definiert)
 - lock ❌
-- utimens ❌
 - bmap ❌
 - ioctl ❌
 - poll ❌
