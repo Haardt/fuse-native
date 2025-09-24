@@ -14,6 +14,7 @@ export { validateMknod, mknodWrapper } from './mknod.js';
 export type { MknodResult } from './mknod.js';
 export { validateMkdir, mkdirWrapper } from './mkdir.js';
 export type { MkdirResult } from './mkdir.js';
+export { validateReaddir, readdirWrapper } from './readdir.js';
 export { validateUnlink, unlinkWrapper } from './unlink.js';
 export { validateRmdir, rmdirWrapper } from './rmdir.js';
 export { validateLink, linkWrapper } from './link.js';

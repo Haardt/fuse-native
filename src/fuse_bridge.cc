@@ -1508,8 +1508,127 @@ void FuseBridge::HandleReaddir(fuse_req_t req, fuse_ino_t ino, size_t size, off_
         options.Set("size", Napi::Number::New(env, context->size));
 
         auto result = handler.Call({ino_value, offset_value, request_ctx, fi_value, options});
-        ResolvePromiseOrValue(env, context, result, [context](Napi::Env, Napi::Value) {
-            context->ReplyUnsupported();
+        ResolvePromiseOrValue(env, context, result, [context](Napi::Env env_inner, Napi::Value value) {
+            if (!value.IsObject()) {
+                context->ReplyError(EIO);
+                return;
+            }
+
+            Napi::Object result_obj = value.As<Napi::Object>();
+            if (!result_obj.Has("entries")) {
+                context->ReplyError(EIO);
+                return;
+            }
+
+            Napi::Value entries_value = result_obj.Get("entries");
+            if (!entries_value.IsArray()) {
+                context->ReplyError(EIO);
+                return;
+            }
+
+            Napi::Array entries_array = entries_value.As<Napi::Array>();
+
+            // Allocate buffer for directory entries
+            std::vector<char> dirbuf(context->size);
+            size_t dirbuf_size = 0;
+            bool has_more = false;
+
+            if (result_obj.Has("hasMore")) {
+                Napi::Value has_more_value = result_obj.Get("hasMore");
+                if (has_more_value.IsBoolean()) {
+                    has_more = has_more_value.As<Napi::Boolean>().Value();
+                }
+            }
+
+            for (uint32_t i = 0; i < entries_array.Length(); i++) {
+                Napi::Value entry_value = entries_array.Get(i);
+                if (!entry_value.IsObject()) {
+                    context->ReplyError(EIO);
+                    return;
+                }
+
+                Napi::Object entry_obj = entry_value.As<Napi::Object>();
+                if (!entry_obj.Has("name") || !entry_obj.Has("ino") || !entry_obj.Has("type")) {
+                    context->ReplyError(EIO);
+                    return;
+                }
+
+                Napi::Value name_value = entry_obj.Get("name");
+                if (!name_value.IsString()) {
+                    context->ReplyError(EIO);
+                    return;
+                }
+
+                std::string name = name_value.As<Napi::String>().Utf8Value();
+
+                Napi::Value ino_value = entry_obj.Get("ino");
+                fuse_ino_t entry_ino = 0;
+                if (ino_value.IsNumber()) {
+                    entry_ino = static_cast<fuse_ino_t>(ino_value.As<Napi::Number>().Int64Value());
+                } else if (ino_value.IsBigInt()) {
+                    bool lossless = false;
+                    entry_ino = static_cast<fuse_ino_t>(ino_value.As<Napi::BigInt>().Uint64Value(&lossless));
+                    if (!lossless) {
+                        context->ReplyError(EIO);
+                        return;
+                    }
+                } else {
+                    context->ReplyError(EIO);
+                    return;
+                }
+
+                Napi::Value type_value = entry_obj.Get("type");
+                if (!type_value.IsNumber()) {
+                    context->ReplyError(EIO);
+                    return;
+                }
+
+                int entry_type = type_value.As<Napi::Number>().Int32Value();
+
+                // Set nextOffset on the entry if provided or if it's the last in this page and has_more
+                off_t next_offset = 0;
+                if (entry_obj.Has("nextOffset")) {
+                    Napi::Value next_offset_value = entry_obj.Get("nextOffset");
+                    if (next_offset_value.IsNumber()) {
+                        next_offset = static_cast<off_t>(next_offset_value.As<Napi::Number>().Int64Value());
+                    } else if (next_offset_value.IsBigInt()) {
+                        bool lossless = false;
+                        next_offset = static_cast<off_t>(next_offset_value.As<Napi::BigInt>().Int64Value(&lossless));
+                        if (!lossless) {
+                            context->ReplyError(EIO);
+                            return;
+                        }
+                    }
+                } else if (has_more && i == entries_array.Length() - 1) {
+                    // Last entry in this page, set next_offset to indicate continuation
+                    next_offset = static_cast<off_t>(context->offset + i + 1);
+                }
+
+                size_t required_size = fuse_add_direntry(context->request, nullptr, 0, name.c_str(), nullptr, 0);
+                if (dirbuf_size + required_size > dirbuf.size()) {
+                    // Buffer full, stop adding entries
+                    break;
+                }
+
+                struct stat st = {};
+                st.st_ino = entry_ino;
+                st.st_mode = entry_type << 12; // DTTOIF conversion, but FUSE expects the DT_* values directly in this context?
+
+                // FUSE add_direntry expects the entry type in the high bits of mode, but we need to set it properly
+                // Actually, looking at FUSE docs, add_direntry takes the raw mode but sets type based on it
+                // For readdir, it uses fuse_add_direntry which takes a mode parameter, but typically st_mode = type << 12
+                st.st_mode = (entry_type & 15) << 12; // Lower 4 bits of type
+
+                size_t added = fuse_add_direntry(context->request, dirbuf.data() + dirbuf_size, dirbuf.size() - dirbuf_size,
+                                                  name.c_str(), &st, static_cast<off_t>(next_offset));
+                if (added == 0) {
+                    // Entry didn't fit, stop
+                    break;
+                }
+                dirbuf_size += added;
+            }
+
+            context->ReplyBuf(dirbuf.data(), dirbuf_size);
         });
     });
 }

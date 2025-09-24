@@ -1,14 +1,10 @@
 # CRUSH.md
 
 ## Build Commands
-- **Full build**: `pnpm run build` (native + TS)
-- **Native only**: `pnpm run build:native` (cmake-js)
-- **TypeScript only**: `pnpm run build:ts`
-- **Test all**: `pnpm test` (jest)
-- **Test single**: `pnpm test -- test/specific-file.test.ts`
-- **Lint**: `pnpm run lint` (eslint with fixes)
-- **Format**: `pnpm run format` (prettier)
-- **Type check**: `pnpm run typecheck`
+- **Full build**: `npm install` (native + TS)
+- **TypeScript only**: npm run build:ts`
+- **Test all**: `npm test` (jest)
+- **Test single**: `npm test -- test/specific-file.test.ts`
 
 **Critical: After adding C++ functions, update prebuilds:**
 ```bash

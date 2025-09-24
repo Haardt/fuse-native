@@ -31,7 +31,7 @@ Verifizieren, dass **alle FUSE3-Funktionen** korrekt durch die Ebenen **C/N-API 
 - getattr - DONE
 - readlink - DONE
 - mknod - DONE 
-- mkdir - 
+- mkdir - DONE 
 - unlink  - DONE
 - rmdir   - DONE
 - symlink - DONE
@@ -40,7 +40,7 @@ Verifizieren, dass **alle FUSE3-Funktionen** korrekt durch die Ebenen **C/N-API 
 - chmod - DONE
 - chown - DONE
 - setattr - DONE
-- readdir ❌ 
+- readdir - DONE 
 - opendir ❌
 - releasedir ❌
 - create ❌
@@ -98,8 +98,7 @@ FUSE Operation Analysis Report
 - copyFileRange: C++ ✓, TS ✓, Tests ✓
 
 ⚠️  TEILWEISE IMPLEMENTIERT:
-- getattr: C++ ❌, TS ✓, Tests ❌
-- readdir: C++ ❌, TS ✓, Tests ✓
+- statfs: C++ ✓, TS ✓, Tests ✓ ⚠️ (Fragment vorhanden, Integration fehlt)
 
 ❌ NICHT IMPLEMENTIERT:
 - readlink: C++ ❌, TS ❌, Tests ❌
@@ -993,8 +992,7 @@ jobs:
 
 ### FUSE Operations Status Summary
 ```
-✅ IMPLEMENTED: init, copyFileRange, xattr operations, session management
-⚠️  PARTIAL: statfs (fragment exists), readdir (TS-only)
+✅ IMPLEMENTED: init, copyFileRange, xattr operations, session management, readdir
 ❌ MISSING: getattr, open/read/write/release, mkdir/rmdir/create/unlink, 
            chmod/chown/truncate/utimens, flush/fsync, readlink/symlink,
            access/lock/fallocate/lseek, bmap/ioctl/poll, read_buf/write_buf
