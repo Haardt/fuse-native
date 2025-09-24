@@ -2,3 +2,4 @@ node_modules
 build
 *.term
 /.idea/
+/dist/
