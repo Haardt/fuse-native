@@ -723,31 +723,13 @@ void FuseBridge::ProcessRequest(std::shared_ptr<FuseRequestContext> context,
 
 uint64_t request_id = dispatcher->DispatchCustom(
     op_name,
-    [shared_context,
-     op_name,
-     invoker = std::move(invoker_copy)](Napi::Env env, Napi::Function handler) mutable {
-        fprintf(stderr, "FUSE: ProcessRequest-cb for %s\n", op_name.c_str());
-        if (!shared_context) { fprintf(stderr, "FUSE: ctx null\n"); return; }
-        if (shared_context->replied.load()) { fprintf(stderr, "FUSE: already replied\n"); return; }
-        if (!env || !handler.IsFunction()) {
-            fprintf(stderr, "FUSE: invalid env/handler\n");
-            shared_context->ReplyError(EIO);
-            return;
+    [shared_context, invoker = std::move(invoker_copy), op_name](Napi::Env env, Napi::Function handler) mutable {
+        Napi::HandleScope hs(env);
+        if (!shared_context || !handler.IsFunction()) { 
+            if (shared_context) shared_context->ReplyError(EIO); 
+            return; 
         }
-        if (!invoker) {
-            fprintf(stderr, "FUSE: invoker null\n");
-            shared_context->ReplyError(ENOSYS);
-            return;
-        }
-        try {
-            invoker(env, handler);
-        } catch (const std::exception& e) {
-            fprintf(stderr, "FUSE: invoker threw: %s\n", e.what());
-            shared_context->ReplyError(EIO);
-        } catch (...) {
-            fprintf(stderr, "FUSE: invoker threw (unknown)\n");
-            shared_context->ReplyError(EIO);
-        }
+        invoker(env, handler);
     },
     shared_context->priority,
     [shared_context](int error_code) {
@@ -1683,11 +1665,15 @@ void FuseBridge::HandleWrite(fuse_req_t req, fuse_ino_t ino, const char* buf, si
 
     ProcessRequest(context, [context](Napi::Env env, Napi::Function handler) {
         Napi::Value ino_value = NapiHelpers::CreateBigUint64(env, ToUint64(context->ino));
-        Napi::ArrayBuffer buffer = context->data.empty()
-                                       ? Napi::ArrayBuffer::New(env, 0)
-                                       : Napi::ArrayBuffer::New(env,
-                                                                context->data.data(),
-                                                                context->data.size());
+        
+        // Copy buffer data to new ArrayBuffer to ensure proper lifetime management
+        Napi::ArrayBuffer buffer;
+        if (context->data.empty()) {
+            buffer = Napi::ArrayBuffer::New(env, 0);
+        } else {
+            buffer = Napi::ArrayBuffer::New(env, context->data.size());
+            std::memcpy(buffer.Data(), context->data.data(), context->data.size());
+        }
         Napi::Object options = Napi::Object::New(env);
         options.Set("offset", NapiHelpers::CreateBigUint64(env, context->offset));
         if (context->has_fi) {
@@ -1841,9 +1827,7 @@ void FuseBridge::HandleReaddir(fuse_req_t req, fuse_ino_t ino, size_t size, off_
 
                 struct stat st = {};
                 st.st_ino = entry_ino;
-                st.st_mode = entry_type << 12;
-
-                st.st_mode = (entry_type & 15) << 12; 
+                st.st_mode = (entry_type & 15) << 12;
 
                 size_t added = fuse_add_direntry(context->request, dirbuf.data() + dirbuf_size, dirbuf.size() - dirbuf_size,
                                                   name.c_str(), &st, static_cast<off_t>(next_offset));

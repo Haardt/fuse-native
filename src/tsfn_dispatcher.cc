@@ -441,7 +441,7 @@ void TSFNDispatcher::ProcessCallback(std::shared_ptr<PendingCallback> callback) 
         
         auto status = handler.NonBlockingCall(cb_data, [](Napi::Env env, Napi::Function js_callback, CallbackData* data) {
             // Scopes are important for proper resource management
-            Napi::HandleScope handle_scope(env);
+            Napi::HandleScope hs(env);
             
             uint64_t request_id = data->callback ? (data->callback->context ? data->callback->context->request_id : 0) : 0;
             bool success = false;
