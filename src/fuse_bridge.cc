@@ -123,19 +123,24 @@ inline uint64_t ToUint64(fuse_ino_t value) {
 }
 
 Napi::Object CreateRequestContextObject(Napi::Env env, const FuseRequestContext& context) {
+    fprintf(stderr, "FUSE: CreateRequestContextObject - creating object\n");
     Napi::Object ctx = Napi::Object::New(env);
     if (!context.has_caller_ctx) {
+        fprintf(stderr, "FUSE: CreateRequestContextObject - no caller context, setting defaults\n");
         ctx.Set("uid", Napi::Number::New(env, 0));
         ctx.Set("gid", Napi::Number::New(env, 0));
         ctx.Set("pid", Napi::Number::New(env, 0));
         ctx.Set("umask", Napi::Number::New(env, 0));
+        fprintf(stderr, "FUSE: CreateRequestContextObject - returning default context\n");
         return ctx;
     }
 
+    fprintf(stderr, "FUSE: CreateRequestContextObject - has caller context, setting values\n");
     ctx.Set("uid", Napi::Number::New(env, static_cast<double>(context.caller_ctx.uid)));
     ctx.Set("gid", Napi::Number::New(env, static_cast<double>(context.caller_ctx.gid)));
     ctx.Set("pid", Napi::Number::New(env, static_cast<double>(context.caller_ctx.pid)));
     ctx.Set("umask", Napi::Number::New(env, static_cast<double>(context.caller_ctx.umask)));
+    fprintf(stderr, "FUSE: CreateRequestContextObject - returning context with caller info\n");
     return ctx;
 }
 
@@ -358,13 +363,20 @@ FuseRequestContext::FuseRequestContext(FuseOpType op, fuse_req_t req, FuseBridge
       flags(0),
       datasync(0),
       access_mask(0),
+      has_lock(false),
+      sleep(0),
       replied(false) {
+    fprintf(stderr, "FUSE: FuseRequestContext - creating context for op_type %d\n", static_cast<int>(op));
     std::memset(&attr, 0, sizeof(attr));
     std::memset(&fi, 0, sizeof(fi));
     std::memset(&fi_out, 0, sizeof(fi_out));
+    std::memset(&lock, 0, sizeof(lock));
     std::memset(&caller_ctx, 0, sizeof(caller_ctx));
     if (req) {
-      CaptureCallerContext();
+        fprintf(stderr, "FUSE: FuseRequestContext - capturing caller context\n");
+        CaptureCallerContext();
+    } else {
+        fprintf(stderr, "FUSE: FuseRequestContext - no request provided\n");
     }
 }
 
@@ -470,6 +482,13 @@ void FuseRequestContext::ReplyReadlink(const std::string& target_path) {
     fuse_reply_readlink(request, target_path.c_str());
 }
 
+void FuseRequestContext::ReplyGetlk(const struct flock& lock) {
+    if (!TryMarkReplied() || !request) {
+        return;
+    }
+    fuse_reply_lock(request, const_cast<struct flock*>(&lock));
+}
+
 // Static member definitions
 std::mutex FuseBridge::handler_mutex_;
 std::unordered_map<FuseOpType, FuseBridge::HandlerRecord> FuseBridge::handler_registry_;
@@ -518,13 +537,17 @@ FuseBridge::~FuseBridge() {
 }
 
 bool FuseBridge::Initialize(Napi::Env env) {
+    fprintf(stderr, "FUSE: FuseBridge::Initialize - starting\n");
     if (initialized_) {
+        fprintf(stderr, "FUSE: FuseBridge::Initialize - already initialized\n");
         return true;
     }
 
     env_ = env;
+    fprintf(stderr, "FUSE: FuseBridge::Initialize - calling InitializeFuseOperations\n");
     InitializeFuseOperations();
     initialized_ = true;
+    fprintf(stderr, "FUSE: FuseBridge::Initialize - completed successfully\n");
     return true;
 }
 
@@ -653,15 +676,25 @@ void FuseBridge::InitializeFuseOperations() {
     fuse_ops_.getxattr = GetxattrCallback;
     fuse_ops_.listxattr = ListxattrCallback;
     fuse_ops_.removexattr = RemovexattrCallback;
+
+    // File locking
+    fuse_ops_.getlk = GetlkCallback;
+    fuse_ops_.setlk = SetlkCallback;
 }
 
 void FuseBridge::ProcessRequest(std::shared_ptr<FuseRequestContext> context,
-                                std::function<void(Napi::Env, Napi::Function)> js_invoker) {
+                                 std::function<void(Napi::Env, Napi::Function)> js_invoker) {
     if (!context) {
+        fprintf(stderr, "FUSE: ProcessRequest - context is null\n");
         return;
     }
 
+    fprintf(stderr, "FUSE: ProcessRequest - op_type: %d\n", static_cast<int>(context->op_type));
+    const char* op_name_str = FuseOpTypeToString(context->op_type);
+    fprintf(stderr, "FUSE: ProcessRequest - op_name: %s\n", op_name_str);
+
     if (!HasOperationHandler(context->op_type)) {
+        fprintf(stderr, "FUSE: ProcessRequest - no handler for %s\n", op_name_str);
         context->ReplyError(ENOSYS);
         return;
     }
@@ -684,28 +717,45 @@ void FuseBridge::ProcessRequest(std::shared_ptr<FuseRequestContext> context,
         }
     }
 
-    std::string op_name = FuseOpTypeToString(context->op_type);
+    std::string op_name = op_name_str;
     auto shared_context = context;
     auto invoker_copy = std::move(js_invoker);
 
-    uint64_t request_id = dispatcher->DispatchCustom(
-        op_name,
-        [shared_context, invoker_copy](Napi::Env env, Napi::Function handler) mutable {
-            if (!invoker_copy) {
-                shared_context->ReplyError(ENOSYS);
-                return;
-            }
-
-            try {
-                invoker_copy(env, handler);
-            } catch (...) {
-                shared_context->ReplyError(EIO);
-            }
-        },
-        shared_context->priority,
-        [shared_context](int error_code) {
+uint64_t request_id = dispatcher->DispatchCustom(
+    op_name,
+    [shared_context,
+     op_name,
+     invoker = std::move(invoker_copy)](Napi::Env env, Napi::Function handler) mutable {
+        fprintf(stderr, "FUSE: ProcessRequest-cb for %s\n", op_name.c_str());
+        if (!shared_context) { fprintf(stderr, "FUSE: ctx null\n"); return; }
+        if (shared_context->replied.load()) { fprintf(stderr, "FUSE: already replied\n"); return; }
+        if (!env || !handler.IsFunction()) {
+            fprintf(stderr, "FUSE: invalid env/handler\n");
+            shared_context->ReplyError(EIO);
+            return;
+        }
+        if (!invoker) {
+            fprintf(stderr, "FUSE: invoker null\n");
+            shared_context->ReplyError(ENOSYS);
+            return;
+        }
+        try {
+            invoker(env, handler);
+        } catch (const std::exception& e) {
+            fprintf(stderr, "FUSE: invoker threw: %s\n", e.what());
+            shared_context->ReplyError(EIO);
+        } catch (...) {
+            fprintf(stderr, "FUSE: invoker threw (unknown)\n");
+            shared_context->ReplyError(EIO);
+        }
+    },
+    shared_context->priority,
+    [shared_context](int error_code) {
+        fprintf(stderr, "FUSE: Dispatch error cb: %d\n", error_code);
+        if (shared_context && !shared_context->replied.load()) {
             shared_context->ReplyError(error_code == 0 ? EIO : error_code);
-        });
+        }
+    });
 
     if (request_id == 0) {
         shared_context->ReplyError(EAGAIN);
@@ -716,7 +766,10 @@ void FuseBridge::ProcessRequest(std::shared_ptr<FuseRequestContext> context,
 }
 
 std::shared_ptr<FuseRequestContext> FuseBridge::CreateContext(FuseOpType op_type, fuse_req_t req) {
-    return std::make_shared<FuseRequestContext>(op_type, req, this);
+    fprintf(stderr, "FUSE: CreateContext - creating context for op_type %d\n", static_cast<int>(op_type));
+    auto context = std::make_shared<FuseRequestContext>(op_type, req, this);
+    fprintf(stderr, "FUSE: CreateContext - context created successfully\n");
+    return context;
 }
 
 void FuseBridge::HandleUnlink(fuse_req_t req, fuse_ino_t parent, const char* name) {
@@ -879,15 +932,51 @@ void FuseBridge::HandleAccess(fuse_req_t req, fuse_ino_t ino, int mask) {
     context->access_mask = static_cast<uint32_t>(mask);
 
     ProcessRequest(context, [context](Napi::Env env, Napi::Function handler) {
-        Napi::Value ino_value = NapiHelpers::CreateBigUint64(env, ToUint64(context->ino));
-        Napi::Number mask_value = Napi::Number::New(env, context->access_mask);
-        Napi::Object request_ctx = CreateRequestContextObject(env, *context);
-        Napi::Object options = Napi::Object::New(env);
+        fprintf(stderr, "FUSE: HandleAccess - context->ino = %lu\n", context->ino);
+        fprintf(stderr, "FUSE: HandleAccess - context->access_mask = %u\n", context->access_mask);
+        fprintf(stderr, "FUSE: HandleAccess - env is valid: %s\n", env ? "true" : "false");
+        fprintf(stderr, "FUSE: HandleAccess - handler is valid: %s\n", handler.IsFunction() ? "true" : "false");
+        fprintf(stderr, "FUSE: HandleAccess - creating ino_value\n");
+        try {
+            fprintf(stderr, "FUSE: HandleAccess - creating ino_value\n");
+            Napi::Value ino_value = NapiHelpers::CreateBigUint64(env, ToUint64(context->ino));
+            fprintf(stderr, "FUSE: HandleAccess - ino_value created successfully\n");
+            fprintf(stderr, "FUSE: HandleAccess - creating mask_value\n");
+            Napi::Number mask_value = Napi::Number::New(env, context->access_mask);
+            fprintf(stderr, "FUSE: HandleAccess - mask_value created successfully\n");
+            fprintf(stderr, "FUSE: HandleAccess - creating request_ctx\n");
+            Napi::Object request_ctx = CreateRequestContextObject(env, *context);
+            fprintf(stderr, "FUSE: HandleAccess - request_ctx created successfully\n");
+            fprintf(stderr, "FUSE: HandleAccess - creating options\n");
+            Napi::Object options = Napi::Object::New(env);
+            fprintf(stderr, "FUSE: HandleAccess - options created successfully\n");
+            fprintf(stderr, "FUSE: HandleAccess - handler type: %s\n", handler.IsFunction() ? "function" : "not function");
+            fprintf(stderr, "FUSE: HandleAccess - calling handler\n");
 
-        auto result = handler.Call({ino_value, mask_value, request_ctx, options});
-        ResolvePromiseOrValue(env, context, result, [context](Napi::Env env_inner, Napi::Value) {
-            context->ReplyOk();
-        });
+            try {
+                fprintf(stderr, "FUSE: HandleAccess - preparing arguments\n");
+                std::vector<napi_value> args = {ino_value, mask_value, request_ctx, options};
+                fprintf(stderr, "FUSE: HandleAccess - calling handler.Call\n");
+                auto result = handler.Call(args);
+                fprintf(stderr, "FUSE: HandleAccess - handler called successfully\n");
+                ResolvePromiseOrValue(env, context, result, [context](Napi::Env env_inner, Napi::Value) {
+                    fprintf(stderr, "FUSE: HandleAccess - replying OK\n");
+                    context->ReplyOk();
+                });
+            } catch (const std::exception& e) {
+                fprintf(stderr, "FUSE: HandleAccess - exception in handler call: %s\n", e.what());
+                context->ReplyError(EIO);
+            } catch (...) {
+                fprintf(stderr, "FUSE: HandleAccess - unknown exception in handler call\n");
+                context->ReplyError(EIO);
+            }
+        } catch (const std::exception& e) {
+            fprintf(stderr, "FUSE: HandleAccess - exception in parameter creation: %s\n", e.what());
+            context->ReplyError(EIO);
+        } catch (...) {
+            fprintf(stderr, "FUSE: HandleAccess - unknown exception in parameter creation\n");
+            context->ReplyError(EIO);
+        }
     });
 }
 
@@ -1914,6 +2003,88 @@ void FuseBridge::HandleCopyFileRange(fuse_req_t req, fuse_ino_t ino_in, off_t of
         });
     });
 }
+
+void FuseBridge::HandleGetlk(fuse_req_t req, fuse_ino_t ino, struct fuse_file_info* fi, struct flock* lock) {
+    auto context = CreateContext(FuseOpType::GETLK, req);
+    context->ino = ino;
+    if (fi) {
+        context->fi = *fi;
+        context->has_fi = true;
+    }
+    if (lock) {
+        context->lock = *lock;
+        context->has_lock = true;
+    }
+
+    ProcessRequest(context, [context](Napi::Env env, Napi::Function handler) {
+        Napi::Value ino_value = NapiHelpers::CreateBigUint64(env, ToUint64(context->ino));
+        Napi::Value fi_value = context->has_fi
+                               ? NapiHelpers::FileInfoToObject(env, context->fi)
+                               : env.Null();
+        Napi::Object lock_obj = Napi::Object::New(env);
+        if (context->has_lock) {
+            lock_obj.Set("type", Napi::Number::New(env, context->lock.l_type));
+            lock_obj.Set("start", NapiHelpers::CreateBigInt64(env, context->lock.l_start));
+            lock_obj.Set("len", NapiHelpers::CreateBigInt64(env, context->lock.l_len));
+            lock_obj.Set("pid", Napi::Number::New(env, context->lock.l_pid));
+        }
+        Napi::Object request_ctx = CreateRequestContextObject(env, *context);
+        Napi::Object options = Napi::Object::New(env);
+
+        auto result = handler.Call({ino_value, fi_value, lock_obj, request_ctx, options});
+        ResolvePromiseOrValue(env, context, result, [context](Napi::Env env_inner, Napi::Value value) {
+            if (value.IsObject()) {
+                Napi::Object result_obj = value.As<Napi::Object>();
+                if (result_obj.Has("lock")) {
+                    Napi::Value lock_value = result_obj.Get("lock");
+                    if (lock_value.IsObject()) {
+                        struct flock lock_result{};
+                        // Populate lock_result from lock_value
+                        context->ReplyGetlk(lock_result);
+                        return;
+                    }
+                }
+            }
+            context->ReplyError(EIO);
+        });
+    });
+}
+
+void FuseBridge::HandleSetlk(fuse_req_t req, fuse_ino_t ino, struct fuse_file_info* fi, struct flock* lock, int sleep) {
+    auto context = CreateContext(FuseOpType::SETLK, req);
+    context->ino = ino;
+    context->sleep = sleep;
+    if (fi) {
+        context->fi = *fi;
+        context->has_fi = true;
+    }
+    if (lock) {
+        context->lock = *lock;
+        context->has_lock = true;
+    }
+
+    ProcessRequest(context, [context](Napi::Env env, Napi::Function handler) {
+        Napi::Value ino_value = NapiHelpers::CreateBigUint64(env, ToUint64(context->ino));
+        Napi::Value fi_value = context->has_fi
+                               ? NapiHelpers::FileInfoToObject(env, context->fi)
+                               : env.Null();
+        Napi::Object lock_obj = Napi::Object::New(env);
+        if (context->has_lock) {
+            lock_obj.Set("type", Napi::Number::New(env, context->lock.l_type));
+            lock_obj.Set("start", NapiHelpers::CreateBigInt64(env, context->lock.l_start));
+            lock_obj.Set("len", NapiHelpers::CreateBigInt64(env, context->lock.l_len));
+            lock_obj.Set("pid", Napi::Number::New(env, context->lock.l_pid));
+        }
+        Napi::Boolean sleep_value = Napi::Boolean::New(env, context->sleep != 0);
+        Napi::Object request_ctx = CreateRequestContextObject(env, *context);
+        Napi::Object options = Napi::Object::New(env);
+
+        auto result = handler.Call({ino_value, fi_value, lock_obj, sleep_value, request_ctx, options});
+        ResolvePromiseOrValue(env, context, result, [context](Napi::Env env_inner, Napi::Value) {
+            context->ReplyOk();
+        });
+    });
+}
 void FuseBridge::HandleInit(fuse_req_t req, struct fuse_conn_info* conn) {
     auto context = CreateContext(FuseOpType::INIT, req);
     conn->want |= FUSE_CAP_ASYNC_READ | FUSE_CAP_WRITEBACK_CACHE;
@@ -2394,6 +2565,24 @@ void FuseBridge::RemovexattrCallback(fuse_req_t req, fuse_ino_t ino, const char*
         return;
     }
     bridge->HandleRemovexattr(req, ino, name);
+}
+
+void FuseBridge::GetlkCallback(fuse_req_t req, fuse_ino_t ino, struct fuse_file_info* fi, struct flock* lock) {
+    auto* bridge = GetBridgeFromRequest(req);
+    if (!bridge) {
+        fuse_reply_err(req, ENODEV);
+        return;
+    }
+    bridge->HandleGetlk(req, ino, fi, lock);
+}
+
+void FuseBridge::SetlkCallback(fuse_req_t req, fuse_ino_t ino, struct fuse_file_info* fi, struct flock* lock, int sleep) {
+    auto* bridge = GetBridgeFromRequest(req);
+    if (!bridge) {
+        fuse_reply_err(req, ENODEV);
+        return;
+    }
+    bridge->HandleSetlk(req, ino, fi, lock, sleep);
 }
 
 Napi::Value SetOperationHandler(const Napi::CallbackInfo& info) {

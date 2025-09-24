@@ -20,6 +20,7 @@
   "scripts": {
     "build": "pnpm run build:native && pnpm run build:ts",
     "build:native": "cmake-js compile --runtime-version=$(node -v | cut -c 2-)",
+    "build:native:debug": "cmake-js compile --runtime-version=$(node -v | cut -c 2-) --debug",
     "build:ts": "tsc",
     "clean": "rm -rf build dist node_modules",
     "clean:build": "rm -rf build dist",

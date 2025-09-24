@@ -19,7 +19,7 @@ function getBinding() {
   // Try Release first, then Debug as a fallback
   const candidates = [
     './build/Release/fuse-native.node',
-    // './build/Debug/fuse-native.node',
+    './build/Debug/fuse-native.node',
   ];
 
   let lastErr: unknown = null;
@@ -611,6 +611,8 @@ export async function setOperationHandler(
           'ioctl',
           'bmap',
           'poll',
+          'setlk',
+          'getlk',
       ] as const;
 
       if (!supportedOperations.includes(operation as any)) {

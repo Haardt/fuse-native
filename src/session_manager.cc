@@ -14,6 +14,7 @@
 #include <memory>
 #include <thread>
 #include <chrono>
+#include <cstring>
 
 namespace fuse_native {
 
@@ -66,16 +67,23 @@ bool SessionManager::Initialize() {
     
     try {
         // Create FUSE bridge
+        fprintf(stderr, "FUSE: creating bridge...\n");
+        fflush(stderr);
         bridge_ = std::make_unique<FuseBridge>(this);
+        fprintf(stderr, "FUSE: bridge created, initializing...\n");
+        fflush(stderr);
         if (!bridge_->Initialize(Napi::Env(env_))) {
+            fprintf(stderr, "FUSE: bridge initialization failed\n");
+            fflush(stderr);
             return false;
         }
+        fprintf(stderr, "FUSE: bridge initialization succeeded\n");
+        fflush(stderr);
         
-        // Create FUSE session arguments
+        // Create FUSE session arguments using proper FUSE argument parsing
         std::vector<std::string> fuse_args;
         fuse_args.push_back("fuse-native");
-        fuse_args.push_back(mountpoint_);
-        
+
         // Add FUSE options
         if (options_.debug) {
             fuse_args.push_back("-d");
@@ -98,25 +106,50 @@ bool SessionManager::Initialize() {
             fuse_args.push_back("-o");
             fuse_args.push_back("auto_unmount");
         }
-        
-        // Convert to char* array
+
+        // Convert to char* array for FUSE argument parsing
         std::vector<char*> argv;
         for (auto& arg : fuse_args) {
             argv.push_back(const_cast<char*>(arg.c_str()));
         }
-        
-        // Parse FUSE arguments
-        struct fuse_args args = FUSE_ARGS_INIT(static_cast<int>(argv.size()), argv.data());
-        
-        // Create FUSE session
-        fuse_session_ = fuse_session_new(&args, bridge_->GetFuseOperations(), 
-                                        sizeof(*bridge_->GetFuseOperations()), this);
-        
-        fuse_opt_free_args(&args);
-        
-        if (!fuse_session_) {
+        argv.push_back(nullptr); // Null terminate for exec-style parsing
+
+        // Parse FUSE arguments using FUSE's argument parser
+        struct fuse_args args = FUSE_ARGS_INIT(static_cast<int>(argv.size() - 1), argv.data());
+        struct fuse_cmdline_opts opts;
+
+        // Parse command line options
+        if (fuse_parse_cmdline(&args, &opts) != 0) {
+            fuse_opt_free_args(&args);
+            fprintf(stderr, "FUSE: failed to parse command line arguments\n");
+            fflush(stderr);
             return false;
         }
+
+        // Set the mountpoint
+        opts.mountpoint = strdup(mountpoint_.c_str());
+        if (!opts.mountpoint) {
+            fuse_opt_free_args(&args);
+            fprintf(stderr, "FUSE: failed to allocate mountpoint string\n");
+            fflush(stderr);
+            return false;
+        }
+
+        // Create FUSE session
+        fuse_session_ = fuse_session_new(&args, bridge_->GetFuseOperations(),
+                                         sizeof(*bridge_->GetFuseOperations()), this);
+
+        // Clean up
+        fuse_opt_free_args(&args);
+        free(opts.mountpoint);
+
+        if (!fuse_session_) {
+            fprintf(stderr, "FUSE: session_new failed\n");
+            fflush(stderr);
+            return false;
+        }
+        fprintf(stderr, "FUSE: session_new succeeded\n");
+        fflush(stderr);
         
         state_ = SessionState::INITIALIZED;
         return true;
@@ -129,19 +162,33 @@ bool SessionManager::Initialize() {
 
 bool SessionManager::Mount() {
     std::lock_guard<std::mutex> lock(state_mutex_);
-    
+    fprintf(stderr, "FUSE: Mount1 %s\n", mountpoint_.c_str());
+    fflush(stderr);
+
     if (state_ != SessionState::INITIALIZED) {
+        fprintf(stderr, "FUSE: state is %d, need to initialize\n", static_cast<int>(state_));
+        fflush(stderr);
         if (state_ == SessionState::CREATED && !Initialize()) {
+            fprintf(stderr, "FUSE: Initialize() failed\n");
+            fflush(stderr);
             return false;
         } else if (state_ != SessionState::INITIALIZED) {
+            fprintf(stderr, "FUSE: state is still not INITIALIZED after Initialize()\n");
+            fflush(stderr);
             return false;
         }
     }
-    
+    fprintf(stderr, "FUSE: Mount2 %s\n", mountpoint_.c_str());
+    fflush(stderr);
+
     // Mount the filesystem
     if (fuse_session_mount(fuse_session_, mountpoint_.c_str()) != 0) {
+        fprintf(stderr, "FUSE: session_mount failed for %s\n", mountpoint_.c_str());
+        fflush(stderr);
         return false;
     }
+    fprintf(stderr, "FUSE: session_mount succeeded for %s\n", mountpoint_.c_str());
+    fflush(stderr);
     
     state_ = SessionState::MOUNTED;
     
@@ -214,9 +261,13 @@ void SessionManager::Destroy() {
 
 void SessionManager::RunFuseLoop() {
     if (!fuse_session_) {
+        fprintf(stderr, "FUSE: RunFuseLoop - no fuse_session_\n");
         return;
     }
-    
+
+    fprintf(stderr, "FUSE: RunFuseLoop - starting FUSE loop thread\n");
+    fprintf(stderr, "FUSE: RunFuseLoop - max_read: %u\n", options_.max_read);
+
     struct fuse_buf fbuf = {
         .size = options_.max_read,
         .flags = static_cast<enum fuse_buf_flags>(0),
@@ -224,29 +275,48 @@ void SessionManager::RunFuseLoop() {
         .fd = -1,
         .pos = 0,
     };
-    
+
     // Allocate buffer for FUSE operations
     fbuf.mem = malloc(fbuf.size);
     if (!fbuf.mem) {
+        fprintf(stderr, "FUSE: RunFuseLoop - failed to allocate buffer\n");
         return;
     }
-    
+    fprintf(stderr, "FUSE: RunFuseLoop - allocated buffer of size %zu\n", fbuf.size);
+
     // Main FUSE loop
+    int loop_count = 0;
     while (mount_thread_running_ && !fuse_session_exited(fuse_session_)) {
+        loop_count++;
+        if (loop_count % 100 == 1) {
+            fprintf(stderr, "FUSE: RunFuseLoop - loop iteration %d\n", loop_count);
+        }
+
         int res = fuse_session_receive_buf(fuse_session_, &fbuf);
         if (res == -EINTR || res == 0) {
+            if (res == -EINTR) {
+                fprintf(stderr, "FUSE: RunFuseLoop - received EINTR, continuing\n");
+            }
             continue;
         }
         if (res < 0) {
+            // Log error for debugging
+            fprintf(stderr, "FUSE: RunFuseLoop - receive_buf failed with %d\n", res);
+            fprintf(stderr, "FUSE: RunFuseLoop - errno: %d (%s)\n", errno, strerror(errno));
             break;
         }
-        
+
+        fprintf(stderr, "FUSE: RunFuseLoop - received buffer, processing...\n");
         fuse_session_process_buf(fuse_session_, &fbuf);
+        fprintf(stderr, "FUSE: RunFuseLoop - processed buffer\n");
     }
-    
+
+    fprintf(stderr, "FUSE: RunFuseLoop - exiting loop after %d iterations\n", loop_count);
+
     // Clean up buffer
     if (fbuf.mem) {
         free(fbuf.mem);
+        fprintf(stderr, "FUSE: RunFuseLoop - freed buffer\n");
     }
 }
 
@@ -303,20 +373,31 @@ Napi::Value CreateSession(const Napi::CallbackInfo& info) {
         // Create session manager
         auto session_manager = std::make_unique<SessionManager>(env, mountpoint, options);
         uint64_t session_id = session_manager->GetSessionId();
-        
+
+        fprintf(stderr, "FUSE: CreateSession - calling Initialize() on session manager\n");
+        fflush(stderr);
+        if (!session_manager->Initialize()) {
+            fprintf(stderr, "FUSE: CreateSession - Initialize() failed\n");
+            fflush(stderr);
+            NapiHelpers::ThrowError(env, "Failed to initialize session");
+            return env.Undefined();
+        }
+        fprintf(stderr, "FUSE: CreateSession - Initialize() succeeded\n");
+        fflush(stderr);
+
         // Store in registry
         {
             std::lock_guard<std::mutex> lock(sessions_mutex);
             active_sessions[session_id] = std::move(session_manager);
         }
-        
+
         // Return session handle
         Napi::Object session_handle = Napi::Object::New(env);
         session_handle.Set("id", Napi::Number::New(env, static_cast<double>(session_id)));
         session_handle.Set("mountpoint", Napi::String::New(env, mountpoint));
-        
+
         return session_handle;
-        
+
     } catch (const std::exception& e) {
         NapiHelpers::ThrowError(env, "Failed to create session: " + std::string(e.what()));
         return env.Undefined();

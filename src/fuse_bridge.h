@@ -8,6 +8,7 @@
 
 #include <napi.h>
 #include <fuse3/fuse_lowlevel.h>
+#include <fcntl.h>
 #include <atomic>
 #include <chrono>
 #include <functional>
@@ -108,6 +109,7 @@ struct FuseRequestContext : public std::enable_shared_from_this<FuseRequestConte
                      const struct fuse_file_info& result_fi);
     void ReplyStatfs(const struct statvfs& stats);
     void ReplyReadlink(const std::string& target_path);
+    void ReplyGetlk(const struct flock& lock);
 
     FuseOpType op_type;
     fuse_req_t request;
@@ -141,6 +143,9 @@ struct FuseRequestContext : public std::enable_shared_from_this<FuseRequestConte
     int datasync;
     uint32_t access_mask;
     std::vector<uint8_t> data;
+    struct flock lock;
+    bool has_lock;
+    int sleep;
 
     std::atomic<bool> replied;
 };
@@ -221,6 +226,8 @@ private:
                              struct fuse_file_info* fi_in, fuse_ino_t ino_out,
                              off_t off_out, struct fuse_file_info* fi_out,
                              size_t len, int flags);
+    void HandleGetlk(fuse_req_t req, fuse_ino_t ino, struct fuse_file_info* fi, struct flock* lock);
+    void HandleSetlk(fuse_req_t req, fuse_ino_t ino, struct fuse_file_info* fi, struct flock* lock, int sleep);
 
    // Handlers for operations without a specific high-level decomposition
    void HandleInit(fuse_req_t req, struct fuse_conn_info* conn);
@@ -302,6 +309,8 @@ private:
    static void GetxattrCallback(fuse_req_t req, fuse_ino_t ino, const char* name, size_t size);
    static void ListxattrCallback(fuse_req_t req, fuse_ino_t ino, size_t size);
    static void RemovexattrCallback(fuse_req_t req, fuse_ino_t ino, const char* name);
+   static void GetlkCallback(fuse_req_t req, fuse_ino_t ino, struct fuse_file_info* fi, struct flock* lock);
+   static void SetlkCallback(fuse_req_t req, fuse_ino_t ino, struct fuse_file_info* fi, struct flock* lock, int sleep);
 };
 
 Napi::Value SetOperationHandler(const Napi::CallbackInfo& info);

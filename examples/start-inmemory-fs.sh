@@ -13,6 +13,7 @@ LOG_LEVEL="${LOG_LEVEL:-info}"
 DEBUG="${DEBUG:-false}"
 FOREGROUND="${FOREGROUND:-false}"
 AUTO_UNMOUNT="${AUTO_UNMOUNT:-true}"
+ENABLE_ASAN="${ENABLE_ASAN:-false}"
 
 # Colors for output
 RED='\033[0;31m'
@@ -91,6 +92,10 @@ while [[ $# -gt 0 ]]; do
             AUTO_UNMOUNT="false"
             shift
             ;;
+        --enable-asan)
+            ENABLE_ASAN="true"
+            shift
+            ;;
         --help|-h)
             echo "Usage: $0 [OPTIONS]"
             echo ""
@@ -102,6 +107,7 @@ while [[ $# -gt 0 ]]; do
             echo "  --debug                   Enable debug mode"
             echo "  -f, --foreground          Run in foreground"
             echo "  --no-auto-unmount         Disable automatic unmounting"
+            echo "  --enable-asan             Enable AddressSanitizer and N-API Fatal Errors"
             echo "  -h, --help                Show this help message"
             echo ""
             echo "Environment Variables:"
@@ -110,10 +116,12 @@ while [[ $# -gt 0 ]]; do
             echo "  DEBUG                     Enable debug (true/false)"
             echo "  FOREGROUND                Run in foreground (true/false)"
             echo "  AUTO_UNMOUNT              Auto unmount on exit (true/false)"
+            echo "  ENABLE_ASAN               Enable ASan/UBSan debugging (true/false)"
             echo ""
             echo "Examples:"
             echo "  $0 --mount-point /tmp/my-fs --debug"
             echo "  $0 -m /mnt/inmemory -f"
+            echo "  $0 --enable-asan  # For debugging segmentation faults"
             echo "  DEBUG=true $0"
             exit 0
             ;;
@@ -221,16 +229,49 @@ if [ "$FOREGROUND" = "true" ]; then
     print_info "Press Ctrl+C to stop and unmount"
     echo ""
 
-    # Run in foreground
-    exec node "$SCRIPT_DIR/inmemory-fs.mjs" "$MOUNT_POINT"
+    # Run in foreground with optional ASan/N-API debugging
+    if [ "$ENABLE_ASAN" = "true" ]; then
+        print_info "Running with AddressSanitizer and N-API Fatal Errors enabled"
+
+        # Find ASan runtime library
+        ASAN_LIB=$(find /usr/lib /usr/local/lib -name "libasan.so*" 2>/dev/null | head -n1)
+        if [ -n "$ASAN_LIB" ]; then
+            print_info "Preloading ASan runtime: $ASAN_LIB"
+            export LD_PRELOAD="$ASAN_LIB:$LD_PRELOAD"
+        else
+            print_warning "ASan runtime library not found - ASan may not work correctly"
+        fi
+
+        export NAPI_FATAL_ERRORS=1
+        exec node "$SCRIPT_DIR/inmemory-fs.mjs" "$MOUNT_POINT"
+    else
+        exec node "$SCRIPT_DIR/inmemory-fs.mjs" "$MOUNT_POINT"
+    fi
 else
     print_info "Starting filesystem in background..."
     print_info "PID will be displayed below"
     echo ""
 
-    # Start in background
-    node "$SCRIPT_DIR/inmemory-fs.mjs" "$MOUNT_POINT" &
-    FS_PID=$!
+    # Start in background with optional ASan/N-API debugging
+    if [ "$ENABLE_ASAN" = "true" ]; then
+        print_info "Running with AddressSanitizer and N-API Fatal Errors enabled"
+
+        # Find ASan runtime library
+        ASAN_LIB=$(find /usr/lib /usr/local/lib -name "libasan.so*" 2>/dev/null | head -n1)
+        if [ -n "$ASAN_LIB" ]; then
+            print_info "Preloading ASan runtime: $ASAN_LIB"
+            export LD_PRELOAD="$ASAN_LIB:$LD_PRELOAD"
+        else
+            print_warning "ASan runtime library not found - ASan may not work correctly"
+        fi
+
+        export NAPI_FATAL_ERRORS=1
+        node "$SCRIPT_DIR/inmemory-fs.mjs" "$MOUNT_POINT" &
+        FS_PID=$!
+    else
+        node "$SCRIPT_DIR/inmemory-fs.mjs" "$MOUNT_POINT" &
+        FS_PID=$!
+    fi
 
     # Give it time to start
     sleep 2

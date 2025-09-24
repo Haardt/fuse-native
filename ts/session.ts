@@ -329,19 +329,12 @@ export function createSession(
   options: FuseSessionOptions = {},
   binding?: any
 ): FuseSession {
-  // Use provided binding or fallback to mock for development/testing
-  const actualBinding = binding || {
-    createSession: () => ({ id: Math.random() }),
-    destroySession: () => {},
-    mount: (_session: any, _opts: any, callback: Function) => {
-      setTimeout(() => callback(null), 100);
-    },
-    unmount: (_session: any, _opts: any, callback: Function) => {
-      setTimeout(() => callback(null), 100);
-    },
-  };
+  // Use provided binding - no fallback mock to ensure native code is used
+  if (!binding) {
+    throw new FuseErrno('EINVAL', 'Native binding not available');
+  }
 
-  return createFuseSession(mountpoint, operations, options, actualBinding);
+  return createFuseSession(mountpoint, operations, options, binding);
 }
 
 /**

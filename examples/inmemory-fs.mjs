@@ -592,11 +592,24 @@ async function main() {
   try {
     // Create mount point if it doesn't exist
     console.log('📁 Creating mount point...');
-    if (!fs.existsSync(MOUNT_POINT)) {
-      fs.mkdirSync(MOUNT_POINT, { recursive: true });
-      console.log(`   Created: ${MOUNT_POINT}`);
-    } else {
-      console.log(`   Using existing: ${MOUNT_POINT}`);
+    try {
+      if (!fs.existsSync(MOUNT_POINT)) {
+        fs.mkdirSync(MOUNT_POINT, { recursive: true });
+        console.log(`   ✓ Created: ${MOUNT_POINT}`);
+      } else {
+        console.log(`   ✓ Using existing: ${MOUNT_POINT}`);
+      }
+
+      // Check if mountpoint is writable
+      try {
+        fs.accessSync(MOUNT_POINT, fs.constants.W_OK);
+        console.log(`   ✓ Mountpoint is writable`);
+      } catch (error) {
+        console.log(`   ⚠️ Mountpoint may not be writable: ${error.message}`);
+      }
+    } catch (error) {
+      console.error(`   ❌ Failed to create/access mountpoint: ${error.message}`);
+      throw error;
     }
     console.log('');
 
@@ -606,55 +619,76 @@ async function main() {
     console.log('   Filesystem instance created');
     console.log('');
 
+    // Test native binding
+    console.log('🔧 Testing native binding...');
+    try {
+      const version = await import('../dist/index.js').then(m => m.getVersion());
+      console.log(`   ✓ Native binding loaded: FUSE ${version.fuse}, Binding ${version.binding}, N-API ${version.napi}`);
+    } catch (error) {
+      console.error('   ❌ Native binding test failed:', error.message);
+      throw error;
+    }
+    console.log('');
+
     // Create FUSE session with operation handlers
     console.log('🔗 Creating FUSE session...');
-    session = await createSession(MOUNT_POINT, {
-      getattr: imfs.getattr.bind(imfs),
-      readdir: imfs.readdir.bind(imfs),
-      lookup: imfs.lookup.bind(imfs),
-      create: imfs.create.bind(imfs),
-      open: imfs.open.bind(imfs),
-      read: imfs.read.bind(imfs),
-      write: imfs.write.bind(imfs),
-      release: imfs.release.bind(imfs),
-      mkdir: imfs.mkdir.bind(imfs),
-      rmdir: imfs.rmdir.bind(imfs),
-      unlink: imfs.unlink.bind(imfs),
-      rename: imfs.rename.bind(imfs),
-      chmod: imfs.chmod.bind(imfs),
-      chown: imfs.chown.bind(imfs),
-      truncate: imfs.truncate.bind(imfs),
-      utimens: imfs.utimens.bind(imfs),
-      symlink: imfs.symlink.bind(imfs),
-      readlink: imfs.readlink.bind(imfs),
-      link: imfs.link.bind(imfs),
-      statfs: imfs.statfs.bind(imfs),
-      getxattr: imfs.getxattr.bind(imfs),
-      setxattr: imfs.setxattr.bind(imfs),
-      listxattr: imfs.listxattr.bind(imfs),
-      removexattr: imfs.removexattr.bind(imfs),
-      flush: imfs.flush.bind(imfs),
-      fsync: imfs.fsync.bind(imfs),
-      fsyncdir: imfs.fsyncdir.bind(imfs),
-      opendir: imfs.opendir.bind(imfs),
-      releasedir: imfs.releasedir.bind(imfs),
-      access: imfs.access.bind(imfs),
-      fallocate: imfs.fallocate.bind(imfs),
-      lseek: imfs.lseek.bind(imfs),
-      copy_file_range: imfs.copy_file_range.bind(imfs),
-      flock: imfs.flock.bind(imfs),
-      lock: imfs.lock.bind(imfs),
-      ioctl: imfs.ioctl.bind(imfs),
-      bmap: imfs.bmap.bind(imfs),
-      poll: imfs.poll.bind(imfs),
-    });
-    console.log('✅ FUSE session created successfully!');
+    console.log('   Registering operation handlers...');
+
+    try {
+      session = await createSession(MOUNT_POINT, {
+        getattr: imfs.getattr.bind(imfs),
+        readdir: imfs.readdir.bind(imfs),
+        lookup: imfs.lookup.bind(imfs),
+        create: imfs.create.bind(imfs),
+        open: imfs.open.bind(imfs),
+        read: imfs.read.bind(imfs),
+        write: imfs.write.bind(imfs),
+        release: imfs.release.bind(imfs),
+        mkdir: imfs.mkdir.bind(imfs),
+        rmdir: imfs.rmdir.bind(imfs),
+        unlink: imfs.unlink.bind(imfs),
+        rename: imfs.rename.bind(imfs),
+        chmod: imfs.chmod.bind(imfs),
+        chown: imfs.chown.bind(imfs),
+        truncate: imfs.truncate.bind(imfs),
+        utimens: imfs.utimens.bind(imfs),
+        symlink: imfs.symlink.bind(imfs),
+        readlink: imfs.readlink.bind(imfs),
+        link: imfs.link.bind(imfs),
+        statfs: imfs.statfs.bind(imfs),
+        getxattr: imfs.getxattr.bind(imfs),
+        setxattr: imfs.setxattr.bind(imfs),
+        listxattr: imfs.listxattr.bind(imfs),
+        removexattr: imfs.removexattr.bind(imfs),
+        flush: imfs.flush.bind(imfs),
+        fsync: imfs.fsync.bind(imfs),
+        fsyncdir: imfs.fsyncdir.bind(imfs),
+        opendir: imfs.opendir.bind(imfs),
+        releasedir: imfs.releasedir.bind(imfs),
+        access: imfs.access.bind(imfs),
+        fallocate: imfs.fallocate.bind(imfs),
+        lseek: imfs.lseek.bind(imfs),
+        copy_file_range: imfs.copy_file_range.bind(imfs),
+        flock: imfs.flock.bind(imfs),
+        setlk: imfs.lock.bind(imfs),
+        ioctl: imfs.ioctl.bind(imfs),
+        bmap: imfs.bmap.bind(imfs),
+        poll: imfs.poll.bind(imfs),
+      });
+      console.log('✅ FUSE session created successfully!');
+    } catch (error) {
+      console.error('❌ Failed to create FUSE session:', error);
+      console.error('Stack trace:', error.stack);
+      throw error;
+    }
     console.log('');
 
     // Mount the filesystem
     console.log('🏔️ Mounting FUSE filesystem...');
-    await session.mount();
-    console.log('✅ FUSE filesystem mounted successfully!');
+
+      await session.mount();
+      console.log('✅ FUSE filesystem mounted successfully!');
+
     console.log('');
 
     // Clean up any existing test files first

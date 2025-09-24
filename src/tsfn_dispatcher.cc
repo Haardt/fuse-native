@@ -41,12 +41,15 @@ TSFNDispatcher::~TSFNDispatcher() {
 }
 
 bool TSFNDispatcher::Initialize() {
+    fprintf(stderr, "FUSE: TSFNDispatcher::Initialize - starting\n");
     DispatcherState expected = DispatcherState::UNINITIALIZED;
     if (!state_.compare_exchange_strong(expected, DispatcherState::INITIALIZING)) {
+        fprintf(stderr, "FUSE: TSFNDispatcher::Initialize - already initialized or initializing\n");
         return false; // Already initialized or initializing
     }
-    
+
     try {
+        fprintf(stderr, "FUSE: TSFNDispatcher::Initialize - creating ThreadSafeFunction\n");
         // Create the main ThreadSafeFunction for dispatching callbacks
         tsfn_ = Napi::ThreadSafeFunction::New(
             env_,
@@ -62,22 +65,27 @@ bool TSFNDispatcher::Initialize() {
                 this->state_ = DispatcherState::SHUTDOWN;
             }
         );
-        
+        fprintf(stderr, "FUSE: TSFNDispatcher::Initialize - ThreadSafeFunction created\n");
+
         // Start worker threads
+        fprintf(stderr, "FUSE: TSFNDispatcher::Initialize - starting worker threads\n");
         workers_running_ = true;
         worker_threads_vec_.reserve(worker_threads_);
-        
+
         for (size_t i = 0; i < worker_threads_; ++i) {
             worker_threads_vec_.emplace_back(&TSFNDispatcher::WorkerThreadMain, this);
         }
-        
+        fprintf(stderr, "FUSE: TSFNDispatcher::Initialize - worker threads started\n");
+
         // Reset statistics
         stats_ = DispatcherStats();
-        
+
         state_ = DispatcherState::RUNNING;
+        fprintf(stderr, "FUSE: TSFNDispatcher::Initialize - state set to RUNNING\n");
         return true;
-        
+
     } catch (const std::exception& e) {
+        fprintf(stderr, "FUSE: TSFNDispatcher::Initialize - exception: %s\n", e.what());
         state_ = DispatcherState::UNINITIALIZED;
         return false;
     }
@@ -398,12 +406,16 @@ void TSFNDispatcher::WorkerThreadMain() {
 
 void TSFNDispatcher::ProcessCallback(std::shared_ptr<PendingCallback> callback) {
     if (!callback || !callback->context) {
+        fprintf(stderr, "FUSE: ProcessCallback - callback or context is null\n");
         return;
     }
-    
+
     auto start_time = std::chrono::steady_clock::now();
     uint64_t request_id = callback->context->request_id;
-    
+
+    fprintf(stderr, "FUSE: ProcessCallback - processing request %llu for operation %s\n",
+            request_id, callback->context->operation_name.c_str());
+
     try {
         // Get the handler for this operation
         Napi::ThreadSafeFunction handler;
@@ -421,22 +433,29 @@ void TSFNDispatcher::ProcessCallback(std::shared_ptr<PendingCallback> callback) 
         auto callback_ptr = callback.get(); // Capture raw pointer for lambda
         auto status = handler.BlockingCall([callback_ptr, this](Napi::Env env, Napi::Function js_callback) {
             try {
+                // Check if callback_ptr is still valid
+                if (!callback_ptr || !callback_ptr->context) {
+                    fprintf(stderr, "FUSE: ProcessCallback - callback_ptr or context became invalid\n");
+                    return;
+                }
+
                 if (callback_ptr->context->callback_fn) {
                     callback_ptr->context->callback_fn(env, js_callback);
                 }
-                
+
                 // Mark as completed
                 callback_ptr->completed = true;
                 callback_ptr->result = env.Undefined();
-                
+
                 // Call completion callback if provided
                 if (callback_ptr->completion_callback) {
                     callback_ptr->completion_callback(callback_ptr->result);
                 }
-                
+
             } catch (const std::exception& e) {
+                fprintf(stderr, "FUSE: ProcessCallback - exception in callback: %s\n", e.what());
                 // Handle JavaScript exceptions
-                if (callback_ptr->context->error_callback) {
+                if (callback_ptr && callback_ptr->context && callback_ptr->context->error_callback) {
                     callback_ptr->context->error_callback(-EIO);
                 }
             }
@@ -534,13 +553,17 @@ TSFNDispatcher* GetGlobalDispatcher() {
 
 bool InitializeGlobalDispatcher(Napi::Env env, size_t max_queue_size, size_t worker_threads) {
     std::lock_guard<std::mutex> lock(global_dispatcher_mutex_);
-    
+
     if (global_dispatcher_) {
+        fprintf(stderr, "FUSE: InitializeGlobalDispatcher - already initialized\n");
         return false; // Already initialized
     }
-    
+
+    fprintf(stderr, "FUSE: InitializeGlobalDispatcher - creating TSFNDispatcher\n");
     global_dispatcher_ = std::make_unique<TSFNDispatcher>(env, max_queue_size, worker_threads);
-    return global_dispatcher_->Initialize();
+    bool success = global_dispatcher_->Initialize();
+    fprintf(stderr, "FUSE: InitializeGlobalDispatcher - Initialize() returned %s\n", success ? "true" : "false");
+    return success;
 }
 
 bool ShutdownGlobalDispatcher(uint32_t timeout_ms) {
