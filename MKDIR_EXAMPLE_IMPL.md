@@ -52,7 +52,7 @@ This guide explains, step by step, how to wire a fully functional `mkdir` operat
 ## 7. Update the TypeScript surface
 
 1. Ensure the public handler signature in `ts/types.ts` matches the native invocation: `(parent, name, mode, context, options) => Promise<{ attr, timeout }>`.
-2. In `ts/operations.ts`, add a defensive wrapper (`mkdirWrapper`) that validates arguments and forwards to the user handler.
+2. In `ts/ops/mkdir.ts`, add a defensive wrapper (`mkdirWrapper`) that validates arguments and forwards to the user handler.
 3. Export the wrapper from `ts/index.ts` if the high-level API should expose helpers.
 
 ## 8. Add tests

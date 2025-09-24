@@ -9,6 +9,7 @@
 #include <array>
 #include <cctype>
 #include <cerrno>
+#include <cmath>
 #include <cstring>
 #include <utility>
 #include <sys/statvfs.h>
@@ -69,6 +70,95 @@ Napi::Object CreateRequestContextObject(Napi::Env env, const FuseRequestContext&
     ctx.Set("pid", Napi::Number::New(env, static_cast<double>(context.caller_ctx.pid)));
     ctx.Set("umask", Napi::Number::New(env, static_cast<double>(context.caller_ctx.umask)));
     return ctx;
+}
+
+bool PopulateEntryFromResult(Napi::Env env,
+                             Napi::Value value,
+                             struct fuse_entry_param* entry_out) {
+    if (!entry_out || !value.IsObject()) {
+        return false;
+    }
+
+    Napi::Object result_obj = value.As<Napi::Object>();
+    if (!result_obj.Has("attr")) {
+        return false;
+    }
+
+    Napi::Value attr_value = result_obj.Get("attr");
+    if (!attr_value.IsObject()) {
+        return false;
+    }
+
+    struct stat attr{};
+    if (!NapiHelpers::ObjectToStat(attr_value.As<Napi::Object>(), &attr)) {
+        return false;
+    }
+
+    double attr_timeout = 1.0;
+    double entry_timeout = 1.0;
+
+    auto extract_timeout = [](Napi::Env inner_env, Napi::Value timeout_value, double* target) {
+        if (!timeout_value.IsNumber() || !target) {
+            return false;
+        }
+        double timeout = timeout_value.As<Napi::Number>().DoubleValue();
+        if (!std::isfinite(timeout) || timeout < 0.0) {
+            return false;
+        }
+        *target = timeout;
+        return true;
+    };
+
+    if (result_obj.Has("timeout")) {
+        Napi::Value timeout_value = result_obj.Get("timeout");
+        if (!extract_timeout(env, timeout_value, &attr_timeout)) {
+            return false;
+        }
+        entry_timeout = attr_timeout;
+    }
+
+    if (result_obj.Has("attrTimeout")) {
+        if (!extract_timeout(env, result_obj.Get("attrTimeout"), &attr_timeout)) {
+            return false;
+        }
+    }
+
+    if (result_obj.Has("entryTimeout")) {
+        if (!extract_timeout(env, result_obj.Get("entryTimeout"), &entry_timeout)) {
+            return false;
+        }
+    }
+
+    uint64_t generation = 0;
+    if (result_obj.Has("generation")) {
+        Napi::Value gen_value = result_obj.Get("generation");
+        if (gen_value.IsBigInt()) {
+            bool lossless = false;
+            uint64_t gen = gen_value.As<Napi::BigInt>().Uint64Value(&lossless);
+            if (!lossless) {
+                return false;
+            }
+            generation = gen;
+        } else if (gen_value.IsNumber()) {
+            double gen_num = gen_value.As<Napi::Number>().DoubleValue();
+            if (!std::isfinite(gen_num) || gen_num < 0) {
+                return false;
+            }
+            generation = static_cast<uint64_t>(gen_num);
+        } else {
+            return false;
+        }
+    }
+
+    struct fuse_entry_param entry{};
+    entry.attr = attr;
+    entry.attr_timeout = attr_timeout;
+    entry.entry_timeout = entry_timeout;
+    entry.generation = generation;
+    entry.ino = attr.st_ino != 0 ? static_cast<fuse_ino_t>(attr.st_ino) : 0;
+
+    *entry_out = entry;
+    return true;
 }
 
 int ExtractErrnoFromValue(Napi::Env env, Napi::Value value) {
@@ -782,8 +872,46 @@ void FuseBridge::HandleGetattr(fuse_req_t req, fuse_ino_t ino, struct fuse_file_
         Napi::Object options = Napi::Object::New(env);
 
         auto result = handler.Call({ino_value, request_ctx, fi_value, options});
-        ResolvePromiseOrValue(env, context, result, [context](Napi::Env, Napi::Value) {
-            context->ReplyUnsupported();
+        ResolvePromiseOrValue(env, context, result, [context](Napi::Env env_inner, Napi::Value value) {
+            if (!value.IsObject()) {
+                context->ReplyError(EIO);
+                return;
+            }
+
+            Napi::Object result_obj = value.As<Napi::Object>();
+            if (!result_obj.Has("attr")) {
+                context->ReplyError(EIO);
+                return;
+            }
+
+            Napi::Value attr_value = result_obj.Get("attr");
+            if (!attr_value.IsObject()) {
+                context->ReplyError(EIO);
+                return;
+            }
+
+            struct stat attr{};
+            if (!NapiHelpers::ObjectToStat(attr_value.As<Napi::Object>(), &attr)) {
+                context->ReplyError(EIO);
+                return;
+            }
+
+            double timeout = 1.0;
+            if (result_obj.Has("timeout")) {
+                Napi::Value timeout_value = result_obj.Get("timeout");
+                if (!timeout_value.IsNumber()) {
+                    context->ReplyError(EIO);
+                    return;
+                }
+
+                timeout = timeout_value.As<Napi::Number>().DoubleValue();
+                if (!std::isfinite(timeout) || timeout < 0.0) {
+                    context->ReplyError(EIO);
+                    return;
+                }
+            }
+
+            context->ReplyAttr(attr, timeout);
         });
     });
 }
@@ -831,12 +959,24 @@ void FuseBridge::HandleReadlink(fuse_req_t req, fuse_ino_t ino) {
         Napi::Object options = Napi::Object::New(env);
 
         auto result = handler.Call({ino_value, request_ctx, options});
-        ResolvePromiseOrValue(env, context, result, [context](Napi::Env, Napi::Value value) {
+        ResolvePromiseOrValue(env, context, result, [context](Napi::Env env_inner, Napi::Value value) {
             if (value.IsString()) {
                 context->ReplyReadlink(value.As<Napi::String>().Utf8Value());
-            } else {
-                context->ReplyUnsupported();
+                return;
             }
+
+            if (value.IsObject()) {
+                Napi::Object obj = value.As<Napi::Object>();
+                if (obj.Has("target")) {
+                    Napi::Value target_value = obj.Get("target");
+                    if (target_value.IsString()) {
+                        context->ReplyReadlink(target_value.As<Napi::String>().Utf8Value());
+                        return;
+                    }
+                }
+            }
+
+            context->ReplyError(EIO);
         });
     });
 }
@@ -857,8 +997,14 @@ void FuseBridge::HandleMknod(fuse_req_t req, fuse_ino_t parent, const char* name
         Napi::Object options = Napi::Object::New(env);
 
         auto result = handler.Call({parent_value, name_value, mode_value, rdev_value, request_ctx, options});
-        ResolvePromiseOrValue(env, context, result, [context](Napi::Env, Napi::Value) {
-            context->ReplyUnsupported();
+        ResolvePromiseOrValue(env, context, result, [context](Napi::Env env_inner, Napi::Value value) {
+            struct fuse_entry_param entry{};
+            if (!PopulateEntryFromResult(env_inner, value, &entry)) {
+                context->ReplyError(EIO);
+                return;
+            }
+
+            context->ReplyEntry(entry);
         });
     });
 }
@@ -877,8 +1023,14 @@ void FuseBridge::HandleMkdir(fuse_req_t req, fuse_ino_t parent, const char* name
         Napi::Object options = Napi::Object::New(env);
 
         auto result = handler.Call({parent_value, name_value, mode_value, request_ctx, options});
-        ResolvePromiseOrValue(env, context, result, [context](Napi::Env, Napi::Value) {
-            context->ReplyUnsupported();
+        ResolvePromiseOrValue(env, context, result, [context](Napi::Env env_inner, Napi::Value value) {
+            struct fuse_entry_param entry{};
+            if (!PopulateEntryFromResult(env_inner, value, &entry)) {
+                context->ReplyError(EIO);
+                return;
+            }
+
+            context->ReplyEntry(entry);
         });
     });
 }

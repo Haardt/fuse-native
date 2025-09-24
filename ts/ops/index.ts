@@ -1,2 +1,9 @@
+export { validateGetattr, getattrWrapper } from './getattr.js';
+export type { GetattrResult } from './getattr.js';
+export { validateReadlink, readlinkWrapper } from './readlink.js';
+export { validateMknod, mknodWrapper } from './mknod.js';
+export type { MknodResult } from './mknod.js';
 export { validateMkdir, mkdirWrapper } from './mkdir.js';
 export type { MkdirResult } from './mkdir.js';
+export { validateUnlink, unlinkWrapper } from './unlink.js';
+export { validateRmdir, rmdirWrapper } from './rmdir.js';

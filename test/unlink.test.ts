@@ -1,4 +1,4 @@
-import { unlinkWrapper, validateUnlink } from '../ts/operations';
+import { unlinkWrapper, validateUnlink } from '../ts/ops/unlink.js';
 import { FuseErrno } from '../ts/errors';
 
 describe('Unlink Operation', () => {
@@ -13,7 +13,8 @@ describe('Unlink Operation', () => {
   });
 
   it('throws if no unlink handler is provided', async () => {
-    await expect(unlinkWrapper({}, 42n, 'test')).rejects.toThrow('ENOSYS');
+    await expect(unlinkWrapper({}, 42n, 'test')).rejects.toThrow(FuseErrno);
+    await expect(unlinkWrapper({}, 42n, 'test')).rejects.toMatchObject({ code: 'ENOSYS' });
   });
 
   it('throws if handler rejects with error', async () => {
@@ -28,11 +29,29 @@ describe('Unlink Operation', () => {
   });
 
   it('throws validation error for empty name', () => {
-    expect(() => validateUnlink(42n, '')).toThrow('EINVAL');
+    const fail = () => validateUnlink(42n, '');
+    expect(fail).toThrow(FuseErrno);
+    try {
+      fail();
+    } catch (error) {
+      expect(error).toBeInstanceOf(FuseErrno);
+      expect((error as FuseErrno).code).toBe('EINVAL');
+      return;
+    }
+    throw new Error('Expected validateUnlink to throw FuseErrno');
   });
 
   it('throws validation error for too long name', () => {
     const longName = 'a'.repeat(300);
-    expect(() => validateUnlink(42n, longName)).toThrow('EINVAL');
+    const fail = () => validateUnlink(42n, longName);
+    expect(fail).toThrow(FuseErrno);
+    try {
+      fail();
+    } catch (error) {
+      expect(error).toBeInstanceOf(FuseErrno);
+      expect((error as FuseErrno).code).toBe('EINVAL');
+      return;
+    }
+    throw new Error('Expected validateUnlink to throw FuseErrno');
   });
 });
