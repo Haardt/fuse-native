@@ -430,56 +430,76 @@ void TSFNDispatcher::ProcessCallback(std::shared_ptr<PendingCallback> callback) 
         }
         
         // Execute the callback in the JavaScript thread
-        auto callback_ptr = callback.get(); // Capture raw pointer for lambda
-        auto status = handler.BlockingCall([callback_ptr, this](Napi::Env env, Napi::Function js_callback) {
+        // Allocate callback on heap to extend lifetime until JS callback completes
+        struct CallbackData {
+            std::shared_ptr<PendingCallback> callback;
+            std::chrono::steady_clock::time_point start_time;
+            TSFNDispatcher* dispatcher;
+        };
+        
+        auto* cb_data = new CallbackData{callback, start_time, this};
+        
+        auto status = handler.NonBlockingCall(cb_data, [](Napi::Env env, Napi::Function js_callback, CallbackData* data) {
+            // Scopes are important for proper resource management
+            Napi::HandleScope handle_scope(env);
+            
+            uint64_t request_id = data->callback ? (data->callback->context ? data->callback->context->request_id : 0) : 0;
+            bool success = false;
+            
             try {
-                // Check if callback_ptr is still valid
-                if (!callback_ptr || !callback_ptr->context) {
-                    fprintf(stderr, "FUSE: ProcessCallback - callback_ptr or context became invalid\n");
+                // Check if callback is still valid
+                if (!data->callback || !data->callback->context) {
+                    fprintf(stderr, "FUSE: ProcessCallback - callback or context became invalid\n");
+                    delete data;
                     return;
                 }
 
-                if (callback_ptr->context->callback_fn) {
-                    callback_ptr->context->callback_fn(env, js_callback);
+                if (data->callback->context->callback_fn) {
+                    data->callback->context->callback_fn(env, js_callback);
                 }
 
                 // Mark as completed
-                callback_ptr->completed = true;
-                callback_ptr->result = env.Undefined();
+                data->callback->completed = true;
+                data->callback->result = env.Undefined();
+                success = true;
 
                 // Call completion callback if provided
-                if (callback_ptr->completion_callback) {
-                    callback_ptr->completion_callback(callback_ptr->result);
+                if (data->callback->completion_callback) {
+                    data->callback->completion_callback(data->callback->result);
                 }
 
             } catch (const std::exception& e) {
                 fprintf(stderr, "FUSE: ProcessCallback - exception in callback: %s\n", e.what());
                 // Handle JavaScript exceptions
-                if (callback_ptr && callback_ptr->context && callback_ptr->context->error_callback) {
-                    callback_ptr->context->error_callback(-EIO);
+                if (data->callback && data->callback->context && data->callback->context->error_callback) {
+                    data->callback->context->error_callback(-EIO);
                 }
             }
+            
+            // Calculate latency and update statistics (now in JS thread after completion)
+            auto end_time = std::chrono::steady_clock::now();
+            auto latency = std::chrono::duration_cast<std::chrono::microseconds>(end_time - data->start_time);
+            double latency_ms = latency.count() / 1000.0;
+            
+            data->dispatcher->UpdateStats(latency_ms, success);
+            
+            // Remove from pending requests (now in JS thread after completion)
+            if (request_id > 0) {
+                std::lock_guard<std::mutex> lock(data->dispatcher->pending_requests_mutex_);
+                data->dispatcher->pending_requests_.erase(request_id);
+            }
+            
+            // *** Lifetime ends AFTER execution in JS thread ***
+            delete data;
         });
         
         if (status != napi_ok) {
+            delete cb_data;
             HandleCallbackError(request_id, -EIO);
         }
         
     } catch (const std::exception& e) {
         HandleCallbackError(request_id, -EIO);
-    }
-    
-    // Calculate latency and update statistics
-    auto end_time = std::chrono::steady_clock::now();
-    auto latency = std::chrono::duration_cast<std::chrono::microseconds>(end_time - start_time);
-    double latency_ms = latency.count() / 1000.0;
-    
-    UpdateStats(latency_ms, callback->completed);
-    
-    // Remove from pending requests
-    {
-        std::lock_guard<std::mutex> lock(pending_requests_mutex_);
-        pending_requests_.erase(request_id);
     }
 }
 
