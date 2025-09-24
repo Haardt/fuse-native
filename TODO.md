@@ -42,7 +42,7 @@ Verifizieren, dass **alle FUSE3-Funktionen** korrekt durch die Ebenen **C/N-API 
 - setattr - DONE
 - readdir - DONE 
 - opendir - DONE 
-- releasedir ❌
+- releasedir DONE
 - create ❌
 - open ❌ 
 - read ❌ 
