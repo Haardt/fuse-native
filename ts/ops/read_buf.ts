@@ -2,17 +2,12 @@ import { FuseErrno } from '../errors.js';
 import { ValidationUtils } from '../helpers.js';
 import { FuseBufFlags } from '../types.js';
 import type {
-  BaseOperationOptions,
-  FileInfo,
-  FuseBuf,
   FuseBufvec,
   Ino,
   ReadBufHandler,
   ReadOptions,
   RequestContext,
 } from '../types.js';
-
-const DEFAULT_OPTIONS: BaseOperationOptions = {};
 
 export type ReadBufResult = FuseBufvec;
 

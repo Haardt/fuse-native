@@ -555,6 +555,20 @@ export type RemovexattrHandler = (
   options?: BaseOperationOptions
 ) => Promise<void>;
 
+/** Copy file range handler */
+export type CopyFileRangeHandler = (
+  inoIn: Ino,
+  offIn: bigint,
+  fiIn: FileInfo,
+  inoOut: Ino,
+  offOut: bigint,
+  fiOut: FileInfo,
+  len: bigint,
+  flags: number,
+  context: RequestContext,
+  options?: BaseOperationOptions
+) => Promise<bigint>;
+
 // =============================================================================
 // Complete Operation Handlers Interface
 // =============================================================================
@@ -614,6 +628,9 @@ export interface FuseOperationHandlers {
   listxattr?: ListxattrHandler;
   /** Remove extended attribute */
   removexattr?: RemovexattrHandler;
+
+  /** Copy file range */
+  copy_file_range?: CopyFileRangeHandler;
 
   // Additional handlers can be added as needed
   /** Flush file data */

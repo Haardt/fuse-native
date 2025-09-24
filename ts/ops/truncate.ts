@@ -1,6 +1,5 @@
 import { FuseErrno } from '../errors.js';
 import { ValidationUtils } from '../helpers.js';
-import { setattrWrapper } from './setattr.js';
 import type {
   BaseOperationOptions,
   FileInfo,

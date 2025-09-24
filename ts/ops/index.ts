@@ -54,3 +54,4 @@ export { validateLink, linkWrapper } from './link.js';
 export type { LinkResult } from './link.js';
 export { validateOpendir, opendirWrapper } from './opendir.js';
 export { validateReleasedir, releasedirWrapper } from './releasedir.js';
+export { validateCopyFileRange, copyFileRangeWrapper } from './copy_file_range.js';

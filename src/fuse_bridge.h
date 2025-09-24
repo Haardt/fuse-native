@@ -55,6 +55,7 @@ enum class FuseOpType {
     STATFS,
     ACCESS,
     CREATE,
+    COPY_FILE_RANGE,
     UNKNOWN
 };
 
@@ -112,6 +113,7 @@ struct FuseRequestContext : public std::enable_shared_from_this<FuseRequestConte
     struct fuse_file_info fi_out;
     bool has_fi_out;
     uint64_t offset;
+    uint64_t new_offset;
     size_t size;
     int flags;
     int datasync;
@@ -193,6 +195,10 @@ private:
     void HandleAccess(fuse_req_t req, fuse_ino_t ino, int mask);
     void HandleCreate(fuse_req_t req, fuse_ino_t parent, const char* name, mode_t mode,
                       struct fuse_file_info* fi);
+    void HandleCopyFileRange(fuse_req_t req, fuse_ino_t ino_in, off_t off_in,
+                             struct fuse_file_info* fi_in, fuse_ino_t ino_out,
+                             off_t off_out, struct fuse_file_info* fi_out,
+                             size_t len, int flags);
 
     // Static callbacks wired into fuse_lowlevel_ops
     static void LookupCallback(fuse_req_t req, fuse_ino_t parent, const char* name);
@@ -225,6 +231,10 @@ private:
     static void AccessCallback(fuse_req_t req, fuse_ino_t ino, int mask);
     static void CreateCallback(fuse_req_t req, fuse_ino_t parent, const char* name, mode_t mode,
                                struct fuse_file_info* fi);
+    static void CopyFileRangeCallback(fuse_req_t req, fuse_ino_t ino_in, off_t off_in,
+                                      struct fuse_file_info* fi_in, fuse_ino_t ino_out,
+                                      off_t off_out, struct fuse_file_info* fi_out,
+                                      size_t len, int flags);
 };
 
 Napi::Value SetOperationHandler(const Napi::CallbackInfo& info);

@@ -54,31 +54,32 @@ inline struct timespec GetStatCtime(const struct stat& st) {
 }
 #endif
 
-constexpr std::array<OperationMapping, 25> kOperationMappings = {{{"lookup", FuseOpType::LOOKUP},
-                                                                  {"getattr", FuseOpType::GETATTR},
-                                                                  {"setattr", FuseOpType::SETATTR},
-                                                                  {"readlink", FuseOpType::READLINK},
-                                                                  {"mknod", FuseOpType::MKNOD},
-                                                                  {"mkdir", FuseOpType::MKDIR},
-                                                                  {"chmod", FuseOpType::CHMOD},
-                                                                  {"chown", FuseOpType::CHOWN},
-                                                                  {"symlink", FuseOpType::SYMLINK},
-                                                                  {"unlink", FuseOpType::UNLINK},
-                                                                  {"rmdir", FuseOpType::RMDIR},
-                                                                  {"rename", FuseOpType::RENAME},
-                                                                  {"link", FuseOpType::LINK},
-                                                                  {"open", FuseOpType::OPEN},
-                                                                  {"read", FuseOpType::READ},
-                                                                  {"write", FuseOpType::WRITE},
-                                                                  {"flush", FuseOpType::FLUSH},
-                                                                  {"release", FuseOpType::RELEASE},
-                                                                  {"fsync", FuseOpType::FSYNC},
-                                                                  {"opendir", FuseOpType::OPENDIR},
-                                                                  {"readdir", FuseOpType::READDIR},
-                                                                  {"releasedir", FuseOpType::RELEASEDIR},
-                                                                  {"fsyncdir", FuseOpType::FSYNCDIR},
-                                                                  {"statfs", FuseOpType::STATFS},
-                                                                  {"access", FuseOpType::ACCESS}}};
+constexpr std::array<OperationMapping, 26> kOperationMappings = {{{"lookup", FuseOpType::LOOKUP},
+                                                                   {"getattr", FuseOpType::GETATTR},
+                                                                   {"setattr", FuseOpType::SETATTR},
+                                                                   {"readlink", FuseOpType::READLINK},
+                                                                   {"mknod", FuseOpType::MKNOD},
+                                                                   {"mkdir", FuseOpType::MKDIR},
+                                                                   {"chmod", FuseOpType::CHMOD},
+                                                                   {"chown", FuseOpType::CHOWN},
+                                                                   {"symlink", FuseOpType::SYMLINK},
+                                                                   {"unlink", FuseOpType::UNLINK},
+                                                                   {"rmdir", FuseOpType::RMDIR},
+                                                                   {"rename", FuseOpType::RENAME},
+                                                                   {"link", FuseOpType::LINK},
+                                                                   {"open", FuseOpType::OPEN},
+                                                                   {"read", FuseOpType::READ},
+                                                                   {"write", FuseOpType::WRITE},
+                                                                   {"flush", FuseOpType::FLUSH},
+                                                                   {"release", FuseOpType::RELEASE},
+                                                                   {"fsync", FuseOpType::FSYNC},
+                                                                   {"opendir", FuseOpType::OPENDIR},
+                                                                   {"readdir", FuseOpType::READDIR},
+                                                                   {"releasedir", FuseOpType::RELEASEDIR},
+                                                                   {"fsyncdir", FuseOpType::FSYNCDIR},
+                                                                   {"statfs", FuseOpType::STATFS},
+                                                                   {"access", FuseOpType::ACCESS},
+                                                                   {"copy_file_range", FuseOpType::COPY_FILE_RANGE}}};
 
 inline uint64_t ToUint64(fuse_ino_t value) {
     return static_cast<uint64_t>(value);
@@ -315,6 +316,7 @@ FuseRequestContext::FuseRequestContext(FuseOpType op, fuse_req_t req, FuseBridge
       has_fi(false),
       has_fi_out(false),
       offset(0),
+      new_offset(0),
       size(0),
       flags(0),
       datasync(0),
@@ -582,6 +584,7 @@ void FuseBridge::InitializeFuseOperations() {
     fuse_ops_.statfs = StatfsCallback;
     fuse_ops_.access = AccessCallback;
     fuse_ops_.create = CreateCallback;
+    fuse_ops_.copy_file_range = CopyFileRangeCallback;
 }
 
 void FuseBridge::ProcessRequest(std::shared_ptr<FuseRequestContext> context,
@@ -1651,7 +1654,7 @@ void FuseBridge::HandleStatfs(fuse_req_t req, fuse_ino_t ino) {
 }
 
 void FuseBridge::HandleCreate(fuse_req_t req, fuse_ino_t parent, const char* name, mode_t mode,
-                      struct fuse_file_info* fi) {
+                       struct fuse_file_info* fi) {
     auto context = CreateContext(FuseOpType::CREATE, req);
     context->parent = parent;
     context->name = name ? name : "";
@@ -1697,6 +1700,63 @@ void FuseBridge::HandleCreate(fuse_req_t req, fuse_ino_t parent, const char* nam
                         }
                     }
                 }
+            }
+            context->ReplyUnsupported();
+        });
+    });
+}
+
+void FuseBridge::HandleCopyFileRange(fuse_req_t req, fuse_ino_t ino_in, off_t off_in,
+                                     struct fuse_file_info* fi_in, fuse_ino_t ino_out,
+                                     off_t off_out, struct fuse_file_info* fi_out,
+                                     size_t len, int flags) {
+    auto context = CreateContext(FuseOpType::COPY_FILE_RANGE, req);
+    context->ino = ino_in;
+    context->offset = static_cast<uint64_t>(off_in);
+    context->new_parent = ino_out;
+    context->new_offset = static_cast<uint64_t>(off_out);
+    context->size = len;
+    context->flags = flags;
+    if (fi_in) {
+        context->fi = *fi_in;
+        context->has_fi = true;
+    }
+    if (fi_out) {
+        context->fi_out = *fi_out;
+        context->has_fi_out = true;
+    }
+
+    ProcessRequest(context, [context](Napi::Env env, Napi::Function handler) {
+        Napi::Value ino_in_value = NapiHelpers::CreateBigUint64(env, ToUint64(context->ino));
+        Napi::Value off_in_value = NapiHelpers::CreateBigUint64(env, context->offset);
+        Napi::Value fi_in_value = context->has_fi
+                                  ? NapiHelpers::FileInfoToObject(env, context->fi)
+                                  : env.Null();
+        Napi::Value ino_out_value = NapiHelpers::CreateBigUint64(env, ToUint64(context->new_parent));
+        Napi::Value off_out_value = NapiHelpers::CreateBigUint64(env, context->new_offset);
+        Napi::Value fi_out_value = context->has_fi_out
+                                   ? NapiHelpers::FileInfoToObject(env, context->fi_out)
+                                   : env.Null();
+        Napi::Value len_value = NapiHelpers::CreateBigUint64(env, context->size);
+        Napi::Number flags_value = Napi::Number::New(env, context->flags);
+        Napi::Object request_ctx = CreateRequestContextObject(env, *context);
+        Napi::Object options = Napi::Object::New(env);
+
+        auto result = handler.Call({ino_in_value, off_in_value, fi_in_value, ino_out_value,
+                                   off_out_value, fi_out_value, len_value, flags_value,
+                                   request_ctx, options});
+        ResolvePromiseOrValue(env, context, result, [context](Napi::Env env_inner, Napi::Value value) {
+            if (value.IsBigInt()) {
+                bool lossless = false;
+                uint64_t copied = value.As<Napi::BigInt>().Uint64Value(&lossless);
+                if (lossless) {
+                    context->ReplyWrite(static_cast<size_t>(copied));
+                    return;
+                }
+            } else if (value.IsNumber()) {
+                size_t copied = static_cast<size_t>(value.As<Napi::Number>().Uint32Value());
+                context->ReplyWrite(copied);
+                return;
             }
             context->ReplyUnsupported();
         });
@@ -1918,13 +1978,25 @@ void FuseBridge::AccessCallback(fuse_req_t req, fuse_ino_t ino, int mask) {
 }
 
 void FuseBridge::CreateCallback(fuse_req_t req, fuse_ino_t parent, const char* name, mode_t mode,
-                               struct fuse_file_info* fi) {
+                                struct fuse_file_info* fi) {
     auto* bridge = GetBridgeFromRequest(req);
     if (!bridge) {
         fuse_reply_err(req, ENODEV);
         return;
     }
     bridge->HandleCreate(req, parent, name, mode, fi);
+}
+
+void FuseBridge::CopyFileRangeCallback(fuse_req_t req, fuse_ino_t ino_in, off_t off_in,
+                                       struct fuse_file_info* fi_in, fuse_ino_t ino_out,
+                                       off_t off_out, struct fuse_file_info* fi_out,
+                                       size_t len, int flags) {
+    auto* bridge = GetBridgeFromRequest(req);
+    if (!bridge) {
+        fuse_reply_err(req, ENODEV);
+        return;
+    }
+    bridge->HandleCopyFileRange(req, ino_in, off_in, fi_in, ino_out, off_out, fi_out, len, flags);
 }
 
 Napi::Value SetOperationHandler(const Napi::CallbackInfo& info) {

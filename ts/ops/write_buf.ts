@@ -2,17 +2,12 @@ import { FuseErrno } from '../errors.js';
 import { ValidationUtils } from '../helpers.js';
 import { FuseBufFlags } from '../types.js';
 import type {
-  BaseOperationOptions,
-  FileInfo,
-  FuseBuf,
   FuseBufvec,
   Ino,
   RequestContext,
   WriteBufHandler,
   WriteOptions,
 } from '../types.js';
-
-const DEFAULT_OPTIONS: BaseOperationOptions = {};
 
 export type WriteBufResult = number;
 
@@ -114,13 +109,13 @@ export async function writeBufWrapper(
     throw new FuseErrno('ENOTSUP', 'Multi-buffer write_buf not yet supported');
   }
 
-  const buf = bufvec.buf[0];
+  const buf = bufvec.buf[0]!;
   if ((buf.flags & FuseBufFlags.IS_FD) !== 0) {
     throw new FuseErrno('ENOTSUP', 'File descriptor buffers not yet supported');
   }
 
-  if (!buf.mem) {
-    throw new FuseErrno('EINVAL', 'Buffer memory is null');
+  if (!(buf.mem instanceof ArrayBuffer)) {
+    throw new FuseErrno('EINVAL', 'Buffer memory is not an ArrayBuffer');
   }
 
   // Create a view of the buffer starting from the current offset
