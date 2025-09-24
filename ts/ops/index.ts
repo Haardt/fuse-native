@@ -19,3 +19,5 @@ export { validateUnlink, unlinkWrapper } from './unlink.js';
 export { validateRmdir, rmdirWrapper } from './rmdir.js';
 export { validateLink, linkWrapper } from './link.js';
 export type { LinkResult } from './link.js';
+export { validateOpendir, opendirWrapper } from './opendir.js';
+export { validateReleasedir, releasedirWrapper } from './releasedir.js';

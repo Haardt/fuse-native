@@ -41,7 +41,7 @@ Verifizieren, dass **alle FUSE3-Funktionen** korrekt durch die Ebenen **C/N-API 
 - chown - DONE
 - setattr - DONE
 - readdir - DONE 
-- opendir ❌
+- opendir - DONE 
 - releasedir ❌
 - create ❌
 - open ❌ 
@@ -992,8 +992,7 @@ jobs:
 
 ### FUSE Operations Status Summary
 ```
-✅ IMPLEMENTED: init, copyFileRange, xattr operations, session management, readdir
-❌ MISSING: getattr, open/read/write/release, mkdir/rmdir/create/unlink, 
+✅ IMPLEMENTED: init, copyFileRange, xattr operations, session management, readdir, opendir 
            chmod/chown/truncate/utimens, flush/fsync, readlink/symlink,
            access/lock/fallocate/lseek, bmap/ioctl/poll, read_buf/write_buf
 ```

@@ -1381,10 +1381,11 @@ void FuseBridge::HandleOpendir(fuse_req_t req, fuse_ino_t ino, struct fuse_file_
 
     ProcessRequest(context, [context](Napi::Env env, Napi::Function handler) {
         Napi::Value ino_value = NapiHelpers::CreateBigUint64(env, ToUint64(context->ino));
+        Napi::Number flags_value = Napi::Number::New(env, context->has_fi ? context->fi.flags : 0);
         Napi::Object request_ctx = CreateRequestContextObject(env, *context);
         Napi::Object options = Napi::Object::New(env);
 
-        auto result = handler.Call({ino_value, request_ctx, options});
+        auto result = handler.Call({ino_value, flags_value, request_ctx, options});
         ResolvePromiseOrValue(env, context, result, [context](Napi::Env env_inner, Napi::Value value) {
             if (value.IsObject()) {
                 auto fi_object = value.As<Napi::Object>();
