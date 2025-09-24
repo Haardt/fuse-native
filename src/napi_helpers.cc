@@ -449,4 +449,114 @@ const char* NapiHelpers::GetErrnoName(int errno_code) {
     return ErrnoToString(errno_code).c_str();
 }
 
+/**
+ * File info conversions
+ */
+Napi::Object NapiHelpers::FileInfoToObject(Napi::Env env, const struct fuse_file_info& fi) {
+    Napi::Object obj = Napi::Object::New(env);
+    
+    obj.Set("flags", Napi::Number::New(env, fi.flags));
+    obj.Set("writepage", Napi::Boolean::New(env, fi.writepage));
+    obj.Set("direct_io", Napi::Boolean::New(env, fi.direct_io));
+    obj.Set("keep_cache", Napi::Boolean::New(env, fi.keep_cache));
+    obj.Set("flush", Napi::Boolean::New(env, fi.flush));
+    obj.Set("nonseekable", Napi::Boolean::New(env, fi.nonseekable));
+    obj.Set("flock_release", Napi::Boolean::New(env, fi.flock_release));
+    obj.Set("cache_readdir", Napi::Boolean::New(env, fi.cache_readdir));
+    obj.Set("fh", CreateBigUint64(env, fi.fh));
+    obj.Set("lock_owner", CreateBigUint64(env, fi.lock_owner));
+    obj.Set("poll_events", Napi::Number::New(env, fi.poll_events));
+    
+    return obj;
+}
+
+bool NapiHelpers::ObjectToFileInfo(Napi::Object obj, struct fuse_file_info* fi) {
+    if (!obj.IsObject() || !fi) {
+        return false;
+    }
+    
+    memset(fi, 0, sizeof(*fi));
+    
+    if (obj.Has("flags")) {
+        Napi::Value flags_val = obj.Get("flags");
+        if (flags_val.IsNumber()) {
+            fi->flags = flags_val.As<Napi::Number>().Int32Value();
+        }
+    }
+    
+    if (obj.Has("writepage")) {
+        Napi::Value val = obj.Get("writepage");
+        if (val.IsBoolean()) {
+            fi->writepage = val.As<Napi::Boolean>().Value() ? 1 : 0;
+        }
+    }
+    
+    if (obj.Has("direct_io")) {
+        Napi::Value val = obj.Get("direct_io");
+        if (val.IsBoolean()) {
+            fi->direct_io = val.As<Napi::Boolean>().Value() ? 1 : 0;
+        }
+    }
+    
+    if (obj.Has("keep_cache")) {
+        Napi::Value val = obj.Get("keep_cache");
+        if (val.IsBoolean()) {
+            fi->keep_cache = val.As<Napi::Boolean>().Value() ? 1 : 0;
+        }
+    }
+    
+    if (obj.Has("flush")) {
+        Napi::Value val = obj.Get("flush");
+        if (val.IsBoolean()) {
+            fi->flush = val.As<Napi::Boolean>().Value() ? 1 : 0;
+        }
+    }
+    
+    if (obj.Has("nonseekable")) {
+        Napi::Value val = obj.Get("nonseekable");
+        if (val.IsBoolean()) {
+            fi->nonseekable = val.As<Napi::Boolean>().Value() ? 1 : 0;
+        }
+    }
+    
+    if (obj.Has("flock_release")) {
+        Napi::Value val = obj.Get("flock_release");
+        if (val.IsBoolean()) {
+            fi->flock_release = val.As<Napi::Boolean>().Value() ? 1 : 0;
+        }
+    }
+    
+    if (obj.Has("cache_readdir")) {
+        Napi::Value val = obj.Get("cache_readdir");
+        if (val.IsBoolean()) {
+            fi->cache_readdir = val.As<Napi::Boolean>().Value() ? 1 : 0;
+        }
+    }
+    
+    if (obj.Has("fh")) {
+        Napi::Value val = obj.Get("fh");
+        if (val.IsBigInt()) {
+            bool lossless = false;
+            fi->fh = val.As<Napi::BigInt>().Uint64Value(&lossless);
+        }
+    }
+    
+    if (obj.Has("lock_owner")) {
+        Napi::Value val = obj.Get("lock_owner");
+        if (val.IsBigInt()) {
+            bool lossless = false;
+            fi->lock_owner = val.As<Napi::BigInt>().Uint64Value(&lossless);
+        }
+    }
+    
+    if (obj.Has("poll_events")) {
+        Napi::Value val = obj.Get("poll_events");
+        if (val.IsNumber()) {
+            fi->poll_events = val.As<Napi::Number>().Uint32Value();
+        }
+    }
+    
+    return true;
+}
+
 } // namespace fuse_native

@@ -931,13 +931,22 @@ void FuseBridge::HandleAccess(fuse_req_t req, fuse_ino_t ino, int mask) {
             fprintf(stderr, "FUSE: HandleAccess - request_ctx created successfully\n");
             fprintf(stderr, "FUSE: HandleAccess - creating options\n");
             Napi::Object options = Napi::Object::New(env);
-            fprintf(stderr, "FUSE: HandleAccess - options created successfully\n");
+            options.Set("mask", mask_value);
+            fprintf(stderr, "FUSE: HandleAccess - options created successfully with mask\n");
             fprintf(stderr, "FUSE: HandleAccess - handler type: %s\n", handler.IsFunction() ? "function" : "not function");
             fprintf(stderr, "FUSE: HandleAccess - calling handler\n");
 
             try {
                 fprintf(stderr, "FUSE: HandleAccess - preparing arguments\n");
-                std::vector<napi_value> args = {ino_value, mask_value, request_ctx, options};
+                    fprintf(stderr, "FUSE: HandleAccess - DEBUG: Parameter order FIXED:\n");
+                    fprintf(stderr, "FUSE: HandleAccess - DEBUG: args[0] = ino_value (BigInt %lu)\n", context->ino);
+                    fprintf(stderr, "FUSE: HandleAccess - DEBUG: args[1] = request_ctx (Object)\n");
+                    fprintf(stderr, "FUSE: HandleAccess - DEBUG: args[2] = options (Object with mask %u)\n", context->access_mask);
+                    fprintf(stderr, "FUSE: HandleAccess - DEBUG: JavaScript expects: access(ino, context, options)\n");
+                    fprintf(stderr, "FUSE: HandleAccess - DEBUG: Now we're correctly passing: access(ino, context, options)\n");
+                    fprintf(stderr, "FUSE: HandleAccess - DEBUG: PARAMETER ORDER FIXED!\n");
+                
+                    std::vector<napi_value> args = {ino_value, request_ctx, options};
                 fprintf(stderr, "FUSE: HandleAccess - calling handler.Call\n");
                 auto result = handler.Call(args);
                 fprintf(stderr, "FUSE: HandleAccess - handler called successfully\n");
@@ -1564,11 +1573,11 @@ void FuseBridge::HandleOpen(fuse_req_t req, fuse_ino_t ino, struct fuse_file_inf
 
     ProcessRequest(context, [context](Napi::Env env, Napi::Function handler) {
         Napi::Value ino_value = NapiHelpers::CreateBigUint64(env, ToUint64(context->ino));
-        Napi::Number flags_value = Napi::Number::New(env, context->has_fi ? context->fi.flags : 0);
         Napi::Object request_ctx = CreateRequestContextObject(env, *context);
         Napi::Object options = Napi::Object::New(env);
+        options.Set("flags", Napi::Number::New(env, context->has_fi ? context->fi.flags : 0));
 
-        auto result = handler.Call({ino_value, flags_value, request_ctx, options});
+        auto result = handler.Call({ino_value, request_ctx, options});
         ResolvePromiseOrValue(env, context, result, [context](Napi::Env env_inner, Napi::Value value) {
             if (value.IsObject()) {
                 auto fi_object = value.As<Napi::Object>();

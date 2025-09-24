@@ -297,6 +297,14 @@ export interface ReadOptions extends BaseOperationOptions {
   fi?: FileInfo;
 }
 
+/** Options for open operations */
+export interface OpenOptions extends BaseOperationOptions {
+  /** Open flags */
+  flags?: Flags;
+  /** File info */
+  fi?: FileInfo;
+}
+
 /** Options for write operations */
 export interface WriteOptions extends BaseOperationOptions {
   /** Offset to start writing from */
@@ -305,6 +313,12 @@ export interface WriteOptions extends BaseOperationOptions {
   fi?: FileInfo;
   /** Write flags */
   flags?: number;
+}
+
+/** Options for access operations */
+export interface AccessOptions extends BaseOperationOptions {
+  /** Access mask to test */
+  mask: number;
 }
 
 /** Options for attribute operations */
@@ -402,12 +416,17 @@ export type ReadBufHandler = (
 /** Open operation handler */
 export type OpenHandler = (
   ino: Ino,
-  flags: Flags,
   context: RequestContext,
-  options?: BaseOperationOptions
+  options?: OpenOptions
 ) => Promise<FileInfo>;
 
 /** Release operation handler */
+export type AccessHandler = (
+  ino: Ino,
+  context: RequestContext,
+  options: AccessOptions
+) => Promise<void>;
+
 export type ReleaseHandler = (
   ino: Ino,
   fi: FileInfo,
@@ -658,12 +677,7 @@ export interface FuseOperationHandlers {
   ) => Promise<void>;
 
   /** Check file access permissions */
-  access?: (
-    ino: Ino,
-    mask: number,
-    context: RequestContext,
-    options?: BaseOperationOptions
-  ) => Promise<void>;
+  access?: AccessHandler;
 
   /** Get file lock information */
   getlk?: (

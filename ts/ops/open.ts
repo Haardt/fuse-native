@@ -47,7 +47,7 @@ export async function openWrapper(
     throw new FuseErrno('ENOSYS');
   }
 
-  const result = await handler(ino, flags, context, options);
+  const result = await handler(ino, context, { ...options, flags });
   if (!result || typeof result !== 'object') {
     throw new FuseErrno('EIO', 'open handler returned invalid result');
   }

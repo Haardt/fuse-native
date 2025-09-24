@@ -3,6 +3,7 @@ import { ValidationUtils } from '../helpers.js';
 import type {
   BaseOperationOptions,
   FileInfo,
+  Flags,
   Ino,
   OpenHandler,
   RequestContext,
@@ -47,7 +48,7 @@ export async function opendirWrapper(
     throw new FuseErrno('ENOSYS');
   }
 
-  const result = await handler(ino, flags as any, context, options);
+  const result = await handler(ino, context, { ...options, flags: flags as Flags });
 
   return ensureFileInfoResult(result);
 }

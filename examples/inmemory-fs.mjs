@@ -27,9 +27,10 @@ class Inode {
     this.uid = process.getuid?.() || 1000;
     this.gid = process.getgid?.() || 1000;
     this.size = 0n;
-    this.atime = BigInt(Date.now()) * 1000000n; // nanoseconds
-    this.mtime = BigInt(Date.now()) * 1000000n;
-    this.ctime = BigInt(Date.now()) * 1000000n;
+    const now = BigInt(Math.floor(Date.now() / 1000)) * 1000000000n; // Convert to proper nanoseconds
+    this.atime = now;
+    this.mtime = now;
+    this.ctime = now;
     this.nlink = 1;
     this.data = null; // Buffer for files, Map for directories, string for symlinks
     this.xattrs = new Map(); // Extended attributes
@@ -38,6 +39,16 @@ class Inode {
   static nextId = 1n;
 
   toAttr() {
+    // Ensure mode has proper file type bits
+    let mode = this.mode;
+    if (this.type === 'directory') {
+      mode = (this.mode & 0o7777) | 0o40000; // S_IFDIR
+    } else if (this.type === 'file') {
+      mode = (this.mode & 0o7777) | 0o100000; // S_IFREG
+    } else if (this.type === 'symlink') {
+      mode = (this.mode & 0o7777) | 0o120000; // S_IFLNK
+    }
+
     return {
       ino: this.id,
       size: this.size,
@@ -45,7 +56,7 @@ class Inode {
       atime: this.atime,
       mtime: this.mtime,
       ctime: this.ctime,
-      mode: this.mode,
+      mode: mode,
       nlink: this.nlink,
       uid: this.uid,
       gid: this.gid,
@@ -59,8 +70,16 @@ class InMemoryFilesystem {
   constructor() {
     this.inodes = new Map();
     this.root = this.createInode('directory', 0o755);
-    this.root.data = new Map([['.', this.root], ['..', this.root]]);
+    // Root inode should always be 1
+    this.root.id = 1n;
+    this.root.data = new Map();
     this.inodes.set(this.root.id, this.root);
+
+    // Add . and .. entries - both point to root for root directory
+    this.root.data.set('.', this.root);
+    this.root.data.set('..', this.root);
+
+    console.log(`Root inode created with id=${this.root.id}`);
   }
 
   createInode(type, mode = 0o644) {
@@ -106,84 +125,173 @@ class InMemoryFilesystem {
   }
 
   // Modern async FUSE operations
-  async getattr(fusePath) {
-    const inode = this.resolvePath(fusePath);
-    return inode.toAttr();
+  async getattr(ino, context, fi, options) {
+    try {
+      console.log(
+        `getattr called: ino=${ino}, has inode=${this.inodes.has(ino)}`
+      );
+      const inode = this.inodes.get(ino);
+      if (!inode) {
+        console.log(`getattr: inode ${ino} not found`);
+        const error = new Error('ENOENT');
+        error.errno = -2;
+        error.code = 'ENOENT';
+        throw error;
+      }
+      const attr = inode.toAttr();
+      console.log(`getattr result:`, attr);
+      return attr;
+    } catch (error) {
+      console.log(`getattr error:`, error.message);
+      throw error;
+    }
   }
 
-  async readdir(fusePath) {
-    const inode = this.resolvePath(fusePath);
-    if (inode.type !== 'directory') {
-      throw { code: 'ENOTDIR' };
+  async readdir(ino, offset, context, fi, options) {
+    console.log(`readdir called: ino=${ino}`);
+    const inode = this.inodes.get(ino);
+    if (!inode || inode.type !== 'directory') {
+      const error = new Error('ENOTDIR');
+      error.errno = -20;
+      error.code = 'ENOTDIR';
+      throw error;
     }
-    return Array.from(inode.data.keys());
+
+    const entries = Array.from(inode.data.entries()).map(
+      ([name, childInode], index) => ({
+        name,
+        ino: childInode.id,
+        type:
+          childInode.type === 'directory'
+            ? 4
+            : childInode.type === 'file'
+              ? 8
+              : childInode.type === 'symlink'
+                ? 10
+                : 0,
+        nextOffset: BigInt(index + 1),
+      })
+    );
+
+    console.log(
+      `readdir result: ${entries.length} entries:`,
+      entries.map(e => `${e.name}(${e.ino})`)
+    );
+
+    return {
+      entries,
+      hasMore: false,
+    };
   }
 
-  async lookup(parentPath, name) {
-    const parent = this.resolvePath(parentPath);
-    if (parent.type !== 'directory') {
-      throw { code: 'ENOTDIR' };
-    }
+  async lookup(parent, name, context, options) {
+    try {
+      console.log(`lookup called: parent=${parent}, name=${name}`);
+      const parentInode = this.inodes.get(parent);
+      if (!parentInode || parentInode.type !== 'directory') {
+        console.log(`lookup: parent ${parent} not found or not directory`);
+        const error = new Error('ENOTDIR');
+        error.errno = -20;
+        error.code = 'ENOTDIR';
+        throw error;
+      }
 
-    const inode = parent.data.get(name);
-    if (!inode) {
-      throw { code: 'ENOENT' };
-    }
+      const inode = parentInode.data.get(name);
+      if (!inode) {
+        console.log(`lookup: entry '${name}' not found in parent ${parent}`);
+        const error = new Error('ENOENT');
+        error.errno = -2;
+        error.code = 'ENOENT';
+        throw error;
+      }
 
-    return inode.toAttr();
+      console.log(`lookup success: found '${name}' with ino=${inode.id}`);
+      return {
+        attr: inode.toAttr(),
+        timeout: 1.0,
+      };
+    } catch (error) {
+      console.log(`lookup error for '${name}':`, error.code);
+      throw error;
+    }
   }
 
-  async create(parentPath, name, mode) {
-    const { parent, name: finalName } = this.getParentAndName(path.join(parentPath, name));
-
-    if (parent.type !== 'directory') {
-      throw { code: 'ENOTDIR' };
+  async create(parent, name, mode, context, fi, options) {
+    const parentInode = this.inodes.get(parent);
+    if (!parentInode || parentInode.type !== 'directory') {
+      const error = new Error('ENOTDIR');
+      error.errno = -20;
+      error.code = 'ENOTDIR';
+      throw error;
     }
 
-    if (parent.data.has(finalName)) {
-      throw { code: 'EEXIST' };
+    if (parentInode.data.has(name)) {
+      const error = new Error('EEXIST');
+      error.errno = -17;
+      error.code = 'EEXIST';
+      throw error;
     }
 
     const inode = this.createInode('file', mode);
-    parent.data.set(finalName, inode);
+    parentInode.data.set(name, inode);
     this.inodes.set(inode.id, inode);
 
     return { attr: inode.toAttr(), fh: inode.id };
   }
 
-  async open(fusePath, flags) {
-    const inode = this.resolvePath(fusePath);
-    if (inode.type !== 'file') {
-      throw { code: 'ENOENT' };
+  async open(ino, context, options) {
+    const inode = this.inodes.get(ino);
+    if (!inode || inode.type !== 'file') {
+      const error = new Error('ENOENT');
+      error.errno = -2;
+      error.code = 'ENOENT';
+      throw error;
     }
 
     return { fh: inode.id };
   }
 
-  async read(fusePath, fh, buffer, length, position) {
-    const inode = this.inodes.get(fh);
+  async read(ino, context, options) {
+    const inode = this.inodes.get(ino);
     if (!inode || inode.type !== 'file') {
-      throw { code: 'EBADF' };
+      const error = new Error('EBADF');
+      error.errno = -9;
+      error.code = 'EBADF';
+      throw error;
     }
 
-    const start = Number(position);
+    const start = Number(options.offset || 0);
+    const length = Number(options.size || inode.data.length - start);
     const end = Math.min(start + length, inode.data.length);
-    const bytesRead = Math.max(0, end - start);
+    const bytesToRead = Math.max(0, end - start);
 
-    if (bytesRead > 0) {
-      inode.data.copy(buffer, 0, start, end);
+    if (bytesToRead === 0) {
+      return new ArrayBuffer(0);
     }
 
-    return bytesRead;
+    const result = new ArrayBuffer(bytesToRead);
+    const resultView = new Uint8Array(result);
+    const sourceView = new Uint8Array(
+      inode.data.buffer,
+      inode.data.byteOffset + start,
+      bytesToRead
+    );
+    resultView.set(sourceView);
+
+    return result;
   }
 
-  async write(fusePath, fh, buffer, length, position) {
-    const inode = this.inodes.get(fh);
+  async write(ino, data, context, options) {
+    const inode = this.inodes.get(ino);
     if (!inode || inode.type !== 'file') {
-      throw { code: 'EBADF' };
+      const error = new Error('EBADF');
+      error.errno = -9;
+      error.code = 'EBADF';
+      throw error;
     }
 
-    const start = Number(position);
+    const start = Number(options.offset || 0);
+    const length = data.byteLength;
     const end = start + length;
     const requiredSize = end;
 
@@ -195,20 +303,22 @@ class InMemoryFilesystem {
       inode.size = BigInt(requiredSize);
     }
 
-    buffer.copy(inode.data, start, 0, length);
-    inode.mtime = BigInt(Date.now()) * 1000000n;
-    inode.ctime = inode.mtime;
+    Buffer.from(data).copy(inode.data, start, 0, length);
+    const now = BigInt(Math.floor(Date.now() / 1000)) * 1000000000n; // Convert to nanoseconds properly
+    inode.mtime = now;
+    inode.ctime = now;
 
     return length;
   }
 
-  async release(fusePath, fh) {
+  async release(ino, context, fi, options) {
     // In-memory FS doesn't need to do anything special on release
-    return 0;
   }
 
   async mkdir(parentPath, name, mode) {
-    const { parent, name: finalName } = this.getParentAndName(path.join(parentPath, name));
+    const { parent, name: finalName } = this.getParentAndName(
+      path.join(parentPath, name)
+    );
 
     if (parent.type !== 'directory') {
       throw { code: 'ENOTDIR' };
@@ -218,8 +328,11 @@ class InMemoryFilesystem {
       throw { code: 'EEXIST' };
     }
 
-    const inode = this.createInode('directory', mode | 0o40000); // S_IFDIR
-    inode.data = new Map([['.', inode], ['..', parent]]);
+    const inode = this.createInode('directory', mode);
+    inode.data = new Map();
+    // Add . and .. entries
+    inode.data.set('.', inode);
+    inode.data.set('..', parent);
     parent.data.set(finalName, inode);
     this.inodes.set(inode.id, inode);
 
@@ -227,7 +340,9 @@ class InMemoryFilesystem {
   }
 
   async rmdir(parentPath, name) {
-    const { parent, name: finalName } = this.getParentAndName(path.join(parentPath, name));
+    const { parent, name: finalName } = this.getParentAndName(
+      path.join(parentPath, name)
+    );
 
     if (parent.type !== 'directory') {
       throw { code: 'ENOTDIR' };
@@ -242,7 +357,8 @@ class InMemoryFilesystem {
       throw { code: 'ENOTDIR' };
     }
 
-    if (inode.data.size > 2) { // . and ..
+    if (inode.data.size > 2) {
+      // . and ..
       throw { code: 'ENOTEMPTY' };
     }
 
@@ -251,7 +367,9 @@ class InMemoryFilesystem {
   }
 
   async unlink(parentPath, name) {
-    const { parent, name: finalName } = this.getParentAndName(path.join(parentPath, name));
+    const { parent, name: finalName } = this.getParentAndName(
+      path.join(parentPath, name)
+    );
 
     if (parent.type !== 'directory') {
       throw { code: 'ENOTDIR' };
@@ -274,8 +392,12 @@ class InMemoryFilesystem {
   }
 
   async rename(oldParentPath, oldName, newParentPath, newName) {
-    const { parent: oldParent, name: oldFinalName } = this.getParentAndName(path.join(oldParentPath, oldName));
-    const { parent: newParent, name: newFinalName } = this.getParentAndName(path.join(newParentPath, newName));
+    const { parent: oldParent, name: oldFinalName } = this.getParentAndName(
+      path.join(oldParentPath, oldName)
+    );
+    const { parent: newParent, name: newFinalName } = this.getParentAndName(
+      path.join(newParentPath, newName)
+    );
 
     if (oldParent.type !== 'directory' || newParent.type !== 'directory') {
       throw { code: 'ENOTDIR' };
@@ -306,13 +428,13 @@ class InMemoryFilesystem {
     // Move the inode
     oldParent.data.delete(oldFinalName);
     newParent.data.set(newFinalName, inode);
-    inode.ctime = BigInt(Date.now()) * 1000000n;
+    inode.ctime = BigInt(Math.floor(Date.now() / 1000)) * 1000000000n;
   }
 
   async chmod(fusePath, mode) {
     const inode = this.resolvePath(fusePath);
     inode.mode = mode;
-    inode.ctime = BigInt(Date.now()) * 1000000n;
+    inode.ctime = BigInt(Math.floor(Date.now() / 1000)) * 1000000000n;
   }
 
   async chown(fusePath, uid, gid) {
@@ -337,19 +459,22 @@ class InMemoryFilesystem {
       inode.data = newBuffer;
     }
     inode.size = size;
-    inode.mtime = BigInt(Date.now()) * 1000000n;
-    inode.ctime = inode.mtime;
+    const now = BigInt(Math.floor(Date.now() / 1000)) * 1000000000n;
+    inode.mtime = now;
+    inode.ctime = now;
   }
 
   async utimens(fusePath, atime, mtime) {
     const inode = this.resolvePath(fusePath);
-    inode.atime = BigInt(atime) * 1000000n;
-    inode.mtime = BigInt(mtime) * 1000000n;
-    inode.ctime = BigInt(Date.now()) * 1000000n;
+    inode.atime = BigInt(atime) * 1000000000n;
+    inode.mtime = BigInt(mtime) * 1000000000n;
+    inode.ctime = BigInt(Math.floor(Date.now() / 1000)) * 1000000000n;
   }
 
   async symlink(link, parentPath, name) {
-    const { parent, name: finalName } = this.getParentAndName(path.join(parentPath, name));
+    const { parent, name: finalName } = this.getParentAndName(
+      path.join(parentPath, name)
+    );
 
     if (parent.type !== 'directory') {
       throw { code: 'ENOTDIR' };
@@ -378,7 +503,9 @@ class InMemoryFilesystem {
 
   async link(targetPath, linkParentPath, linkName) {
     const target = this.resolvePath(targetPath);
-    const { parent, name: finalName } = this.getParentAndName(path.join(linkParentPath, linkName));
+    const { parent, name: finalName } = this.getParentAndName(
+      path.join(linkParentPath, linkName)
+    );
 
     if (parent.type !== 'directory') {
       throw { code: 'ENOTDIR' };
@@ -390,7 +517,7 @@ class InMemoryFilesystem {
 
     parent.data.set(finalName, target);
     target.nlink++;
-    target.ctime = BigInt(Date.now()) * 1000000n;
+    target.ctime = BigInt(Math.floor(Date.now() / 1000)) * 1000000000n;
 
     return target.toAttr();
   }
@@ -425,10 +552,12 @@ class InMemoryFilesystem {
   async setxattr(fusePath, name, value, flags = 0) {
     const inode = this.resolvePath(fusePath);
 
-    if (flags === 1 && inode.xattrs.has(name)) { // XATTR_CREATE
+    if (flags === 1 && inode.xattrs.has(name)) {
+      // XATTR_CREATE
       throw { code: 'EEXIST' };
     }
-    if (flags === 2 && !inode.xattrs.has(name)) { // XATTR_REPLACE
+    if (flags === 2 && !inode.xattrs.has(name)) {
+      // XATTR_REPLACE
       throw { code: 'ENODATA' };
     }
 
@@ -460,26 +589,304 @@ class InMemoryFilesystem {
     // In-memory FS doesn't need syncing
   }
 
-  async opendir(fusePath) {
-    const inode = this.resolvePath(fusePath);
-    if (inode.type !== 'directory') {
-      throw { code: 'ENOTDIR' };
+  async opendir(ino, context, options) {
+    console.log(`opendir called: ino=${ino}`);
+    const inode = this.inodes.get(ino);
+    if (!inode || inode.type !== 'directory') {
+      console.log(`opendir: inode ${ino} not found or not directory`);
+      const error = new Error('ENOTDIR');
+      error.errno = -20;
+      error.code = 'ENOTDIR';
+      throw error;
     }
+    console.log(`opendir result: fh=${inode.id}`);
     return { fh: inode.id };
   }
 
-  async releasedir(fusePath, fh) {
+  async releasedir(ino, context, fi, options) {
+    console.log(`releasedir called: ino=${ino}`);
   }
 
-  async access(fusePath, mask) {
+  async access(ino, context, options) {
+    console.log(`access called: ino=${ino}, mask=${options.mask}`);
+    console.log(`JAVASCRIPT DEBUG: Parameter analysis:`);
+    console.log(`JAVASCRIPT DEBUG: arguments.length = ${arguments.length}`);
+    console.log(
+      `JAVASCRIPT DEBUG: arg[0] (ino) = ${arguments[0]} (type: ${typeof arguments[0]})`
+    );
+    console.log(
+      `JAVASCRIPT DEBUG: arg[1] (context) = ${JSON.stringify(arguments[1])} (type: ${typeof arguments[1]})`
+    );
+    console.log(
+      `JAVASCRIPT DEBUG: arg[2] (options) = ${JSON.stringify(arguments[2])} (type: ${typeof arguments[2]})`
+    );
+    if (arguments.length > 3) {
+      console.log(
+        `JAVASCRIPT DEBUG: EXTRA arg[3] = ${JSON.stringify(arguments[3])} (type: ${typeof arguments[3]})`
+      );
+    }
+    console.log(
+      `JAVASCRIPT DEBUG: Expected: access(ino, context, options) where options.mask contains the access mask`
+    );
+    console.log(`JAVASCRIPT DEBUG: context = ${JSON.stringify(context)}`);
+    console.log(`JAVASCRIPT DEBUG: options = ${JSON.stringify(options)}`);
+    console.log(
+      `JAVASCRIPT DEBUG: options.mask = ${options?.mask} (${typeof options?.mask})`
+    );
     // In-memory FS allows all access
   }
 
-  // Advanced operations (stub implementations)
-  async fallocate(fusePath, mode, offset, length) {
-    const inode = this.resolvePath(fusePath);
-    if (inode.type !== 'file') {
+  // File operations
+  async create(parent, name, mode, context, options) {
+    console.log(`create called: parent=${parent}, name=${name}, mode=${mode}`);
+    console.log(`create DEBUG: typeof parent = ${typeof parent}`);
+    console.log(`create DEBUG: arguments.length = ${arguments.length}`);
+
+    try {
+      console.log(`create DEBUG: about to stringify context`);
+      const contextStr = typeof context === 'object' ? JSON.stringify(context) : String(context);
+      console.log(`create DEBUG: context = ${contextStr}`);
+    } catch (e) {
+      console.log(`create ERROR: failed to stringify context:`, e);
+      throw { code: 'EIO' };
+    }
+
+    try {
+      console.log(`create DEBUG: about to check options`);
+      console.log(`create DEBUG: options type = ${typeof options}`);
+      if (options) {
+        console.log(`create DEBUG: options keys:`, Object.keys(options));
+        // Safe stringify that handles BigInt
+        const optionsStr = JSON.stringify(options, (key, value) =>
+          typeof value === 'bigint' ? value.toString() + 'n' : value
+        );
+        console.log(`create DEBUG: options = ${optionsStr}`);
+      } else {
+        console.log(`create DEBUG: options = undefined`);
+      }
+    } catch (e) {
+      console.log(`create ERROR: failed to process options:`, e);
+      throw { code: 'EIO' };
+    }
+
+    try {
+      console.log(`create DEBUG: getting parent inode...`);
+      console.log(`create DEBUG: keeping parent as BigInt...`);
+      const parentId = parent; // Keep as BigInt
+      console.log(`create DEBUG: parentId = ${parentId} (${typeof parentId})`);
+
+      console.log(`create DEBUG: calling this.inodes.get(${parentId})...`);
+      console.log(`create DEBUG: this.inodes.size = ${this.inodes.size}`);
+      console.log(`create DEBUG: this.inodes.has(${parentId}) = ${this.inodes.has(parentId)}`);
+
+      let parentInode;
+      try {
+        parentInode = this.inodes.get(parentId);
+        if (!parentInode) {
+          console.log(`create DEBUG: parent inode ${parentId} not found`);
+          throw { code: 'ENOENT' };
+        }
+        console.log(`create DEBUG: parent inode found successfully`);
+      } catch (getInodeError) {
+        console.log(`create DEBUG: failed to get parent inode:`, getInodeError);
+        throw getInodeError;
+      }
+      console.log(`create DEBUG: parent inode found, type = ${parentInode.type}`);
+
+      if (parentInode.type !== 'directory') {
+        console.log(`create ERROR: parent is not directory`);
+        throw { code: 'ENOTDIR' };
+      }
+
+      console.log(`create DEBUG: checking if file already exists...`);
+      if (parentInode.data.has(name)) {
+        console.log(`create ERROR: file already exists`);
+        throw { code: 'EEXIST' };
+      }
+
+      console.log(`create DEBUG: creating new inode...`);
+      const inode = this.createInode('file', mode, 0);
+      console.log(`create DEBUG: new inode created with id = ${inode.id}`);
+
+      console.log(`create DEBUG: adding inode to global inodes map...`);
+      this.inodes.set(inode.id, inode);
+      console.log(`create DEBUG: inode added to this.inodes`);
+
+      console.log(`create DEBUG: adding to parent directory...`);
+      parentInode.data.set(name, inode);
+      console.log(`create DEBUG: file added to parent directory`);
+
+      console.log(`create DEBUG: preparing return value...`);
+      const result = {
+        attr: {
+          ino: inode.id,
+          size: inode.size,
+          blocks: inode.blocks,
+          atime: inode.atime,
+          mtime: inode.mtime,
+          ctime: inode.ctime,
+          mode: inode.mode,
+          nlink: inode.nlink,
+          uid: inode.uid,
+          gid: inode.gid,
+          rdev: inode.rdev,
+          blksize: inode.blksize,
+        },
+        fi: {
+          fh: inode.id,
+          flags: (options && options.flags) || 0,
+        },
+      };
+
+      console.log(`create DEBUG: returning result`);
+      return result;
+    } catch (error) {
+      console.log(`create ERROR: caught error:`, error);
+      if (typeof error === 'object' && error.code) {
+        throw error;
+      } else {
+        throw { code: 'EIO' };
+      }
+    }
+  }
+
+  async open(ino, context, options) {
+    console.log(`open called: ino=${ino}, flags=${options.flags}`);
+    console.log(`open DEBUG: typeof ino = ${typeof ino}`);
+    console.log(`open DEBUG: this.inodes.size = ${this.inodes.size}`);
+    console.log(`open DEBUG: all inode keys:`, Array.from(this.inodes.keys()));
+    console.log(`open DEBUG: this.inodes.has(ino) = ${this.inodes.has(ino)}`);
+
+    // Check if the inode might be in parent directory data
+    console.log(`open DEBUG: checking root directory contents:`);
+    const rootInode = this.inodes.get(1n);
+    if (rootInode && rootInode.data) {
+      for (const [name, childInode] of rootInode.data.entries()) {
+        console.log(`open DEBUG: root has child "${name}" with id=${childInode.id}, type=${childInode.type}`);
+        if (childInode.id === ino) {
+          console.log(`open DEBUG: FOUND inode ${ino} in root directory but NOT in this.inodes!`);
+          console.log(`open DEBUG: Adding missing inode to this.inodes...`);
+          this.inodes.set(ino, childInode);
+        }
+      }
+    }
+
+    const inode = this.inodes.get(ino);
+    console.log(`open DEBUG: inode found = ${!!inode}`);
+    if (inode) {
+      console.log(`open DEBUG: inode.type = ${inode.type}`);
+      console.log(`open DEBUG: inode.id = ${inode.id}`);
+    }
+
+    if (!inode || inode.type !== 'file') {
+      console.log(`open ERROR: throwing EISDIR - inode=${!!inode}, type=${inode?.type}`);
       throw { code: 'EISDIR' };
+    }
+
+    console.log(`open DEBUG: returning fh=${inode.id}`);
+    return { fh: inode.id };
+  }
+
+  async read(ino, context, options) {
+    console.log(`read called: ino=${ino}, size=${options.size}, offset=${options.offset}`);
+    const inode = this.inodes.get(ino);
+    if (!inode || inode.type !== 'file') {
+      throw { code: 'EISDIR' };
+    }
+
+    const start = Number(options.offset);
+    const length = Number(options.size);
+    const data = inode.data.slice(start, start + length);
+
+    return data;
+  }
+
+  async write(ino, data, context, options) {
+    console.log(
+      `write called: ino=${ino}, offset=${options.offset}, data.length=${data.length}`
+    );
+    const inode = this.inodes.get(ino);
+    if (!inode || inode.type !== 'file') {
+      throw { code: 'EISDIR' };
+    }
+
+    const start = Number(options.offset);
+
+    // Extend buffer if needed
+    const requiredSize = start + data.length;
+    if (inode.data.length < requiredSize) {
+      const newBuffer = Buffer.alloc(requiredSize);
+      inode.data.copy(newBuffer);
+      inode.data = newBuffer;
+    }
+
+    // Write data
+    data.copy(inode.data, start);
+    inode.size = BigInt(inode.data.length);
+    inode.mtime = BigInt(Date.now()) * 1000000n;
+    inode.ctime = inode.mtime;
+
+    return data.length;
+  }
+
+  async release(ino, context, options) {
+    console.log(`release called: ino=${ino}, fh=${options.fi ? options.fi.fh : 'undefined'}`);
+    // No-op for in-memory filesystem
+  }
+
+  async setattr(ino, attr, context, options) {
+    console.log(`setattr called: ino=${ino}`);
+
+    const inode = this.inodes.get(ino);
+    if (!inode) {
+      throw { code: 'ENOENT' };
+    }
+
+    // Just update ctime to current time
+    inode.ctime = BigInt(Date.now()) * 1000000n;
+
+    // Return current attributes
+    return {
+      attr: inode.toStat(inode.mode),
+      timeout: 1.0
+    };
+  }
+
+  async utimens(ino, atime, mtime, context, options) {
+    console.log(`utimens called: ino=${ino}, atime=${atime}, mtime=${mtime}`);
+
+    const inode = this.inodes.get(ino);
+    if (!inode) {
+      throw { code: 'ENOENT' };
+    }
+
+    // Update timestamps
+    if (atime !== null && atime !== undefined) {
+      inode.atime = atime;
+    }
+    if (mtime !== null && mtime !== undefined) {
+      inode.mtime = mtime;
+    }
+
+    // Always update ctime when attributes change
+    inode.ctime = BigInt(Date.now()) * 1000000n;
+
+    // Return current attributes
+    return {
+      attr: inode.toStat(inode.mode),
+      timeout: 1.0
+    };
+  }
+
+  // Advanced operations (stub implementations)
+  async fallocate(ino, mode, offset, length, context, fi, options) {
+    console.log(`fallocate called: ino=${ino}`);
+    const inode = this.inodes.get(ino);
+    if (!inode || inode.type !== 'file') {
+      const error = new Error('EISDIR');
+      error.errno = -21;
+      error.code = 'EISDIR';
+      throw error;
     }
 
     const start = Number(offset);
@@ -492,8 +899,9 @@ class InMemoryFilesystem {
       inode.size = BigInt(end);
     }
 
-    inode.mtime = BigInt(Date.now()) * 1000000n;
-    inode.ctime = inode.mtime;
+    const now = BigInt(Math.floor(Date.now() / 1000)) * 1000000000n;
+    inode.mtime = now;
+    inode.ctime = now;
   }
 
   async lseek(fusePath, offset, whence) {
@@ -524,11 +932,25 @@ class InMemoryFilesystem {
     return BigInt(newOffset);
   }
 
-  async copy_file_range(fusePathIn, fiIn, offsetIn, fusePathOut, fiOut, offsetOut, length, flags) {
+  async copy_file_range(
+    fusePathIn,
+    fiIn,
+    offsetIn,
+    fusePathOut,
+    fiOut,
+    offsetOut,
+    length,
+    flags
+  ) {
     const inodeIn = this.inodes.get(fiIn.fh);
     const inodeOut = this.inodes.get(fiOut.fh);
 
-    if (!inodeIn || !inodeOut || inodeIn.type !== 'file' || inodeOut.type !== 'file') {
+    if (
+      !inodeIn ||
+      !inodeOut ||
+      inodeIn.type !== 'file' ||
+      inodeOut.type !== 'file'
+    ) {
       throw { code: 'EBADF' };
     }
 
@@ -548,11 +970,17 @@ class InMemoryFilesystem {
     // Copy data
     const bytesToCopy = Math.min(len, inodeIn.data.length - startIn);
     if (bytesToCopy > 0) {
-      inodeIn.data.copy(inodeOut.data, startOut, startIn, startIn + bytesToCopy);
+      inodeIn.data.copy(
+        inodeOut.data,
+        startOut,
+        startIn,
+        startIn + bytesToCopy
+      );
     }
 
-    inodeOut.mtime = BigInt(Date.now()) * 1000000n;
-    inodeOut.ctime = inodeOut.mtime;
+    const now = BigInt(Math.floor(Date.now() / 1000)) * 1000000000n;
+    inodeOut.mtime = now;
+    inodeOut.ctime = now;
 
     return BigInt(bytesToCopy);
   }
@@ -608,7 +1036,9 @@ async function main() {
         console.log(`   ⚠️ Mountpoint may not be writable: ${error.message}`);
       }
     } catch (error) {
-      console.error(`   ❌ Failed to create/access mountpoint: ${error.message}`);
+      console.error(
+        `   ❌ Failed to create/access mountpoint: ${error.message}`
+      );
       throw error;
     }
     console.log('');
@@ -622,8 +1052,12 @@ async function main() {
     // Test native binding
     console.log('🔧 Testing native binding...');
     try {
-      const version = await import('../dist/index.js').then(m => m.getVersion());
-      console.log(`   ✓ Native binding loaded: FUSE ${version.fuse}, Binding ${version.binding}, N-API ${version.napi}`);
+      const version = await import('../dist/index.js').then(m =>
+        m.getVersion()
+      );
+      console.log(
+        `   ✓ Native binding loaded: FUSE ${version.fuse}, Binding ${version.binding}, N-API ${version.napi}`
+      );
     } catch (error) {
       console.error('   ❌ Native binding test failed:', error.message);
       throw error;
@@ -635,7 +1069,10 @@ async function main() {
     console.log('   Registering operation handlers...');
 
     try {
-      session = await createSession(MOUNT_POINT, {
+      console.log('   DEBUG: Checking setattr handler exists:', typeof imfs.setattr);
+      console.log('   DEBUG: setattr handler binding:', imfs.setattr.bind(imfs));
+
+      const handlers = {
         getattr: imfs.getattr.bind(imfs),
         readdir: imfs.readdir.bind(imfs),
         lookup: imfs.lookup.bind(imfs),
@@ -650,6 +1087,7 @@ async function main() {
         rename: imfs.rename.bind(imfs),
         chmod: imfs.chmod.bind(imfs),
         chown: imfs.chown.bind(imfs),
+        setattr: imfs.setattr.bind(imfs),
         truncate: imfs.truncate.bind(imfs),
         utimens: imfs.utimens.bind(imfs),
         symlink: imfs.symlink.bind(imfs),
@@ -671,10 +1109,13 @@ async function main() {
         copy_file_range: imfs.copy_file_range.bind(imfs),
         flock: imfs.flock.bind(imfs),
         setlk: imfs.lock.bind(imfs),
-        ioctl: imfs.ioctl.bind(imfs),
-        bmap: imfs.bmap.bind(imfs),
-        poll: imfs.poll.bind(imfs),
-      });
+        getlk: imfs.lock.bind(imfs),
+      };
+
+      console.log('   DEBUG: handlers.setattr exists:', !!handlers.setattr);
+      console.log('   DEBUG: All registered handlers:', Object.keys(handlers));
+
+      session = await createSession(MOUNT_POINT, handlers);
       console.log('✅ FUSE session created successfully!');
     } catch (error) {
       console.error('❌ Failed to create FUSE session:', error);
@@ -686,8 +1127,8 @@ async function main() {
     // Mount the filesystem
     console.log('🏔️ Mounting FUSE filesystem...');
 
-      await session.mount();
-      console.log('✅ FUSE filesystem mounted successfully!');
+    await session.mount();
+    console.log('✅ FUSE filesystem mounted successfully!');
 
     console.log('');
 
@@ -695,7 +1136,7 @@ async function main() {
     console.log('🧪 Testing basic operations...');
     console.log('   Cleaning up existing test files...');
 
-    const cleanupPath = (dirPath) => {
+    const cleanupPath = dirPath => {
       try {
         if (fs.existsSync(dirPath)) {
           const entries = fs.readdirSync(dirPath);
@@ -738,14 +1179,18 @@ async function main() {
 
     console.log('   Getting file attributes...');
     const stats = fs.statSync(testFile);
-    console.log(`   ✓ File attributes: size=${stats.size}, mode=${stats.mode.toString(8)}, mtime=${stats.mtime.toISOString()}`);
+    console.log(
+      `   ✓ File attributes: size=${stats.size}, mode=${stats.mode.toString(8)}, mtime=${stats.mtime.toISOString()}`
+    );
 
     console.log('');
     console.log('✅ All basic operations completed successfully!');
     console.log('');
     console.log('🎯 The in-memory filesystem is now running.');
     console.log(`   Mount point: ${MOUNT_POINT}`);
-    console.log('   You can explore and test all FUSE operations through this mount point.');
+    console.log(
+      '   You can explore and test all FUSE operations through this mount point.'
+    );
     console.log('');
     console.log('💡 Try commands like:');
     console.log(`   • ls -la ${MOUNT_POINT}`);
@@ -760,7 +1205,7 @@ async function main() {
     console.log('🔄 Filesystem is active. Waiting for operations...');
 
     // Handle graceful shutdown
-    const shutdown = async (signal) => {
+    const shutdown = async signal => {
       console.log(`\n🛑 Received ${signal}, shutting down gracefully...`);
 
       try {
@@ -786,7 +1231,6 @@ async function main() {
     setInterval(() => {
       // Periodic check - filesystem is still running
     }, 10000);
-
   } catch (error) {
     console.error('💥 Fatal error:', error);
     console.error('Stack trace:', error.stack);
@@ -807,7 +1251,7 @@ async function main() {
 
 // Run the example
 if (import.meta.url === `file://${process.argv[1]}`) {
-  main().catch((error) => {
+  main().catch(error => {
     console.error('💥 Fatal error:', error);
     process.exit(1);
   });
