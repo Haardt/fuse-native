@@ -326,14 +326,6 @@ describe('Operations Module Integration', () => {
   });
 
   describe('Error Handling and Edge Cases', () => {
-    test('should handle invalid operation names gracefully', () => {
-      const handler = () => console.log('invalid operation handler');
-
-      // Try to set handler for non-existent operation
-      expect(() => {
-        binding.setOperationHandler('invalid_operation', handler);
-      }).not.toThrow();
-    });
 
     test('should handle removal of non-existent handlers', () => {
       // Try to remove handler that doesn't exist

@@ -185,6 +185,48 @@ export interface FileInfo {
   parallel_direct_writes?: boolean;
 }
 
+// =============================================================================
+// Buffer Vector Types (for write_buf operation)
+// =============================================================================
+
+/** Buffer flags for fuse_buf */
+export enum FuseBufFlags {
+  /** No special flags */
+  NONE = 0,
+  /** Buffer contains file descriptor instead of memory */
+  IS_FD = 1,
+  /** File descriptor is seekable */
+  FD_SEEK = 2,
+  /** File descriptor supports direct I/O */
+  FD_DIRECT = 4,
+}
+
+/** Individual buffer in a buffer vector */
+export interface FuseBuf {
+  /** Size of data in bytes */
+  size: number;
+  /** Buffer flags */
+  flags: FuseBufFlags;
+  /** Memory pointer (if not IS_FD) */
+  mem?: ArrayBuffer;
+  /** File descriptor (if IS_FD) */
+  fd?: number;
+  /** Position in file (if IS_FD) */
+  pos?: bigint;
+}
+
+/** Buffer vector for scatter-gather I/O */
+export interface FuseBufvec {
+  /** Number of buffers in the vector */
+  count: number;
+  /** Index of current buffer within the vector */
+  idx: number;
+  /** Current offset within the current buffer */
+  off: number;
+  /** Array of buffers */
+  buf: FuseBuf[];
+}
+
 /** Request context information */
 export interface RequestContext {
   /** User ID */
@@ -306,6 +348,21 @@ export type WriteHandler = (
   options: WriteOptions
 ) => Promise<number>;
 
+/** Write buffer vector operation handler */
+export type WriteBufHandler = (
+  ino: Ino,
+  bufvec: FuseBufvec,
+  context: RequestContext,
+  options: WriteOptions
+) => Promise<number>;
+
+/** Read buffer vector operation handler */
+export type ReadBufHandler = (
+  ino: Ino,
+  context: RequestContext,
+  options: ReadOptions
+) => Promise<FuseBufvec>;
+
 /** Open operation handler */
 export type OpenHandler = (
   ino: Ino,
@@ -327,10 +384,18 @@ export type CreateHandler = (
   parent: Ino,
   name: string,
   mode: number,
-  fi: FileInfo,
   context: RequestContext,
   options?: BaseOperationOptions
 ) => Promise<{ attr: StatResult; timeout: Timeout, fi: FileInfo }>;
+
+/** Truncate operation handler */
+export type TruncateHandler = (
+  ino: Ino,
+  size: bigint,
+  context: RequestContext,
+  fi?: FileInfo,
+  options?: BaseOperationOptions
+) => Promise<{ attr: StatResult; timeout: Timeout }>;
 
 /** Readdir operation handler */
 export type ReaddirHandler = (
@@ -471,6 +536,10 @@ export interface FuseOperationHandlers {
   read?: ReadHandler;
   /** Write data to file */
   write?: WriteHandler;
+  /** Write buffer vector to file */
+  write_buf?: WriteBufHandler;
+  /** Read buffer vector from file */
+  read_buf?: ReadBufHandler;
   /** Open a file */
   open?: OpenHandler;
   /** Release a file */
@@ -490,6 +559,8 @@ export interface FuseOperationHandlers {
   /** Create a special file (device node) */
   mknod?: MknodHandler;
   create?: CreateHandler;
+  /** Truncate a file */
+  truncate?: TruncateHandler;
   /** Remove a file */
   unlink?: UnlinkHandler;
   /** Remove a directory */

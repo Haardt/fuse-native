@@ -42,26 +42,27 @@ Verifizieren, dass **alle FUSE3-Funktionen** korrekt durch die Ebenen **C/N-API 
 - setattr - DONE
 - readdir - DONE 
 - opendir - DONE 
-- releasedir DONE
-- create ❌
-- open ❌ 
-- read ❌ 
-- write ❌ 
-- utimens ❌
-- release ❌
-- truncate ❌
+- releasedir - DONE
+- create - DONE
+- open - DONE 
+- read - DONE 
+- write - DONE
+- utimens - DONE
+- release - done
+- truncate - done
 
-- statfs ❌ (nur statfs_bridge.cc Fragment)
+- write_buf - done
+- read_buf ❌
+
+- statfs ❌ 
 - flush ❌
-- fsync ❌ (nur TS-Handler definiert)
+- fsync ❌ 
 - fsyncdir ❌
-- access ❌ (nur TS-Handler definiert)
+- access ❌ 
 - lock ❌
 - bmap ❌
 - ioctl ❌
 - poll ❌
-- write_buf ❌
-- read_buf ❌
 - flock ❌
 - fallocate ❌
 - lseek ❌
