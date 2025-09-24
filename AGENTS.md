@@ -1,636 +1,162 @@
-# AGENTS.md
+# AGENTS.md (English, Compact Version)
 
 ## Mission
 
-Wir bauen ein **modernes FUSE3-Binding für Node.js** – performanceorientiert, robust und ergonomisch:
-- Native Bridge via **N-API (C/C++)**, öffentliche **TypeScript-API** (ESM, Promises, AbortSignal)
-- **BigInt** für Offsets/Größen, **ns-Zeitstempel** statt ms-Trunkation
-- **Zero-Copy**/External ArrayBuffer, **copy_file_range** Fast-Path
-- Einheitliche **−errno**-Fehler, klare Typen (branded `Fd/Mode/Flags`)
-- **Thread-safe** Callbacks (TSFN), geordneter **Shutdown**, starke **Observability**
-- **Greenfield-Ansatz**: `./old-reference-implementation` nur **lesen**, `./fuse-docs` als Semantik-Quelle
+Build a **modern FUSE3 binding for Node.js** — performance-oriented, robust, ergonomic:
 
-## Zweck
+* Native bridge via **N-API (C/C++)**, public **TypeScript API** (ESM, Promises, AbortSignal)
+* **BigInt** for offsets/sizes, **ns timestamps** (no ms truncation)
+* **Zero-Copy**/External ArrayBuffer, **copy\_file\_range** fast path
+* Unified **−errno** errors, clear branded types (`Fd`, `Mode`, `Flags`)
+* **Thread-safe** callbacks (TSFN), ordered **shutdown**, strong **observability**
+* **Greenfield**: use `./old-reference-implementation` only as behavioral reference, `./fuse-docs` as semantic source
 
-Dieses Dokument definiert **Arbeitsweise, Standards und Checklisten** für Coding-Agenten (und Menschen), die an diesem Projekt arbeiten. Ziel: **vorhersehbare Qualität**, **konsistente Commits**, **saubere Doku** und **grüne Tests** – ohne Abwärtskompatibilität.
+## Goals
 
----
+Predictable quality, consistent commits, clean docs and green tests — no backward compatibility.
 
-## 1) Projektkontext & Ziele (Kurz)
+## Coding Style Directives
+* Separation of Concerns: one file, one responsibility (critical goal).
+* Semantic naming: file names and function names should clearly reflect their domain purpose.
+* Small source files: aim for files ≤300 lines (exceptions allowed but keep them rare and justified).
 
-* Native **FUSE3**-Bindings für Node.js via **N-API (C/C++)** + **TypeScript-API**.
-* Moderne API: **ESM**, **Promises**, **BigInt** für 64-bit, **ns-Timestamps**, konsistente **errno**-Fehlerkonvention.
-* Fokus: **Korrektheit, Performance (Zero-Copy), Stabilität, Observability**.
+These rules help keep the project modular, predictable, and easier to maintain. They fit perfectly with the goals of the binding: explicit ownership, clear interfaces, and testable pieces.
 
----
-
-## 2) Repo-Struktur (Soll)
+## Repository Structure
 
 ```
-/src            # C++ N-API Bridge (one module, mehrere *.cc/*.h)
-/ts             # Öffentliche TypeScript API, Helpers, Types
-/test           # Unit & Mock-E2E (TS, optional C++ Tests)
-/bench          # Benchmarks & KPI Scripts
-/docs           # API-Referenz & HowTos (md)
-/examples       # memfs, passthrough, kvfs
-.github/workflows/ci.yml
-package.json, tsconfig.json, CMakeLists.txt|binding.gyp
+/src     # C++ N-API Bridge
+/ts      # Public TS API, helpers, types
+/test    # Unit & Mock-E2E tests
+/bench   # Benchmarks & KPI scripts
+/docs    # API reference & HowTos
+/examples# memfs, passthrough, kvfs
 ```
 
----
+## Source Policy
 
-## 3) Arbeitsmodus des Agenten
+* `./old-reference-implementation`: observe behavior only; **no copy-paste**.
+* `./fuse-docs`: main semantic source; may copy structure/field meanings; quote texts in docs but not code (>25 words per block forbidden).
 
-3.1) Quellen-Policy (SEHR WICHTIG)
+## Coding Standards
 
-./old-reference-implementation dient ausschließlich als Lesereferenz:
+### C++ (N-API)
 
-✅ Erlaubt: Verhalten beobachten (Blackbox), API-Semantik verstehen, edge cases notieren.
+* C++17+, no exceptions in hot path.
+* All C→JS calls via **TSFN** (never reentrant).
+* Always check **napi\_status**, map errors to errno.
+* **BigInt** helpers for 64-bit.
+* Timestamps: **ns-epoch BigInt**.
+* **External ArrayBuffer** for zero-copy, correct finalizer.
+* Clear ownership, no data races.
 
-❌ Verboten: Copy/Paste von Code/Strukturen/Text, Imports/Includes, 1:1 Portierungen.
+### TypeScript
 
-./fuse-docs ist die primäre fachliche Quelle:
+* **ESM**, `strict: true`, no `any`.
+* **Promises** only (no callbacks).
+* Support `AbortSignal`/timeout in `opts`.
+* Branded types for `Fd`, `Mode`, `Flags`.
+* 64-bit fields: `bigint`. Timestamps: `bigint` ns.
+* Errors: `FuseErrno` with `.errno` (negative) + `.code`.
 
-✅ Erlaubt: API/Struktur/Feldbedeutungen übernehmen, Normtexte zitieren (in Doku, nicht in Code), Ableitungen dokumentieren.
+### Error Convention
 
-❌ Verboten: Lizenz-problematische Textübernahmen in Code-Kommentare > 25 Worte am Stück.
+* Success: ≥ 0
+* Error: −errno (POSIX)
+* TS mapping: `throw new FuseErrno('ENOENT')` with `.errno=-2`.
 
+## Tests
 
-### 3.1 Task-Format
+* **Unit tests (TS):** helpers, types, conversions (BigInt, timespec).
+* **Mock-E2E:** FUSE ops without real mount.
+* **Type tests (tsd):** no 64-bit as number.
+* **C++ tests (optional):** timespec codec, errno mapping.
+* Test checklist per PR: offsets >2^53, ns timestamps, negative paths (ENOENT/EACCES/…), at least one concurrency scenario.
 
-Jeder Arbeitsschritt wird als **kleiner, atomarer Task** formuliert:
+## Performance & Stability
 
-```
-### Task: <prägnanter Titel>
-Ziel:
-Änderungen (Code):
-Änderungen (Doku):
-Tests:
-Akzeptanzkriterien (DoD):
-Notizen/Risiken:
-```
+* **Zero-Copy** where possible (External ArrayBuffer).
+* Large I/O configurable chunks (1–8 MB).
+* **copy\_file\_range** fast path + fallback.
+* Minimize JS↔C crossings (batching when possible).
+* Per-FD write queue; `flush/release` wait until empty.
+* State machine: `RUNNING → DRAINING → UNMOUNTING → CLOSED`.
+* `unmount()` triggers `fuse_session_exit`; TSFN released cleanly.
 
-### 3.2 Definition of Done (DoD)
+## Observability
 
-* [ ] Code gebaut (native + TS) ohne Warnungen (Release & Debug).
-* [ ] **Unit-Tests + Mock-E2E** grün, neue Tests vorhanden.
-* [ ] **Doku aktualisiert** (mind. eine relevante .md).
-* [ ] **API-Typen konsistent** (tsd-Typ-Tests grün).
-* [ ] Linters/Formatters grün.
-* [ ] Commit-Message: konventionell & referenziert Task.
+* Structured logging: op, path, fd, size, offset, errno, duration.
+* Optional tracing: OpenTelemetry spans.
+* Metrics: ops/s, bytes, p50/p95/p99 latency, error rate.
 
-### 3.3 Commit-Konvention
+## Documentation Duties (every PR)
 
-```
-feat: <Änderung knapp>  | fix: | perf: | docs: | refactor: | test: | chore:
-```
+Update relevant docs: `README.md`, `docs/api.md`, `docs/errors.md`, `docs/performance.md`, `docs/concurrency.md`, and `CHANGELOG.md`.
 
-* Body: Was & Warum (1–3 Sätze).
-* Breaking: `BREAKING CHANGE: ...` (nur wenn wirklich notwendig).
+## Build & CI
 
----
+* Node ≥18, Linux x64/arm64 targets.
+* `npm run build` builds native+TS; `npm test` runs all tests.
+* Prebuilds via prebuildify (later); artifacts in release job.
+* Define `FUSE_USE_VERSION=31` and `NAPI_VERSION=8` in CMake.
 
-## 4) Coding-Standards
+## Safety & Robustness
 
-### 4.1 C++ (N-API)
+* Validate all paths in C++ (null terminators, lengths).
+* Never block the Node main thread.
+* Check every N-API call.
+* Finalizers idempotent; no dangling pointers.
+* Sanitizer builds (ASan/UBSan) recommended.
 
-* C++17 oder neuer. Keine Exceptions im Hotpath (oder klar gefangen).
-* **TSFN** für alle C→JS Aufrufe, niemals reentrant in JS.
-* **napi\_status** prüfen, bei Fehlern → sauberer Rückpfad mit errno.
-* **BigInt**: `napi_create_bigint_uint64` / `napi_get_value_bigint_uint64`.
-* **timespec**: ns-epoch `bigint` oder `{sec: bigint, nsec: number}` – Projektstandard: **ns-epoch `bigint`**.
-* Speicher: **napi\_create\_external\_arraybuffer** für Zero-Copy; Finalizer korrekt.
-* Threading: klare Ownership, kein Data Race; RAII-Wrapper für Handles.
+## Architecture: Call-Chain & Implementation Classes
 
-### 4.2 TypeScript
+**Kernel → FUSE → C++ → JS → C++ → FUSE**
 
-* **ESM**, `strict: true`, keine `any`, keine impliziten `any`.
-* **Promises** (keine Callback-APIs nach außen).
-* **AbortSignal/timeout** in `opts?: {...}` unterstützen.
-* **Branded Types** für `Fd`, `Mode`, `Flags`.
-* 64-Bit Felder: **`bigint`**. Timestamps: `bigint` ns.
-* Fehler: **`FuseErrno extends Error`** mit `.errno` (negativ) + `.code`.
+* **SessionManager**: owns lifecycle; state machine RUNNING→CLOSED; orchestrates shutdown.
+* **FuseBridge**: single entry from `fuse_lowlevel_ops`; creates `FuseRequestContext`; delegates only to TSFNDispatcher; exactly one `fuse_reply_*` per request.
+* **TSFNDispatcher**: one `ThreadSafeFunction` for all ops; FIFO + backpressure; passes op+ctx to JS; returns completion to C++.
+* **FuseRequestContext**: move-only request data (op, ids, fd, path, offsets, ns timestamps, buffer, abort info). Completed exactly once.
+* **BufferBridge/CopyFileRange/NapiHelpers**: helpers for zero-copy, fast path, BigInt conversions.
 
-### 4.3 Fehlerkonvention
-
-* Erfolg: **≥ 0**
-* Fehler: **−errno** (POSIX), z. B. `-2` (ENOENT)
-* Mapping in TS: `throw new FuseErrno('ENOENT')` mit `.errno = -2`.
-
----
-
-## 5) Tests
-
-### 5.1 Pflicht
-
-* **Unit-Tests** (TS): Helper, Typen, Konversionen (BigInt, TimeSpec).
-* **Mock-E2E**: typische FUSE-Operationen ohne echtes Mount (Harness).
-* **Typ-Tests (tsd)**: keine 64-bit Felder als `number`.
-* **C++-Tests** (optional, aber empfohlen): Timespec-Codec, errno-Mapping.
-
-### 5.2 Beispiel-Checkliste pro PR
-
-* [ ] Offsets/Größen > 2^53 getestet (Roundtrip).
-* [ ] Timestamps ns-präzise getestet.
-* [ ] Negativpfade: ENOENT/EACCES/EEXIST/… abgedeckt.
-* [ ] Concurrency-Szenario (mind. 1) simuliert.
-
----
-
-## 6) Performance & Stabilität
-
-### 6.1 Performance-Prinzipien
-
-* **Zero-Copy** wo möglich (External ArrayBuffer).
-* Große I/O in **konfigurierbaren Chunks** (1–8 MB).
-* **copy\_file\_range** Fast-Path + Fallback.
-* Minimale JS↔C Übertrittshäufigkeit (Batching wo möglich).
-
-### 6.2 Concurrency & Shutdown
-
-* **Per-FD Write-Queue**, `flush/release` warten bis leer.
-* State Machine: `RUNNING → DRAINING → UNMOUNTING → CLOSED`.
-* `unmount()` löst `fuse_session_exit` aus; TSFN sauber freigeben.
-
----
-
-## 7) Observability
-
-* **Structured Logging**: op, path, fd, size, offset, errno, duration.
-* **Tracing (optional)**: OpenTelemetry-Spans um FUSE-Ops.
-* **Metriken**: ops/s, bytes, p50/p95/p99 Latenzen, Fehlerquote.
-
----
-
-## 8) Doku-Pflichten
-
-Bei **jedem** PR:
-
-* **README.md** (falls Nutzerfluss betroffen).
-* **docs/api.md** (Signaturen/Typen, Beispiele).
-* **docs/errors.md** (neue/angepasste Errnos).
-* **docs/performance.md** (wenn I/O-Pfade berührt).
-* **docs/concurrency.md** (bei Threading/Queues).
-* **CHANGELOG.md** (stichpunktartig).
-
----
-
-## 9) Build & CI
-
-* Node ≥ 18, Linux x64/arm64 Zielplattformen.
-* `npm run build` baut **native + TS**; `npm test` führt **alle Tests**.
-* CI blockt Merge bei roten Tests oder Lintfehlern.
-* (Später) Prebuilds via prebuildify; artifacts im Release-Job.
-
----
-
-## 10) Sicherheits- & Robustheitsregeln
-
-* Keine unvalidierten Pfade in C++ (Null-Terminator, Längen prüfen).
-* Keine Blockierung des Node Main Threads.
-* Alle N-API Aufrufe **Status prüfen**, niemals ignorieren.
-* Finalizer müssen **idempotent** sein; keine Dangling-Pointer.
-* Sanitizer-Builds (ASan/UBSan) in separatem CI-Job (empfohlen).
-
----
-
-## 11) Prompt/Task-Beispiele (Copy-Paste)
-
-### 11.1 Beispiel-Task: BigInt-Helpers einführen
+### Flow Example: Read
 
 ```
-### Task: N-API BigInt Helpers implementieren
-Ziel:
-  64-Bit Offsets/Größen ohne Low/High-Split, BigInt end-to-end.
-Änderungen (Code):
-  - src/napi_bigint.h/.cc: u64_to_bigint, bigint_to_u64 (lossless-check).
-  - src/*: alle Stellen mit (low,high) ersetzen; N-API BigInt nutzen.
-Änderungen (Doku):
-  - docs/api.md: 64-Bit = bigint
-  - MIGRATION.md: Low/High entfällt
-Tests:
-  - ts/test/bigint.spec.ts: Roundtrip > 2^53
-DoD:
-  - Build grün, Tests grün, Doku aktualisiert.
+Kernel ll_read → FuseBridge.ProcessRequest → TSFNDispatcher.enqueue
+JS handler (TS) awaits fs.read → TSFNDispatcher.complete(ctxId, data)
+FuseBridge.HandleReadSuccess → fuse_reply_buf()
 ```
 
-### 11.2 Beispiel-Task: ns-Timespec
+### Flow Example: Write
 
 ```
-### Task: Timespec ns-epoch bigint
-Ziel:
-  ns-präzise Zeitstempel durchgängig.
-Änderungen (Code):
-  - src/timespec_codec.*: timespec <-> bigint(ns)
-  - utimens/getattr Pfade umstellen
-  - ts/time.ts: toTimespec(...)
-Änderungen (Doku):
-  - docs/time.md, api.md
-Tests:
-  - ts/test/time.spec.ts: Roundtrip mit 1234567890123456789n
-DoD:
-  - ns-Genauigkeit belegt, Doku/Tests grün.
+ll_write enqueues ctx to per-FD queue → worker drains → TSFNDispatcher.enqueue → JS handler fs.write → complete → fuse_reply_write → queue next()
 ```
 
-### 11.3 Beispiel-Task: readdir Pagination
+### Error Path
 
 ```
-### Task: readdir mit offset & nextOffset
-Ziel:
-  Große Verzeichnisse seitenweise.
-Änderungen (Code):
-  - src/readdir_bridge.cc: filler/offset/nextOffset
-  - ts/index.ts: readdir(path, offset), readdirAll(path)
-Änderungen (Doku):
-  - docs/readdir.md
-Tests:
-  - ts/test/readdir.spec.ts: 10k Einträge, mehrere Seiten
-DoD:
-  - Pagination korrekt, Doku/Tests grün.
+JS throws FuseErrno('ENOENT') → TSFNDispatcher.complete errno:-2 → FuseBridge.HandleError → fuse_reply_err()
 ```
 
----
-
-## 12) Do & Don’t (Kurz)
-
-**Do**
-
-* Kleine, abgeschlossene Tasks.
-* Tests zuerst skizzieren.
-* Doku parallel updaten.
-* Fehler als −errno, BigInt für 64-Bit, ns-epoch für Zeit.
-
-**Don’t**
-
-* Callbacks nach außen (nur Promises).
-* 64-Bit als `number`.
-* Reentrante JS-Aufrufe aus C++.
-* Blinde Kopien von Buffern (Zero-Copy bevorzugen).
-
----
-
-## 13) Build-System & Technische Details
-
-### 13.1 Build-Systeme
-
-Das Projekt unterstützt zwei Build-Systeme:
-
-**CMake (Empfohlen für Entwicklung):**
-```bash
-npm run build:native  # CMake-basiert, schneller
-```
-
-**node-gyp (für Prebuilds):**
-```bash
-npm run prebuild      # Für Distribution
-```
-
-### 13.2 Kritische Build-Definitionen
-
-**FUSE_USE_VERSION=31** muss definiert sein, sonst:
-```
-error: FUSE_USE_VERSION not defined
-error: only API version 30 or greater is supported
-```
-
-**CMakeLists.txt essentiell:**
-```cmake
-add_definitions(-DFUSE_USE_VERSION=31)
-add_definitions(-DNAPI_VERSION=8)
-```
-
-### 13.3 Namespace-Konventionen
-
-**C++ Namespaces:**
-- Hauptnamespace: `fuse_native`
-- Funktionen: `fuse_native::errno_to_string()`, `fuse_native::NapiHelpers::`
-- Klassen: `fuse_native::BufferBridge`, `fuse_native::SessionManager`
-
-**N-API Export Pattern:**
-```cpp
-// In main.cc
-napiExports.Set("functionName", Napi::Function::New(napiEnv, FunctionWrapper));
-```
-
-### 13.4 64-Bit Helper-Funktionen (NapiHelpers)
-
-**Verfügbare BigInt-Helpers in `src/napi_helpers.h`:**
-
-```cpp
-// Basis-Konversionen
-static int32_t GetInt32(Napi::Env env, Napi::Value value);
-static uint32_t GetUint32(Napi::Env env, Napi::Value value);
-static uint64_t GetBigUint64(Napi::Env env, Napi::Value value);
-static double GetDouble(Napi::Env env, Napi::Value value);
-static bool GetBoolean(Napi::Env env, Napi::Value value);
-
-// BigInt-Erstellung
-static Napi::BigInt CreateBigInt64(Napi::Env env, int64_t value);
-static Napi::BigInt CreateBigIntU64(Napi::Env env, uint64_t value);
-static Napi::BigInt CreateBigUint64(Napi::Env env, uint64_t value);
-
-// Sichere Konversionen mit bounds-checking
-static std::optional<int64_t> SafeGetBigInt64(Napi::Value value);
-static std::optional<uint64_t> SafeGetBigIntU64(Napi::Value value);
-```
-
-**Verwendungsbeispiel:**
-```cpp
-uint64_t offset = fuse_native::NapiHelpers::GetBigUint64(env, info[0]);
-return fuse_native::NapiHelpers::CreateBigUint64(env, result);
-```
-
-### 13.5 Modul-Architektur
-
-**Hauptmodule und ihre Exports:**
-
-**Buffer Bridge (`buffer_bridge.*`):**
-- `createExternalBuffer()` - Zero-Copy Buffer
-- `createManagedBuffer()` - Managed Buffer
-- `validateBuffer()` - Buffer-Validierung
-- `getBufferStats()` - Buffer-Statistiken
-
-**Copy File Range (`copy_file_range.*`):**
-- `copyFileRange()` - Kernel syscall + Fallback
-- `setCopyChunkSize()` - Performance-Tuning
-- `getCopyStats()` - Statistiken
-
-**Session Manager (`session_manager.*`):**
-- `createSession()` - FUSE Session erstellen
-- `mount()` / `unmount()` - Mount-Management
-- `isReady()` - Status-Abfrage
-
-### 13.6 Include-Pfade und Dependencies
-
-**Kritische Include-Reihenfolge:**
-```cpp
-#define FUSE_USE_VERSION 31  // VOR allen FUSE includes!
-#include <napi.h>
-#include <fuse3/fuse.h>
-#include <fuse3/fuse_lowlevel.h>
-```
-
-**CMake Include-Setup:**
-```cmake
-include_directories(${CMAKE_JS_INC})                    # Node headers
-include_directories(${NODE_ADDON_API_DIR})              # node-addon-api
-include_directories(${FUSE3_INCLUDE_DIRS})              # FUSE3
-```
-
-### 13.7 Symbol-Export Troubleshooting
-
-**Häufige Linker-Fehler:**
-- `undefined symbol: _ZN11fuse_native...` → Funktion nicht in main.cc exportiert
-- `FUSE_USE_VERSION not defined` → Definition fehlt
-- `napi.h: file not found` → Include-Pfade falsch
-
-**Debug-Befehle:**
-```bash
-# Symbole in gebauter Library prüfen
-nm build/Release/fuse-native.node | grep CreateManagedBuffer
-
-# Include-Pfade testen
-echo '#include <napi.h>' | g++ -x c++ -E - -I./node_modules/node-addon-api
-```
-
-### 13.8 Threading & TSFN Patterns
-
-**Thread-sichere Callbacks:**
-```cpp
-// TSFN für C++ → JavaScript Calls
-Napi::ThreadSafeFunction tsfn = Napi::ThreadSafeFunction::New(
-    env, callback, "FuseOperation", 0, 1);
-    
-// Aufruf aus C++ Thread
-tsfn.BlockingCall([](Napi::Env env, Napi::Function jsCallback) {
-    // Sichere Ausführung im JS Thread
-});
-```
-
-### 13.9 Prebuilt-Management
-
-**Nach CMake-Build Prebuilt updaten (WICHTIG!):**
-```bash
-cp build/Release/fuse-native.node prebuilds/linux-x64/@cocalc+fuse-native.node
-```
-
-**Warum kritisch:**
-- Tests nutzen Prebuilt-Verzeichnis, nicht build/
-- Native Tests schlagen fehl mit "undefined symbol" wenn vergessen
-- CMake und node-gyp erzeugen verschiedene Binaries
-- Neue C++ Exports müssen in Prebuilds verfügbar sein
-
----
-
-## 14) Troubleshooting & Häufige Probleme
-
-### 14.1 Build-Fehler
-
-**"FUSE_USE_VERSION not defined"**
-```bash
-# Lösung: CMakeLists.txt prüfen
-add_definitions(-DFUSE_USE_VERSION=31)
-```
-
-**"napi.h: file not found"**
-```bash
-# Lösung: Node-Addon-API installiert?
-npm install
-# Include-Pfade in CMake prüfen
-include_directories(${CMAKE_JS_INC})
-```
-
-**"undefined symbol: _ZN11fuse_native..."**
-```bash
-# Lösung: Funktion nicht in main.cc exportiert
-napiExports.Set("functionName", Napi::Function::New(napiEnv, WrapperFunction));
-# Oder Prebuilt updaten:
-cp build/Release/fuse-native.node prebuilds/linux-x64/@cocalc+fuse-native.node
-```
-
-### 14.2 Test-Fehler
-
-**"Cannot access 'mockBinding' before initialization"**
-- Mock-Deklaration VOR jest.mock() verschieben
-- Import-Statements NACH Mocks platzieren
-
-**"Worker process failed to exit gracefully"**
-- Normal bei FUSE-Tests (Threading-Artefakte)
-- Mit `--detectOpenHandles` analysieren falls nötig
-
-### 14.3 Runtime-Fehler
-
-**TypeError: Expected BigInt**
-```typescript
-// Falsch: number verwenden
-await copyFileRange(fd1, 0, fd2, 0, 1024);
-
-// Richtig: BigInt verwenden
-await copyFileRange(fd1, 0n, fd2, 0n, 1024n);
-```
-
-**"Transport endpoint is not connected"**
-- FUSE Session nicht gemountet
-- `isReady()` vor Operation prüfen
-
-### 14.4 Debug-Kommandos
-
-```bash
-# Build-Status prüfen
-npm run build 2>&1 | grep -E "(error|Error)"
-
-# Symbole in Binary prüfen  
-nm build/Release/fuse-native.node | grep -i "symbol_name"
-
-# CMake Cache löschen bei hartnäckigen Problemen
-rm -rf build/ && npm run build:native
-
-# Node-Gyp vs CMake Unterschiede
-ls -la build/Release/ prebuilds/linux-x64/
-```
-
-### 14.5 Performance Issues
-
-**Langsame Builds:**
-- CMake bevorzugen: `npm run build:native`
-- Ninja Generator nutzen (automatisch wenn verfügbar)
-
-**Hoher Speicherverbrauch:**
-- Buffer-Validierung: `validateBuffer()` regelmäßig
-- External ArrayBuffer für große Daten
-- Stats monitoren: `getBufferStats()`
-
-### 14.6 Typische Stolperfallen
-
-**1. Namespace-Vergessen:**
-```cpp
-// Falsch
-errno_to_string(err)
-
-// Richtig  
-fuse_native::errno_to_string(err)
-```
-
-**2. FUSE_USE_VERSION Position:**
-```cpp
-// Falsch: Nach includes
-#include <fuse3/fuse.h>
-#define FUSE_USE_VERSION 31
-
-// Richtig: Vor allen FUSE includes
-#define FUSE_USE_VERSION 31
-#include <fuse3/fuse.h>
-```
-
-**3. BigInt vs Number Verwechslung:**
-```typescript
-// Falsch: Precision Loss bei > 2^53
-const offset = Number(offsetBigInt);
-
-// Richtig: BigInt durchgängig
-const result = await operation(offset); // offset bleibt BigInt
-```
-
----
-
-## 15) Quick Reference für Agenten
-
-### 15.1 Schnelle Build-Kommandos
-```bash
-# Vollständiger Build
-npm run build
-
-# Nur Native (schneller bei C++ Änderungen)
-npm run build:native
-
-# Tests ausführen
-npm test
-
-# Prebuilt nach CMake-Build updaten (KRITISCH nach Symbol-Änderungen!)
-cp build/Release/fuse-native.node prebuilds/linux-x64/@cocalc+fuse-native.node
-
-# Build-Cache löschen bei Problemen
-rm -rf build/ && npm run build:native
-```
-
-### 15.2 Häufigste Code-Pattern
-```cpp
-// C++ BigInt Helper verwenden
-uint64_t value = fuse_native::NapiHelpers::GetBigUint64(env, info[0]);
-return fuse_native::NapiHelpers::CreateBigUint64(env, result);
-
-// Funktion in main.cc exportieren
-napiExports.Set("functionName", Napi::Function::New(napiEnv, WrapperFunc));
-
-// Namespace korrekt verwenden
-fuse_native::errno_to_string(err)  // Nie vergessen: fuse_native::
-```
-
-### 15.3 Kritische Definitionen
-```cpp
-// Immer VOR allen FUSE includes!
-#define FUSE_USE_VERSION 31
-#include <napi.h>
-#include <fuse3/fuse.h>
-```
-
-### 15.4 TypeScript BigInt Pattern
-```typescript
-// Immer BigInt für 64-bit Werte
-const offset = 0n;  // nicht: 0
-const size = BigInt(fileSize);  // Conversion falls nötig
-await copyFileRange(fd1, offset, fd2, 0n, size);
-```
-
-### 15.5 Test-Fix Pattern
-```typescript
-// Mock VOR jest.mock() deklarieren
-const mockBinding = { /* ... */ };
-jest.mock('../build/Release/fuse-native.node', () => mockBinding);
-// Import NACH Mocks
-import { functionName } from '../ts/index.js';
-```
-
----
-
-## 16) Jest & Testing Troubleshooting
-
-### 16.1 BigInt Serialization Issues
-```bash
-# Fehler: "Do not know how to serialize a BigInt"
-# Lösung: Vermeiden von BigInt in mockReturnValue() calls
-mockBinding.func.mockReturnValue(42n);  # ✓ OK - direkte BigInt
-mockBinding.func.mockReturnValue({size: BigInt(x)});  # ❌ Fehler
-
-# Workaround: Literale verwenden
-mockBinding.func.mockReturnValue({size: 42n});  # ✓ OK
-```
-
-### 16.2 Errno Handling in Tests
-```typescript
-// FuseErrno akzeptiert positive UND negative errno-Werte
-new FuseErrno(2)    // wird zu errno: -2, code: 'ENOENT'  
-new FuseErrno(-2)   // wird zu errno: -2, code: 'ENOENT'
-
-// Tests sollten error.code prüfen, nicht error.message
-expect(error.code).toBe('ENOENT');  // ✓ Richtig
-expect(error.message).toContain('ENOENT');  // ❌ Falsch
-```
-
-### 16.3 Mock-Isolation
-```typescript
-// Beide Binding-Pfade mocken für Isolation
-jest.mock('../build/Release/fuse-native.node', () => mockBinding);
-jest.mock('../prebuilds/linux-x64/@cocalc+fuse-native.node', () => mockBinding);
-```
-
----
-
-## 17) Glossar (Kurz)
-
-* **TSFN**: ThreadSafeFunction (N-API Mechanismus für C→JS).
-* **errno**: POSIX Fehlercode, negativ zurück an FUSE.
-* **ns-epoch**: Nanosekunden seit Unix-Epoch (BigInt).
-* **External ArrayBuffer**: JS-Buffer, der auf native Speicher zeigt.
-* **Prebuilds**: Vorkompilierte Binaries für verschiedene Plattformen.
-* **Symbol Mangling**: C++ Namen-Kodierung im Linker (z.B. `_ZN11fuse_native...`).
+### Concurrency & Shutdown
+
+* Global FIFO across ops (order not guaranteed across inodes/fds).
+* Per-FD write queues serialize writes.
+* Backpressure handled by dispatcher backlog.
+* JS side controls concurrency (semaphores) but API stays Promise-based.
+* `unmount()`: stop new requests, drain queues, release TSFN after full drain, then CLOSED.
+
+### Invariants
+
+* One reply per request; none after exit.
+* `FUSE_USE_VERSION=31` before all FUSE includes.
+* Per-FD write serialization; no JS reentrancy.
+* Final TSFN release after full drain.
+
+## Glossary
+
+* **TSFN**: ThreadSafeFunction (C++→JS bridge).
+* **errno**: POSIX error code, negative in API.
+* **ns-epoch**: nanoseconds since Unix epoch (BigInt).
+* **External ArrayBuffer**: JS buffer pointing to native memory.
+* **Prebuilds**: precompiled binaries for platforms.

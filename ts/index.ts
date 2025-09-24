@@ -31,21 +31,10 @@ try {
 // Re-export types
 export * from './types.js';
 export * from './errors.js';
-export {
-  S_IFMT,
-  S_IFREG,
-  S_IFDIR,
-  S_IFLNK,
-  S_IFBLK,
-  S_IFCHR,
-  S_IFIFO,
-  S_IFSOCK,
-} from './constants.js';
-export * from './operations.js';
-export * from './session.js';
 export * from './helpers.js';
 export * from './time.js';
 export * from './abort.js';
+export * from './ops/index.js';
 export {
   errno as getErrno,
   errname,
@@ -74,6 +63,12 @@ import {
   validateAbortOptions,
   type AbortOptions,
 } from './abort.js';
+
+// Re-export native constants with fallbacks
+export const errno = {};
+export const mode = {};
+export const flags = {};
+export const xattr = {};
 
 // Import types
 import type {
@@ -1293,13 +1288,8 @@ export async function resetInitBridge(): Promise<void> {
   });
 }
 
-// Re-export native constants
-export const errno = binding.errno;
-export const mode = binding.mode;
-export const flags = binding.flags;
-export const xattr = binding.xattr;
 
-// Default export
+
 const fuseNative = {
   createSession,
   getVersion,
@@ -1350,11 +1340,6 @@ const fuseNative = {
   getFuseConfig,
   getCapabilityNames,
   resetInitBridge,
-  // Constants
-  errno,
-  mode,
-  flags,
-  xattr,
 };
 
 export default fuseNative;

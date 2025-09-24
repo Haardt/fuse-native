@@ -15,11 +15,6 @@ import type {
 } from './types.js';
 
 import { FuseErrno, toFuseError } from './errors.js';
-import {
-  OperationManager,
-  OperationWrapper,
-  registerOperationHandlers,
-} from './operations.js';
 
 /**
  * Session state enumeration
@@ -38,9 +33,8 @@ export enum SessionState {
 export class FuseSessionImpl implements FuseSession {
   private readonly _mountpoint: string;
   private readonly options: Required<FuseSessionOptions>;
-  private readonly operationManager: OperationManager;
-  private readonly operationWrapper: OperationWrapper;
   private readonly binding: any;
+  private readonly registeredOperations: (keyof FuseOperationHandlers)[];
 
   private state: SessionState = SessionState.CREATED;
   private sessionHandle: any = null;
@@ -84,20 +78,15 @@ export class FuseSessionImpl implements FuseSession {
       ...options,
     };
 
-    // Initialize operation management
-    this.operationManager = new OperationManager();
-    this.operationWrapper = new OperationWrapper(this.operationManager);
-
     // Register operation handlers
-    registerOperationHandlers(this.operationManager, operations);
-
-    // Validate required operations
-    const validationErrors = this.operationManager.validateHandlers();
-    if (validationErrors.length > 0) {
-      throw new FuseErrno(
-        'EINVAL',
-        `Missing required operations: ${validationErrors.join(', ')}`
-      );
+    this.registeredOperations = [];
+    for (const opName in operations) {
+      const op = opName as keyof FuseOperationHandlers;
+      const handler = operations[op];
+      if (handler) {
+        this.binding.setOperationHandler(op, handler);
+        this.registeredOperations.push(op);
+      }
     }
 
     // Setup cleanup on process exit
@@ -206,9 +195,9 @@ export class FuseSessionImpl implements FuseSession {
       }
 
       // Clear operation handlers
-      this.operationManager.getRegisteredOperations().forEach(op => {
-        this.operationManager.removeHandler(op);
-      });
+      for (const op of this.registeredOperations) {
+        this.binding.removeOperationHandler(op);
+      }
     } catch (error) {
       console.error('Error during session cleanup:', error);
     } finally {
@@ -226,7 +215,6 @@ export class FuseSessionImpl implements FuseSession {
         this.sessionHandle = this.binding.createSession({
           mountpoint: this.mountpoint,
           options: this.options,
-          operations: this.createOperationCallbacks(),
         });
 
         // Mount the filesystem
@@ -281,68 +269,7 @@ export class FuseSessionImpl implements FuseSession {
     });
   }
 
-  /**
-   * Create operation callbacks for the native binding
-   */
-  private createOperationCallbacks(): Record<string, Function> {
-    const callbacks: Record<string, Function> = {};
 
-    for (const operation of this.operationManager.getRegisteredOperations()) {
-      callbacks[operation] = this.createOperationCallback(operation);
-    }
-
-    return callbacks;
-  }
-
-  /**
-   * Create callback for a specific operation
-   */
-  private createOperationCallback(operation: string): Function {
-    return async (...args: any[]) => {
-      try {
-        switch (operation) {
-          case 'lookup':
-            return await this.operationWrapper.lookup(
-              args[0],
-              args[1],
-              args[2],
-              args[3]
-            );
-          case 'getattr':
-            return await this.operationWrapper.getattr(
-              args[0],
-              args[1],
-              args[2],
-              args[3]
-            );
-          case 'read':
-            return await this.operationWrapper.read(args[0], args[1], args[2]);
-          case 'write':
-            return await this.operationWrapper.write(
-              args[0],
-              args[1],
-              args[2],
-              args[3]
-            );
-          case 'readdir':
-            return await this.operationWrapper.readdir(
-              args[0],
-              args[1],
-              args[2],
-              args[3],
-              args[4]
-            );
-          default:
-            throw new FuseErrno(
-              'ENOSYS',
-              `Operation ${operation} not implemented`
-            );
-        }
-      } catch (error) {
-        throw toFuseError(error);
-      }
-    };
-  }
 
   /**
    * Setup exit handlers for auto-unmount

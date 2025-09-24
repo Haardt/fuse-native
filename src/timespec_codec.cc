@@ -175,7 +175,8 @@ int64_t timespec_diff_ns(const struct timespec& later, const struct timespec& ea
  */
 bool is_valid_timespec(const struct timespec& ts) {
     // Check for valid nanosecond range
-    if (ts.tv_nsec < 0 || ts.tv_nsec >= NS_PER_SEC) {
+    // tv_nsec should be in [0, NS_PER_SEC)
+    if (ts.tv_nsec < 0 || static_cast<uint64_t>(ts.tv_nsec) >= NS_PER_SEC) {
         return false;
     }
     
@@ -201,7 +202,8 @@ void normalize_timespec(struct timespec* ts) {
     }
     
     // Handle nanosecond overflow
-    if (ts->tv_nsec >= NS_PER_SEC) {
+    // Handle nanosecond overflow
+    if (static_cast<uint64_t>(ts->tv_nsec) >= NS_PER_SEC) {
         time_t extra_sec = ts->tv_nsec / NS_PER_SEC;
         ts->tv_sec += extra_sec;
         ts->tv_nsec %= NS_PER_SEC;

@@ -1,39 +1,35 @@
 /**
  * @file fuse_bridge.h
  * @brief FUSE3 bridge declarations for N-API integration
- * 
- * This header defines the main bridge structures and functions that connect
- * FUSE3 operations with Node.js callbacks through N-API ThreadSafeFunction.
  */
 
 #ifndef FUSE_BRIDGE_H
 #define FUSE_BRIDGE_H
 
 #include <napi.h>
-#include <fuse3/fuse.h>
 #include <fuse3/fuse_lowlevel.h>
-#include <memory>
-#include <unordered_map>
-#include <string>
-#include <mutex>
-#include <condition_variable>
 #include <atomic>
+#include <chrono>
+#include <functional>
+#include <memory>
+#include <mutex>
+#include <optional>
+#include <string>
+#include <unordered_map>
+#include <vector>
+
+#include "tsfn_dispatcher.h"
 
 namespace fuse_native {
 
-/**
- * Forward declarations
- */
 class SessionManager;
-class Operations;
+class FuseBridge;
 
 /**
- * FUSE operation types enumeration
- * Maps to the FUSE lowlevel operations structure
+ * Supported FUSE operation types for registration/dispatch.
  */
 enum class FuseOpType {
-    LOOKUP = 0,
-    FORGET,
+    LOOKUP,
     GETATTR,
     SETATTR,
     READLINK,
@@ -41,7 +37,6 @@ enum class FuseOpType {
     MKDIR,
     UNLINK,
     RMDIR,
-    SYMLINK,
     RENAME,
     LINK,
     OPEN,
@@ -55,201 +50,176 @@ enum class FuseOpType {
     RELEASEDIR,
     FSYNCDIR,
     STATFS,
-    SETXATTR,
-    GETXATTR,
-    LISTXATTR,
-    REMOVEXATTR,
     ACCESS,
     CREATE,
-    GETLK,
-    SETLK,
-    BMAP,
-    IOCTL,
-    POLL,
-    WRITE_BUF,
-    RETRIEVE_REPLY,
-    FORGET_MULTI,
-    FLOCK,
-    FALLOCATE,
-    READDIRPLUS,
-    RENAME2,
-    LSEEK,
-    COPY_FILE_RANGE,
-    SETUPMAPPING,
-    REMOVEMAPPING
+    UNKNOWN
 };
 
-/**
- * Operation context for FUSE requests
- * Contains all necessary information for processing a FUSE operation
- */
-struct FuseRequestContext {
+FuseOpType StringToFuseOpType(const std::string& name);
+const char* FuseOpTypeToString(FuseOpType type);
+
+struct FuseRequestContext : public std::enable_shared_from_this<FuseRequestContext> {
+    FuseRequestContext(FuseOpType op_type, fuse_req_t request, FuseBridge* bridge);
+
+    FuseRequestContext(const FuseRequestContext&) = delete;
+    FuseRequestContext& operator=(const FuseRequestContext&) = delete;
+
+    FuseRequestContext(FuseRequestContext&&) = delete;
+    FuseRequestContext& operator=(FuseRequestContext&&) = delete;
+
+    void CaptureCallerContext();
+    bool TryMarkReplied();
+    void ReplyError(int errno_code);
+    void ReplyOk();
+    void ReplyUnsupported();
+
+    void ReplyAttr(const struct stat& attr_value, double attr_timeout);
+    void ReplyEntry(const struct fuse_entry_param& entry);
+    void ReplyBuf(const void* data_ptr, size_t length);
+    void ReplyWrite(size_t bytes_written);
+    void ReplyOpen(const struct fuse_file_info& result_fi);
+    void ReplyCreate(const struct fuse_entry_param& entry,
+                     const struct fuse_file_info& result_fi);
+    void ReplyStatfs(const struct statvfs& stats);
+    void ReplyReadlink(const std::string& target_path);
+
     FuseOpType op_type;
-    fuse_req_t req;
+    fuse_req_t request;
+    FuseBridge* bridge;
+    uint64_t request_id;
+    CallbackPriority priority;
+    std::chrono::steady_clock::time_point start_time;
+    struct fuse_ctx caller_ctx;
+    bool has_caller_ctx;
+
+    // Generic request metadata (populated per-operation)
     fuse_ino_t ino;
-    std::string path;
+    fuse_ino_t parent;
+    fuse_ino_t new_parent;
+    std::string name;
+    std::string new_name;
+    mode_t mode;
+    dev_t rdev;
+    uint32_t setattr_valid;
+    struct stat attr;
+    bool has_attr;
+    struct fuse_file_info fi;
+    bool has_fi;
+    struct fuse_file_info fi_out;
+    bool has_fi_out;
     uint64_t offset;
     size_t size;
     int flags;
-    mode_t mode;
-    uid_t uid;
-    gid_t gid;
-    void* buffer;
-    size_t buffer_size;
-    bool buffer_owned;
-    
-    // Constructor
-    FuseRequestContext(FuseOpType type, fuse_req_t request);
-    
-    // Destructor - cleans up owned buffers
-    ~FuseRequestContext();
-    
-    // Disable copy constructor and assignment
-    FuseRequestContext(const FuseRequestContext&) = delete;
-    FuseRequestContext& operator=(const FuseRequestContext&) = delete;
-    
-    // Enable move constructor and assignment
-    FuseRequestContext(FuseRequestContext&& other) noexcept;
-    FuseRequestContext& operator=(FuseRequestContext&& other) noexcept;
+    int datasync;
+    uint32_t access_mask;
+    std::vector<uint8_t> data;
+
+    std::atomic<bool> replied;
 };
 
 /**
- * Response data for FUSE operations
- * Contains the result data and status for a FUSE operation
- */
-struct FuseResponse {
-    int errno_result;
-    struct stat attr;
-    std::string data;
-    std::vector<char> buffer;
-    uint64_t next_offset;
-    bool has_attr;
-    bool has_data;
-    bool has_buffer;
-    double attr_timeout;
-    double entry_timeout;
-    
-    // Constructor
-    FuseResponse();
-    
-    // Helper methods
-    void SetError(int err);
-    void SetAttr(const struct stat& st, double timeout = 1.0);
-    void SetData(const std::string& str);
-    void SetData(const char* data, size_t len);
-    void SetBuffer(std::vector<char>&& buf);
-};
-
-/**
- * FUSE Bridge class
- * Manages the connection between FUSE operations and Node.js callbacks
+ * Bridge between FUSE kernel callbacks and the JavaScript layer.
  */
 class FuseBridge {
 public:
     explicit FuseBridge(SessionManager* session_mgr);
     ~FuseBridge();
-    
-    // Initialize the bridge with operation handlers
+
     bool Initialize(Napi::Env env);
-    
-    // Shutdown the bridge and clean up resources
     void Shutdown();
-    
-    // Set operation handler for a specific FUSE operation
-    bool SetOperationHandler(FuseOpType op_type, Napi::Function handler);
-    
-    // Remove operation handler for a specific FUSE operation
-    void RemoveOperationHandler(FuseOpType op_type);
-    
-    // Get the FUSE lowlevel operations structure
-    const struct fuse_lowlevel_ops* GetFuseOperations() const;
-    
-    // Process a FUSE request (called from FUSE operation callbacks)
-    void ProcessRequest(std::unique_ptr<FuseRequestContext> context);
-    
-    // Send response back to FUSE (called from Node.js callback completion)
-    void SendResponse(fuse_req_t req, const FuseResponse& response);
-    
-    // Specific operation processors
-    void ProcessStatfsRequest(std::unique_ptr<FuseRequestContext> context);
-    
-    // Specific operation handlers
-    static void HandleStatfsSuccess(Napi::Env env, Napi::Value result, FuseRequestContext* context);
-    static void HandleStatfsError(Napi::Env env, Napi::Value error, FuseRequestContext* context);
+
+    const struct fuse_lowlevel_ops* GetFuseOperations() const { return &fuse_ops_; }
+
+    // Global handler management used by the N-API surface
+    static bool RegisterOperationHandler(Napi::Env env, FuseOpType op_type, Napi::Function handler);
+    static bool RemoveOperationHandler(FuseOpType op_type);
+    static bool HasOperationHandler(FuseOpType op_type);
+
+    static FuseBridge* GetBridgeFromRequest(fuse_req_t req);
 
 private:
     SessionManager* session_manager_;
-    std::unordered_map<FuseOpType, Napi::ThreadSafeFunction> operation_handlers_;
-    std::mutex handlers_mutex_;
-    std::atomic<bool> initialized_;
-    std::atomic<bool> shutdown_;
-    
-    // FUSE lowlevel operations structure
+    napi_env env_;
+    bool initialized_;
     struct fuse_lowlevel_ops fuse_ops_;
-    
-    // ThreadSafeFunction callback for processing requests
-    static void ProcessRequestCallback(Napi::Env env, Napi::Function js_callback, 
-                                     std::unique_ptr<FuseRequestContext>* context);
-    
-    // Initialize FUSE operations structure
+
+    struct HandlerRecord {
+        std::string operation_name;
+    };
+
+    static std::mutex handler_mutex_;
+    static std::unordered_map<FuseOpType, HandlerRecord> handler_registry_;
+
     void InitializeFuseOperations();
-    
-    // Static FUSE operation callbacks
-    static void ll_lookup(fuse_req_t req, fuse_ino_t parent, const char *name);
-    static void ll_forget(fuse_req_t req, fuse_ino_t ino, uint64_t nlookup);
-    static void ll_getattr(fuse_req_t req, fuse_ino_t ino, struct fuse_file_info *fi);
-    static void ll_setattr(fuse_req_t req, fuse_ino_t ino, struct stat *attr, 
-                          int to_set, struct fuse_file_info *fi);
-    static void ll_readlink(fuse_req_t req, fuse_ino_t ino);
-    static void ll_mknod(fuse_req_t req, fuse_ino_t parent, const char *name, 
-                        mode_t mode, dev_t rdev);
-    static void ll_mkdir(fuse_req_t req, fuse_ino_t parent, const char *name, mode_t mode);
-    static void ll_unlink(fuse_req_t req, fuse_ino_t parent, const char *name);
-    static void ll_rmdir(fuse_req_t req, fuse_ino_t parent, const char *name);
-    static void ll_symlink(fuse_req_t req, const char *link, fuse_ino_t parent, 
-                          const char *name);
-    static void ll_rename(fuse_req_t req, fuse_ino_t parent, const char *name, 
-                         fuse_ino_t newparent, const char *newname, unsigned int flags);
-    static void ll_link(fuse_req_t req, fuse_ino_t ino, fuse_ino_t newparent, 
-                       const char *newname);
-    static void ll_open(fuse_req_t req, fuse_ino_t ino, struct fuse_file_info *fi);
-    static void ll_read(fuse_req_t req, fuse_ino_t ino, size_t size, off_t off, 
-                       struct fuse_file_info *fi);
-    static void ll_write(fuse_req_t req, fuse_ino_t ino, const char *buf, size_t size, 
-                        off_t off, struct fuse_file_info *fi);
-    static void ll_flush(fuse_req_t req, fuse_ino_t ino, struct fuse_file_info *fi);
-    static void ll_release(fuse_req_t req, fuse_ino_t ino, struct fuse_file_info *fi);
-    static void ll_fsync(fuse_req_t req, fuse_ino_t ino, int datasync, 
-                        struct fuse_file_info *fi);
-    static void ll_opendir(fuse_req_t req, fuse_ino_t ino, struct fuse_file_info *fi);
-    static void ll_readdir(fuse_req_t req, fuse_ino_t ino, size_t size, off_t off, 
-                          struct fuse_file_info *fi);
-    static void ll_releasedir(fuse_req_t req, fuse_ino_t ino, struct fuse_file_info *fi);
-    static void ll_fsyncdir(fuse_req_t req, fuse_ino_t ino, int datasync, 
-                           struct fuse_file_info *fi);
-    static void ll_statfs(fuse_req_t req, fuse_ino_t ino);
-    static void ll_setxattr(fuse_req_t req, fuse_ino_t ino, const char *name, 
-                           const char *value, size_t size, int flags);
-    static void ll_getxattr(fuse_req_t req, fuse_ino_t ino, const char *name, size_t size);
-    static void ll_listxattr(fuse_req_t req, fuse_ino_t ino, size_t size);
-    static void ll_removexattr(fuse_req_t req, fuse_ino_t ino, const char *name);
-    static void ll_access(fuse_req_t req, fuse_ino_t ino, int mask);
-    static void ll_create(fuse_req_t req, fuse_ino_t parent, const char *name, 
-                         mode_t mode, struct fuse_file_info *fi);
-    
-    // Helper method to get bridge instance from FUSE request
-    static FuseBridge* GetBridgeFromRequest(fuse_req_t req);
+    void ProcessRequest(std::shared_ptr<FuseRequestContext> context,
+                        std::function<void(Napi::Env, Napi::Function)> js_invoker);
+    std::shared_ptr<FuseRequestContext> CreateContext(FuseOpType op_type, fuse_req_t req);
+
+    // Instance-level handlers invoked from static callbacks
+    void HandleLookup(fuse_req_t req, fuse_ino_t parent, const char* name);
+    void HandleGetattr(fuse_req_t req, fuse_ino_t ino, struct fuse_file_info* fi);
+    void HandleSetattr(fuse_req_t req, fuse_ino_t ino, struct stat* attr, int to_set,
+                       struct fuse_file_info* fi);
+    void HandleReadlink(fuse_req_t req, fuse_ino_t ino);
+    void HandleMknod(fuse_req_t req, fuse_ino_t parent, const char* name, mode_t mode, dev_t rdev);
+    void HandleMkdir(fuse_req_t req, fuse_ino_t parent, const char* name, mode_t mode);
+    void HandleUnlink(fuse_req_t req, fuse_ino_t parent, const char* name);
+    void HandleRmdir(fuse_req_t req, fuse_ino_t parent, const char* name);
+    void HandleRename(fuse_req_t req, fuse_ino_t parent, const char* name,
+                      fuse_ino_t newparent, const char* newname, unsigned int flags);
+    void HandleLink(fuse_req_t req, fuse_ino_t ino, fuse_ino_t newparent, const char* newname);
+    void HandleOpen(fuse_req_t req, fuse_ino_t ino, struct fuse_file_info* fi);
+    void HandleRead(fuse_req_t req, fuse_ino_t ino, size_t size, off_t off,
+                    struct fuse_file_info* fi);
+    void HandleWrite(fuse_req_t req, fuse_ino_t ino, const char* buf, size_t size, off_t off,
+                     struct fuse_file_info* fi);
+    void HandleFlush(fuse_req_t req, fuse_ino_t ino, struct fuse_file_info* fi);
+    void HandleRelease(fuse_req_t req, fuse_ino_t ino, struct fuse_file_info* fi);
+    void HandleFsync(fuse_req_t req, fuse_ino_t ino, int datasync, struct fuse_file_info* fi);
+    void HandleOpendir(fuse_req_t req, fuse_ino_t ino, struct fuse_file_info* fi);
+    void HandleReaddir(fuse_req_t req, fuse_ino_t ino, size_t size, off_t off,
+                       struct fuse_file_info* fi);
+    void HandleReleasedir(fuse_req_t req, fuse_ino_t ino, struct fuse_file_info* fi);
+    void HandleFsyncdir(fuse_req_t req, fuse_ino_t ino, int datasync, struct fuse_file_info* fi);
+    void HandleStatfs(fuse_req_t req, fuse_ino_t ino);
+    void HandleAccess(fuse_req_t req, fuse_ino_t ino, int mask);
+    void HandleCreate(fuse_req_t req, fuse_ino_t parent, const char* name, mode_t mode,
+                      struct fuse_file_info* fi);
+
+    // Static callbacks wired into fuse_lowlevel_ops
+    static void LookupCallback(fuse_req_t req, fuse_ino_t parent, const char* name);
+    static void GetattrCallback(fuse_req_t req, fuse_ino_t ino, struct fuse_file_info* fi);
+    static void SetattrCallback(fuse_req_t req, fuse_ino_t ino, struct stat* attr, int to_set,
+                                struct fuse_file_info* fi);
+    static void ReadlinkCallback(fuse_req_t req, fuse_ino_t ino);
+    static void MknodCallback(fuse_req_t req, fuse_ino_t parent, const char* name, mode_t mode, dev_t rdev);
+    static void MkdirCallback(fuse_req_t req, fuse_ino_t parent, const char* name, mode_t mode);
+    static void UnlinkCallback(fuse_req_t req, fuse_ino_t parent, const char* name);
+    static void RmdirCallback(fuse_req_t req, fuse_ino_t parent, const char* name);
+    static void RenameCallback(fuse_req_t req, fuse_ino_t parent, const char* name,
+                               fuse_ino_t newparent, const char* newname, unsigned int flags);
+    static void LinkCallback(fuse_req_t req, fuse_ino_t ino, fuse_ino_t newparent, const char* newname);
+    static void OpenCallback(fuse_req_t req, fuse_ino_t ino, struct fuse_file_info* fi);
+    static void ReadCallback(fuse_req_t req, fuse_ino_t ino, size_t size, off_t off,
+                             struct fuse_file_info* fi);
+    static void WriteCallback(fuse_req_t req, fuse_ino_t ino, const char* buf, size_t size, off_t off,
+                              struct fuse_file_info* fi);
+    static void FlushCallback(fuse_req_t req, fuse_ino_t ino, struct fuse_file_info* fi);
+    static void ReleaseCallback(fuse_req_t req, fuse_ino_t ino, struct fuse_file_info* fi);
+    static void FsyncCallback(fuse_req_t req, fuse_ino_t ino, int datasync, struct fuse_file_info* fi);
+    static void OpendirCallback(fuse_req_t req, fuse_ino_t ino, struct fuse_file_info* fi);
+    static void ReaddirCallback(fuse_req_t req, fuse_ino_t ino, size_t size, off_t off,
+                                struct fuse_file_info* fi);
+    static void ReleasedirCallback(fuse_req_t req, fuse_ino_t ino, struct fuse_file_info* fi);
+    static void FsyncdirCallback(fuse_req_t req, fuse_ino_t ino, int datasync, struct fuse_file_info* fi);
+    static void StatfsCallback(fuse_req_t req, fuse_ino_t ino);
+    static void AccessCallback(fuse_req_t req, fuse_ino_t ino, int mask);
+    static void CreateCallback(fuse_req_t req, fuse_ino_t parent, const char* name, mode_t mode,
+                               struct fuse_file_info* fi);
 };
 
-/**
- * Helper function to convert FuseOpType to string
- */
-const char* FuseOpTypeToString(FuseOpType op_type);
-
-/**
- * Helper function to convert string to FuseOpType
- */
-FuseOpType StringToFuseOpType(const std::string& str);
+Napi::Value SetOperationHandler(const Napi::CallbackInfo& info);
+Napi::Value RemoveOperationHandler(const Napi::CallbackInfo& info);
 
 } // namespace fuse_native
 

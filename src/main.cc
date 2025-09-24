@@ -15,7 +15,6 @@
 #include "fuse_bridge.h"
 #include "napi_helpers.h"
 #include "session_manager.h"
-#include "operations.h"
 #include "errno_mapping.h"
 #include "buffer_bridge.h"
 #include "copy_file_range.h"

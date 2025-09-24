@@ -60,7 +60,9 @@ public:
      * @param mountpoint Directory to mount filesystem
      * @param options Session configuration options
      */
-    explicit SessionManager(const std::string& mountpoint, const SessionOptions& options = {});
+    explicit SessionManager(napi_env env,
+                            const std::string& mountpoint,
+                            const SessionOptions& options = {});
     
     /**
      * Destructor - ensures proper cleanup
@@ -133,12 +135,13 @@ private:
     const std::string mountpoint_;
     const SessionOptions options_;
     const uint64_t session_id_;
-    
+
     // Session state
     mutable std::mutex state_mutex_;
     SessionState state_;
-    
+
     // FUSE components
+    napi_env env_;
     struct fuse_session* fuse_session_;
     struct fuse_chan* fuse_channel_;
     std::unique_ptr<FuseBridge> bridge_;

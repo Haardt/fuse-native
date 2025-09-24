@@ -53,12 +53,10 @@ endif()
 set(SOURCE_FILES
     src/main.cc
     src/fuse_bridge.cc
-    src/statfs_bridge.cc
     src/napi_helpers.cc
     src/napi_bigint.cc
     src/timespec_codec.cc
     src/errno_mapping.cc
-    src/operations.cc
     src/session_manager.cc
     src/buffer_bridge.cc
     src/copy_file_range.cc

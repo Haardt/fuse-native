@@ -28,11 +28,11 @@ Verifizieren, dass **alle FUSE3-Funktionen** korrekt durch die Ebenen **C/N-API 
 - Init Bridge: initializeInitBridge, setInitCallback
 
 ❌ FEHLENDE FUSE-OPS (struct fuse_operations):
-- getattr ❌ (nur TS-Handler-Registry, kein C++ FUSE-Callback)
-- readlink ❌
-- mknod ❌
-- mkdir ❌ (nur TS-Handler definiert)
-- unlink ❌ (nur TS-Handler definiert)
+- getattr  (nur TS-Handler-Registry, kein C++ FUSE-Callback)
+- readlink 
+- mknod 
+- mkdir  (nur TS-Handler definiert)
+- unlink  (nur TS-Handler definiert)
 - rmdir ❌ (nur TS-Handler definiert)
 - symlink ❌
 - rename ❌ (nur TS-Handler definiert)

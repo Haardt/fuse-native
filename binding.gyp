@@ -8,10 +8,15 @@
         "src/napi_helpers.cc",
         "src/errno_mapping.cc",
         "src/timespec_codec.cc",
-        "src/operations.cc",
         "src/fuse_bridge.cc",
-        "src/statfs_bridge.cc",
-        "src/session_manager.cc"
+        "src/session_manager.cc",
+        "src/buffer_bridge.cc",
+        "src/copy_file_range.cc",
+        "src/tsfn_dispatcher.cc",
+        "src/write_queue.cc",
+        "src/shutdown.cc",
+        "src/xattr_bridge.cc",
+        "src/init_bridge.cc",
       ],
       "include_dirs": [
         "<!@(node -p \"require('node-addon-api').include\")",

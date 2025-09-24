@@ -27,9 +27,9 @@ static uint64_t next_session_id = 1;
 /**
  * SessionManager implementation
  */
-SessionManager::SessionManager(const std::string& mountpoint, const SessionOptions& options)
+SessionManager::SessionManager(napi_env env, const std::string& mountpoint, const SessionOptions& options)
     : mountpoint_(mountpoint), options_(options), session_id_(next_session_id++),
-      state_(SessionState::CREATED), fuse_session_(nullptr), fuse_channel_(nullptr),
+      state_(SessionState::CREATED), env_(env), fuse_session_(nullptr), fuse_channel_(nullptr),
       bridge_(nullptr), mount_thread_running_(false) {
 }
 
@@ -67,7 +67,7 @@ bool SessionManager::Initialize() {
     try {
         // Create FUSE bridge
         bridge_ = std::make_unique<FuseBridge>(this);
-        if (!bridge_->Initialize(Napi::Env(nullptr))) { // TODO: Pass real env
+        if (!bridge_->Initialize(Napi::Env(env_))) {
             return false;
         }
         
@@ -301,7 +301,7 @@ Napi::Value CreateSession(const Napi::CallbackInfo& info) {
     
     try {
         // Create session manager
-        auto session_manager = std::make_unique<SessionManager>(mountpoint, options);
+        auto session_manager = std::make_unique<SessionManager>(env, mountpoint, options);
         uint64_t session_id = session_manager->GetSessionId();
         
         // Store in registry

@@ -265,6 +265,20 @@ export type GetattrHandler = (
   options?: BaseOperationOptions
 ) => Promise<{ attr: StatResult; timeout: Timeout }>;
 
+/** Readlink operation handler */
+export type ReadlinkHandler = (
+  ino: Ino,
+  context: RequestContext,
+  options?: BaseOperationOptions
+) => Promise<string>;
+
+export type RmdirHandler = (
+    parent: Ino,
+    name: string,
+    context: RequestContext,
+    options?: BaseOperationOptions
+) => Promise<void>;
+
 /** Setattr operation handler */
 export type SetattrHandler = (
   ino: Ino,
@@ -304,6 +318,16 @@ export type ReleaseHandler = (
   options?: BaseOperationOptions
 ) => Promise<void>;
 
+/** Create operation handler */
+export type CreateHandler = (
+  parent: Ino,
+  name: string,
+  mode: number,
+  fi: FileInfo,
+  context: RequestContext,
+  options?: BaseOperationOptions
+) => Promise<{ attr: StatResult; timeout: Timeout, fi: FileInfo }>;
+
 /** Readdir operation handler */
 export type ReaddirHandler = (
   ino: Ino,
@@ -322,26 +346,18 @@ export type MkdirHandler = (
   options?: BaseOperationOptions
 ) => Promise<{ attr: StatResult; timeout: Timeout }>;
 
-/** Create operation handler */
-export type CreateHandler = (
+/** Mknod operation handler */
+export type MknodHandler = (
   parent: Ino,
   name: string,
   mode: Mode,
-  flags: Flags,
+  rdev: Dev,
   context: RequestContext,
   options?: BaseOperationOptions
-) => Promise<{ attr: StatResult; fi: FileInfo; timeout: Timeout }>;
+) => Promise<{ attr: StatResult; timeout: Timeout }>;
 
 /** Unlink operation handler */
 export type UnlinkHandler = (
-  parent: Ino,
-  name: string,
-  context: RequestContext,
-  options?: BaseOperationOptions
-) => Promise<void>;
-
-/** Rmdir operation handler */
-export type RmdirHandler = (
   parent: Ino,
   name: string,
   context: RequestContext,
@@ -409,7 +425,8 @@ export interface FuseOperationHandlers {
   lookup?: LookupHandler;
   /** Get file attributes */
   getattr?: GetattrHandler;
-  /** Set file attributes */
+  /** Get symlink target */
+  readlink?: ReadlinkHandler;
   setattr?: SetattrHandler;
   /** Read data from file */
   read?: ReadHandler;
@@ -423,7 +440,8 @@ export interface FuseOperationHandlers {
   readdir?: ReaddirHandler;
   /** Create a directory */
   mkdir?: MkdirHandler;
-  /** Create and open a file */
+  /** Create a special file (device node) */
+  mknod?: MknodHandler;
   create?: CreateHandler;
   /** Remove a file */
   unlink?: UnlinkHandler;
