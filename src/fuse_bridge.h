@@ -159,7 +159,7 @@ public:
     const struct fuse_lowlevel_ops* GetFuseOperations() const { return &fuse_ops_; }
 
     // Global handler management used by the N-API surface
-    static bool RegisterOperationHandler(Napi::Env env, FuseOpType op_type, Napi::Function handler);
+    static bool RegisterOperationHandler(Napi::Env env, FuseOpType op_type, Napi::Function handler, const std::string& operation_name = "");
     static bool RemoveOperationHandler(FuseOpType op_type);
     static bool HasOperationHandler(FuseOpType op_type);
 

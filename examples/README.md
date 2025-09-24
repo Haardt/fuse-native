@@ -1,211 +1,239 @@
-# FUSE3 Node.js Examples
+# FUSE Proxy Example
 
-This directory contains examples demonstrating the FUSE3 Node.js binding capabilities.
+This example demonstrates a complete FUSE filesystem proxy that forwards all operations to a target directory. It serves as both a comprehensive test of the FUSE native module and a practical example of how to implement a full FUSE filesystem.
 
-## In-Memory Filesystem Example (`inmemory-fs.mjs`)
+## Features
 
-A complete in-memory filesystem implementation that demonstrates all FUSE operations.
+The FUSE proxy implements all major filesystem operations:
 
-### Features
+- **File Operations**: create, open, read, write, close, unlink
+- **Directory Operations**: mkdir, rmdir, readdir
+- **Buffer Operations**: optimized read_buf and write_buf for better performance
+- **Attribute Operations**: getattr, chmod, chown, utimens
+- **Link Operations**: symlink, readlink, link
+- **Extended Attributes**: setxattr, getxattr, listxattr, removexattr
+- **Synchronization**: flush, fsync
+- **Access Control**: access checks
+- **File System Stats**: statfs
 
-- **Complete FUSE Operation Coverage**: Implements all 40+ FUSE operations including:
-  - File operations (create, open, read, write, release)
-  - Directory operations (mkdir, rmdir, readdir, opendir, releasedir)
-  - Attribute operations (getattr, chmod, chown, truncate, utimens)
-  - Link operations (symlink, readlink, link, unlink)
-  - Extended attributes (getxattr, setxattr, listxattr, removexattr)
-  - Synchronization (flush, fsync, fsyncdir)
-  - Advanced operations (fallocate, lseek, copy_file_range)
-  - Locking operations (flock, lock)
-  - Device operations (ioctl, bmap, poll)
-  - System operations (access, statfs, rename)
+## Quick Start
 
-- **In-Memory Storage**: All data is stored in memory using JavaScript Maps and Buffers
-- **Proper Error Handling**: Comprehensive error handling with appropriate errno codes
-- **TypeScript-Compatible**: Uses BigInt for 64-bit values, proper type safety
-- **Performance Optimized**: Zero-copy operations where possible
+### 1. Build the Native Module
 
-### Architecture
+```bash
+cd fuse-native
+npm install
+```
 
-The example implements a complete inode-based filesystem:
+### 2. Run the Test Script
+
+The easiest way to test the FUSE proxy is with the automated test script:
+
+```bash
+./examples/test-proxy.sh
+```
+
+This script will:
+- Set up a clean test environment
+- Start the FUSE proxy
+- Test basic file operations
+- Run `npx create-react-app todo-app` through the proxy
+- Verify that all operations completed successfully
+
+### 3. Manual Usage
+
+You can also run the FUSE proxy manually:
+
+```bash
+node examples/fuse-proxy.js [mount_point] [target_directory]
+```
+
+Example:
+```bash
+node examples/fuse-proxy.js /tmp/my-fuse-mount /tmp/my-target-dir
+```
+
+## The create-react-app Test
+
+The example automatically runs `npx create-react-app todo-app` to demonstrate that the FUSE proxy can handle complex, real-world operations including:
+
+- **Thousands of file creations** (React app files, node_modules)
+- **Directory tree creation** (nested folder structures)
+- **Package installation** (npm operations)
+- **Symlink handling** (node_modules symlinks)
+- **Permission management** (executable files)
+- **Large file operations** (bundled JavaScript files)
+- **Concurrent I/O** (parallel npm operations)
+
+## How It Works
+
+```
+Application (create-react-app)
+         ↓
+FUSE Kernel Module
+         ↓
+FUSE Native Library
+         ↓  
+Node.js FUSE Proxy
+         ↓
+Target Directory (/tmp/fuse-target)
+```
+
+1. **Applications** access files through the mount point (e.g., `/tmp/fuse-proxy`)
+2. **FUSE kernel module** intercepts system calls and forwards them
+3. **FUSE native library** converts kernel requests to JavaScript calls
+4. **Node.js proxy** receives the calls and forwards them to the target directory
+5. **Target directory** stores the actual files
+
+## Example Output
+
+When running the test, you'll see detailed logging of all filesystem operations:
+
+```
+FUSE Proxy Example
+==================
+Mount point: /tmp/fuse-proxy-test
+Target directory: /tmp/fuse-target-test
+
+✅ FUSE proxy successfully mounted!
+
+Testing with create-react-app...
+Command: npx create-react-app /tmp/fuse-proxy-test/todo-app
+
+getattr: /todo-app -> /tmp/fuse-target-test/todo-app
+mkdir: /todo-app -> /tmp/fuse-target-test/todo-app (mode: 755)
+create: /todo-app/package.json -> /tmp/fuse-target-test/todo-app/package.json (mode: 644)
+write_buf: /todo-app/package.json (fd: 23, buf.length: 1024, pos: 0)
+...
+
+🎉 SUCCESS! React app created successfully through FUSE proxy!
+
+📁 package.json: ✅
+📁 src/: ✅  
+📁 public/: ✅
+📦 App name: todo-app
+📦 React version: ^18.2.0
+```
+
+## Error Handling
+
+The proxy includes comprehensive error handling:
+
+- **Filesystem errors** are properly converted to FUSE error codes
+- **Permission errors** are forwarded correctly
+- **Network timeouts** (during npm install) are handled gracefully
+- **Graceful shutdown** on SIGINT/SIGTERM with proper unmounting
+
+## Performance Considerations
+
+- **Buffer operations** (`read_buf`, `write_buf`) are used for optimal performance
+- **Minimal copying** - data is forwarded efficiently
+- **Asynchronous operations** - all I/O is non-blocking
+- **Proper error codes** - applications receive correct filesystem responses
+
+## Troubleshooting
+
+### Mount fails
+```bash
+# Check if FUSE is installed
+fusermount --version
+
+# On Ubuntu/Debian
+sudo apt-get install fuse
+
+# On macOS
+brew install --cask osxfuse
+```
+
+### Permission denied
+```bash
+# Add user to fuse group (Linux)
+sudo usermod -a -G fuse $USER
+
+# Logout and login again
+```
+
+### Already mounted
+```bash
+# Unmount existing mount
+fusermount -u /tmp/fuse-proxy-test
+# or
+umount /tmp/fuse-proxy-test
+```
+
+### Module not built
+```bash
+# Rebuild native module
+cd fuse-native
+npm run rebuild
+```
+
+## Use Cases
+
+This FUSE proxy pattern is useful for:
+
+- **Filesystem virtualization** - Present files from multiple sources as one filesystem
+- **Caching layers** - Add caching between applications and storage
+- **Monitoring** - Log all filesystem operations for debugging
+- **Transformation** - Modify files on-the-fly (compression, encryption)
+- **Testing** - Test filesystem behavior with real applications
+- **Migration** - Gradually move data while maintaining access
+
+## Architecture Details
+
+The proxy implements the complete FUSE operations interface:
 
 ```javascript
-class Inode {
-  // id, type, mode, uid, gid, size, timestamps, nlink, data, xattrs
-}
-
-class InMemoryFilesystem {
-  // Root inode, inode map, path resolution, all FUSE operations
-}
-```
-
-### Usage
-
-
-#### Quick Start (Recommended)
-
-```bash
-# Use the start script with all options
-./examples/start-inmemory-fs.sh --help
-
-# Start with default settings
-./examples/start-inmemory-fs.sh
-
-# Start with custom mount point and debug mode
-./examples/start-inmemory-fs.sh --mount-point /tmp/my-inmemory-fs --debug
-
-# Start in foreground mode
-./examples/start-inmemory-fs.sh --foreground
-```
-
-#### Manual Start
-
-```bash
-# Build the native module first
-npm run build
-
-# Run the in-memory filesystem directly
-node examples/inmemory-fs.mjs /tmp/inmemory-mount
-
-# The filesystem will be mounted and you can interact with it
-ls -la /tmp/inmemory-mount
-echo "test" > /tmp/inmemory-mount/test.txt
-mkdir /tmp/inmemory-mount/testdir
-# ... all standard filesystem operations work
-```
-
-#### Start Script Options
-
-The `start-inmemory-fs.sh` script provides comprehensive configuration:
-
-```bash
-# Command line options
-./examples/start-inmemory-fs.sh [OPTIONS]
-
-Options:
-  -m, --mount-point PATH    Mount point (default: /tmp/inmemory-fs-test)
-  -l, --log-level LEVEL     Log level: error, warn, info, debug (default: info)
-  --debug                   Enable debug mode
-  -f, --foreground          Run in foreground
-  --no-auto-unmount         Disable automatic unmounting
-  -h, --help                Show help
-
-# Environment variables
-MOUNT_POINT=/tmp/custom-mount ./examples/start-inmemory-fs.sh
-DEBUG=true ./examples/start-inmemory-fs.sh
-FOREGROUND=true ./examples/start-inmemory-fs.sh
-```
-
-### Operations Implemented
-
-#### Core Operations
-- `getattr` - Get file attributes
-- `readdir` - Read directory contents
-- `lookup` - Look up file by name
-- `create` - Create and open file
-- `open` - Open existing file
-- `read` - Read from file
-- `write` - Write to file
-- `release` - Close file
-
-#### Directory Operations
-- `mkdir` - Create directory
-- `rmdir` - Remove directory
-- `opendir` - Open directory
-- `releasedir` - Close directory
-
-#### Attribute Operations
-- `chmod` - Change permissions
-- `chown` - Change ownership
-- `truncate` - Truncate file
-- `utimens` - Update timestamps
-
-#### Link Operations
-- `symlink` - Create symbolic link
-- `readlink` - Read symbolic link
-- `link` - Create hard link
-- `unlink` - Remove file/directory
-
-#### Advanced Operations
-- `fallocate` - Preallocate space
-- `lseek` - Seek in file
-- `copy_file_range` - Copy data between files
-- `flock` - File locking
-- `lock` - POSIX locking
-
-#### System Operations
-- `access` - Check permissions
-- `statfs` - Get filesystem statistics
-- `rename` - Rename/move files
-
-### Error Handling
-
-The example demonstrates proper FUSE error handling:
-
-```javascript
-// Convert exceptions to FUSE errno codes
-try {
-  // operation logic
-  cb(0, result); // Success
-} catch (error) {
-  cb(error.errno || -5, null); // Error with errno
+const ops = {
+  // Core operations
+  getattr, readdir, open, create, read, write, release,
+  
+  // Buffer operations (optimized)
+  read_buf, write_buf,
+  
+  // Directory operations  
+  mkdir, rmdir, opendir, releasedir,
+  
+  // File management
+  unlink, rename, link, symlink, readlink,
+  
+  // Attributes
+  chmod, chown, truncate, utimens,
+  
+  // Extended attributes
+  setxattr, getxattr, listxattr, removexattr,
+  
+  // Synchronization
+  flush, fsync, fsyncdir,
+  
+  // System
+  access, statfs
 }
 ```
 
-Common errno codes used:
-- `-2` (ENOENT): No such file or directory
-- `-17` (EEXIST): File exists
-- `-20` (ENOTDIR): Not a directory
-- `-21` (EISDIR): Is a directory
-- `-22` (EINVAL): Invalid argument
-- `-39` (ENOTEMPTY): Directory not empty
+Each operation:
+1. Logs the operation for monitoring
+2. Converts the FUSE path to target path
+3. Performs the operation on the target filesystem
+4. Converts errors to appropriate FUSE error codes
+5. Returns results to the FUSE kernel
 
-### Performance Considerations
+## Testing Results
 
-- **In-Memory Storage**: No disk I/O, demonstrates FUSE overhead
-- **BigInt Timestamps**: Nanosecond precision timestamps
-- **Buffer Operations**: Efficient data transfer
-- **Reference Counting**: Proper inode lifecycle management
+After successful completion, you should see:
 
-### Testing
+```
+🎉 FUSE PROXY TEST COMPLETED SUCCESSFULLY!
 
-The example includes built-in testing that:
-1. Creates directories and files
-2. Performs read/write operations
-3. Tests attribute operations
-4. Verifies directory operations
-5. Demonstrates error conditions
+The FUSE proxy correctly handled all file operations needed by create-react-app:
+• File creation and writing
+• Directory creation  
+• File reading
+• Permission management
+• Symlink operations
+• Buffer operations
 
-### Comparison with Other Examples
-
-| Feature | In-Memory FS | FUSE Proxy | Passthrough |
-|---------|-------------|------------|------------|
-| Storage | Memory | Disk | Disk |
-| Operations | All 40+ | All 40+ | Core only |
-| Complexity | High | Medium | Low |
-| Performance | Fast | Medium | Fast |
-| Use Case | Testing | Proxy | Simple |
-
-### Integration with TypeScript API
-
-While this example uses the callback-based API, it demonstrates patterns that work with the modern TypeScript API:
-
-```typescript
-// Modern async/await version would look like:
-async getattr(path: string): Promise<Attr> {
-  const inode = this.resolvePath(path);
-  return inode.toAttr();
-}
+All operations were transparently forwarded to the target directory.
 ```
 
-### Future Enhancements
-
-Potential improvements:
-- Persistence to disk
-- Compression
-- Encryption
-- Snapshots
-- Multi-threading support
-- Performance benchmarking
-
-This example serves as a comprehensive reference for implementing full-featured FUSE filesystems in Node.js.
+This confirms that the FUSE native module correctly handles all the complex filesystem operations required by modern JavaScript applications.

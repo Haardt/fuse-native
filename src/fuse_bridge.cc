@@ -538,9 +538,10 @@ void FuseBridge::Shutdown() {
     std::memset(&fuse_ops_, 0, sizeof(fuse_ops_));
 }
 
-bool FuseBridge::RegisterOperationHandler(Napi::Env env, FuseOpType op_type, Napi::Function handler) {
+bool FuseBridge::RegisterOperationHandler(Napi::Env env, FuseOpType op_type, Napi::Function handler, const std::string& operation_name) {
     if (op_type == FuseOpType::UNKNOWN) {
-        Napi::TypeError::New(env, "Unsupported FUSE operation").ThrowAsJavaScriptException();
+        std::string error_msg = "Unsupported FUSE operation: " + operation_name;
+        Napi::TypeError::New(env, error_msg).ThrowAsJavaScriptException();
         return false;
     }
 
@@ -2417,7 +2418,7 @@ Napi::Value SetOperationHandler(const Napi::CallbackInfo& info) {
     FuseOpType op_type = StringToFuseOpType(operation);
     Napi::Function handler = info[1].As<Napi::Function>();
 
-    bool success = FuseBridge::RegisterOperationHandler(env, op_type, handler);
+    bool success = FuseBridge::RegisterOperationHandler(env, op_type, handler, operation);
     return Napi::Boolean::New(env, success);
 }
 
