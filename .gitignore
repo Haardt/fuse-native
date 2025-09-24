@@ -3,3 +3,4 @@ build
 *.term
 /.idea/
 /dist/
+dist
