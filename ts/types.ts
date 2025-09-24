@@ -185,6 +185,18 @@ export interface FileInfo {
   parallel_direct_writes?: boolean;
 }
 
+/** Poll handle for kernel polling operations */
+export interface PollHandle {
+  /** Kernel poll handle (opaque) */
+  kh?: bigint;
+  /** User poll handle (opaque) */
+  ph?: bigint;
+  /** Poll events */
+  events?: number;
+  /** Active poll handle flag */
+  active?: boolean;
+}
+
 // =============================================================================
 // Buffer Vector Types (for write_buf operation)
 // =============================================================================
@@ -225,6 +237,30 @@ export interface FuseBufvec {
   off: number;
   /** Array of buffers */
   buf: FuseBuf[];
+}
+
+// =============================================================================
+// File Locking Types
+// =============================================================================
+
+/** File lock type */
+export enum LockType {
+  /** Read lock */
+  READ = 0,
+  /** Write lock */
+  WRITE = 1,
+}
+
+/** File lock information */
+export interface FileLock {
+  /** Lock type */
+  type: LockType;
+  /** Starting offset of the lock */
+  start: bigint;
+  /** Ending offset of the lock (exclusive) */
+  end: bigint;
+  /** Process ID holding the lock */
+  pid: number;
 }
 
 /** Request context information */
@@ -611,6 +647,85 @@ export interface FuseOperationHandlers {
     context: RequestContext,
     options?: BaseOperationOptions
   ) => Promise<void>;
+
+  /** Get file lock information */
+  getlk?: (
+    ino: Ino,
+    fi: FileInfo,
+    lock: FileLock,
+    context: RequestContext,
+    options?: BaseOperationOptions
+  ) => Promise<FileLock>;
+
+  /** Set file lock */
+  setlk?: (
+    ino: Ino,
+    fi: FileInfo,
+    lock: FileLock,
+    sleep: boolean,
+    context: RequestContext,
+    options?: BaseOperationOptions
+  ) => Promise<void>;
+
+  /** Map logical block to physical block */
+  bmap?: (
+    ino: Ino,
+    blocksize: number,
+    idx: bigint,
+    context: RequestContext,
+    options?: BaseOperationOptions
+  ) => Promise<{ block: bigint }>;
+
+  /** I/O control operation */
+  ioctl?: (
+    ino: Ino,
+    cmd: number,
+    arg: number | bigint | Buffer | null,
+    fi: FileInfo,
+    flags: number,
+    context: RequestContext,
+    options?: BaseOperationOptions
+  ) => Promise<{ result: number | bigint | Buffer | null }>;
+
+  /** Poll operation for I/O multiplexing */
+  poll?: (
+    ino: Ino,
+    fi: FileInfo,
+    ph: PollHandle,
+    revents: number,
+    context: RequestContext,
+    options?: BaseOperationOptions
+  ) => Promise<{ revents: number }>;
+
+  /** Flock operation for advisory file locking */
+  flock?: (
+    ino: Ino,
+    fi: FileInfo,
+    op: number,
+    context: RequestContext,
+    options?: BaseOperationOptions
+  ) => Promise<void>;
+
+  /** Fallocate operation for file space allocation/deallocation */
+  fallocate?: (
+    ino: Ino,
+    fi: FileInfo,
+    mode: number,
+    offset: bigint,
+    length: bigint,
+    context: RequestContext,
+    options?: BaseOperationOptions
+  ) => Promise<void>;
+
+  /** Lseek operation for file offset repositioning */
+  lseek?: (
+    ino: Ino,
+    fi: FileInfo,
+    offset: bigint,
+    whence: number,
+    context: RequestContext,
+    options?: BaseOperationOptions
+  ) => Promise<bigint>;
 }
 
 // =============================================================================

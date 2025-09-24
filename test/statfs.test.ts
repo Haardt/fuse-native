@@ -1,452 +1,198 @@
-/**
- * @file statfs.test.ts
- * @brief Tests for statfs operation with BigInt 64-bit fields
- *
- * This test suite validates the statfs operation implementation,
- * focusing on BigInt support for 64-bit filesystem statistics
- * and proper error handling.
- */
+import { statfsWrapper, validateStatfs, validateStatvfsResult } from '../ts/ops/statfs.js';
+import { FuseErrno } from '../ts/errors.js';
+import { createIno, createGid, createUid, type RequestContext } from '../ts/types.js';
 
-import { describe, expect, it, beforeEach, afterEach } from '@jest/globals';
-import {
-  StatvfsResult,
-  FuseSession,
-  FuseOperationHandlers,
-  createIno,
-} from '../ts/types';
-import { FuseErrno } from '../ts/errors';
+function createSampleStatvfsResult() {
+  return {
+    bsize: 4096,
+    frsize: 4096,
+    blocks: 1000000n,
+    bfree: 500000n,
+    bavail: 450000n,
+    files: 100000n,
+    ffree: 95000n,
+    favail: 90000n,
+    fsid: 12345n,
+    flag: 0,
+    namemax: 255,
+  };
+}
 
 describe('Statfs Operation', () => {
-  let mockSession: FuseSession;
-  let handlers: FuseOperationHandlers;
+  const ino = createIno(42n);
+  const context: RequestContext = {
+    uid: createUid(1000),
+    gid: createGid(1000),
+    pid: 1234,
+    umask: 0o022 as any,
+  };
 
-  beforeEach(() => {
-    handlers = {};
-    // Mock session setup would go here
-    // This is a placeholder for the actual session initialization
-    mockSession = {} as FuseSession;
-  });
-
-  afterEach(() => {
-    // Cleanup
-  });
-
-  describe('BigInt 64-bit field support', () => {
-    it('should handle large block counts correctly', async () => {
-      const largeBlockCount = BigInt('18446744073709551615'); // Near max uint64
-      const expectedResult: StatvfsResult = {
-        bsize: 4096,
-        frsize: 4096,
-        blocks: largeBlockCount,
-        bfree: largeBlockCount - 1000n,
-        bavail: largeBlockCount - 2000n,
-        files: 1000000n,
-        ffree: 500000n,
-        favail: 400000n,
-        fsid: 12345n,
-        flag: 0,
-        namemax: 255,
-      };
-
-      handlers.statfs = async (ino, context, options) => {
-        expect(ino).toBe(createIno(1n));
-        return expectedResult;
-      };
-
-      // Mock the actual statfs call - this would integrate with the C++ bridge
-      const result = await handlers.statfs!(createIno(1n), {
-        uid: 1000 as any,
-        gid: 1000 as any,
-        pid: 12345,
-        umask: 0o022 as any,
-      });
-
-      expect(result.blocks).toBe(largeBlockCount);
-      expect(result.bfree).toBe(largeBlockCount - 1000n);
-      expect(result.bavail).toBe(largeBlockCount - 2000n);
+  describe('validateStatfs', () => {
+    it('accepts valid inode', () => {
+      expect(() => validateStatfs(ino)).not.toThrow();
     });
 
-    it('should handle file count near uint64 max', async () => {
-      const largeFileCount = BigInt('9223372036854775807'); // max int64
-      const expectedResult: StatvfsResult = {
-        bsize: 4096,
-        frsize: 4096,
-        blocks: 1000000n,
-        bfree: 500000n,
-        bavail: 400000n,
-        files: largeFileCount,
-        ffree: largeFileCount - 1000n,
-        favail: largeFileCount - 2000n,
-        fsid: 67890n,
-        flag: 0,
-        namemax: 255,
-      };
-
-      handlers.statfs = async (ino, context, options) => {
-        return expectedResult;
-      };
-
-      const result = await handlers.statfs!(createIno(1n), {
-        uid: 1000 as any,
-        gid: 1000 as any,
-        pid: 12345,
-        umask: 0o022 as any,
-      });
-
-      expect(result.files).toBe(largeFileCount);
-      expect(result.ffree).toBe(largeFileCount - 1000n);
-      expect(result.favail).toBe(largeFileCount - 2000n);
-    });
-
-    it('should preserve precision for all BigInt fields', async () => {
-      const testValues = {
-        blocks: BigInt('1234567890123456789'),
-        bfree: BigInt('987654321098765432'),
-        bavail: BigInt('555666777888999111'),
-        files: BigInt('111222333444555666'),
-        ffree: BigInt('666555444333222111'),
-        favail: BigInt('123456789012345678'),
-        fsid: BigInt('999888777666555444'),
-      };
-
-      const expectedResult: StatvfsResult = {
-        bsize: 8192,
-        frsize: 4096,
-        ...testValues,
-        flag: 0,
-        namemax: 255,
-      };
-
-      handlers.statfs = async () => expectedResult;
-
-      const result = await handlers.statfs!(createIno(1n), {
-        uid: 1000 as any,
-        gid: 1000 as any,
-        pid: 12345,
-        umask: 0o022 as any,
-      });
-
-      // Verify all BigInt fields maintain precision
-      expect(result.blocks).toBe(testValues.blocks);
-      expect(result.bfree).toBe(testValues.bfree);
-      expect(result.bavail).toBe(testValues.bavail);
-      expect(result.files).toBe(testValues.files);
-      expect(result.ffree).toBe(testValues.ffree);
-      expect(result.favail).toBe(testValues.favail);
-      expect(result.fsid).toBe(testValues.fsid);
+    it('rejects invalid inode', () => {
+      expect(() => validateStatfs(123 as any)).toThrow(FuseErrno);
     });
   });
 
-  describe('Realistic filesystem scenarios', () => {
-    it('should handle typical filesystem statistics', async () => {
-      // Simulate a 1TB filesystem with 4K blocks
-      const totalBlocks = BigInt(
-        Math.floor((1024 * 1024 * 1024 * 1024) / 4096)
-      ); // 1TB / 4KB
-      const freeBlocks = BigInt(Math.floor(Number(totalBlocks) * 0.3)); // 30% free
-      const availBlocks = BigInt(Math.floor(Number(totalBlocks) * 0.25)); // 25% available to users
-
-      const expectedResult: StatvfsResult = {
-        bsize: 4096,
-        frsize: 4096,
-        blocks: totalBlocks,
-        bfree: freeBlocks,
-        bavail: availBlocks,
-        files: 10000000n, // 10M inodes
-        ffree: 5000000n, // 5M free
-        favail: 4000000n, // 4M available
-        fsid: 0xdeadbeefn,
-        flag: 0,
-        namemax: 255,
-      };
-
-      handlers.statfs = async () => expectedResult;
-
-      const result = await handlers.statfs!(createIno(1n), {
-        uid: 1000 as any,
-        gid: 1000 as any,
-        pid: 12345,
-        umask: 0o022 as any,
-      });
-
-      expect(result.blocks).toBe(totalBlocks);
-      expect(result.bfree).toBe(freeBlocks);
-      expect(result.bavail).toBe(availBlocks);
-      expect(result.bsize).toBe(4096);
-      expect(result.namemax).toBe(255);
+  describe('validateStatvfsResult', () => {
+    it('accepts valid statvfs result', () => {
+      const result = createSampleStatvfsResult();
+      expect(() => validateStatvfsResult(result)).not.toThrow();
     });
 
-    it('should handle df-like calculations correctly', async () => {
-      const blockSize = 1024;
-      const totalBlocks = 1000000n;
-      const freeBlocks = 300000n;
-      const availBlocks = 250000n;
+    it('rejects invalid result type', () => {
+      expect(() => validateStatvfsResult(null as any)).toThrow(FuseErrno);
+      expect(() => validateStatvfsResult('invalid' as any)).toThrow(FuseErrno);
+    });
 
-      const expectedResult: StatvfsResult = {
-        bsize: blockSize,
-        frsize: blockSize,
-        blocks: totalBlocks,
-        bfree: freeBlocks,
-        bavail: availBlocks,
-        files: 100000n,
-        ffree: 50000n,
-        favail: 40000n,
-        fsid: 12345n,
-        flag: 0,
-        namemax: 255,
-      };
+    it('rejects missing numeric fields', () => {
+      const result = createSampleStatvfsResult();
+      delete (result as any).bsize;
+      expect(() => validateStatvfsResult(result)).toThrow(FuseErrno);
+    });
 
-      handlers.statfs = async () => expectedResult;
+    it('rejects invalid field types', () => {
+      const result = createSampleStatvfsResult();
+      (result as any).bsize = 'invalid';
+      expect(() => validateStatvfsResult(result)).toThrow(FuseErrno);
+    });
 
-      const result = await handlers.statfs!(createIno(1n), {
-        uid: 1000 as any,
-        gid: 1000 as any,
-        pid: 12345,
-        umask: 0o022 as any,
-      });
+    it('rejects invalid block sizes', () => {
+      const result = createSampleStatvfsResult();
+      result.bsize = 0;
+      expect(() => validateStatvfsResult(result)).toThrow(FuseErrno);
 
-      // Calculate df-like values
-      const totalSize = result.blocks * BigInt(blockSize);
-      const freeSize = result.bfree * BigInt(blockSize);
-      const availSize = result.bavail * BigInt(blockSize);
-      const usedSize = totalSize - freeSize;
+      result.bsize = -1;
+      expect(() => validateStatvfsResult(result)).toThrow(FuseErrno);
+    });
 
-      expect(totalSize).toBe(1024000000n); // ~1GB
-      expect(freeSize).toBe(307200000n); // ~300MB
-      expect(availSize).toBe(256000000n); // ~250MB
-      expect(usedSize).toBe(716800000n); // ~700MB
+    it('rejects invalid fragment sizes', () => {
+      const result = createSampleStatvfsResult();
+      result.frsize = 0;
+      expect(() => validateStatvfsResult(result)).toThrow(FuseErrno);
+    });
+
+    it('rejects negative block counts', () => {
+      const result = createSampleStatvfsResult();
+      result.blocks = -1n;
+      expect(() => validateStatvfsResult(result)).toThrow(FuseErrno);
+
+      result.blocks = 1000000n;
+      result.bfree = -1n;
+      expect(() => validateStatvfsResult(result)).toThrow(FuseErrno);
+    });
+
+    it('rejects invalid block relationships', () => {
+      const result = createSampleStatvfsResult();
+      result.bfree = result.blocks + 100000n; // Free > total
+      expect(() => validateStatvfsResult(result)).toThrow(FuseErrno);
+
+      result.bfree = 500000n;
+      result.bavail = result.bfree + 100000n; // Available > free
+      expect(() => validateStatvfsResult(result)).toThrow(FuseErrno);
+    });
+
+    it('rejects negative inode counts', () => {
+      const result = createSampleStatvfsResult();
+      result.files = -1n;
+      expect(() => validateStatvfsResult(result)).toThrow(FuseErrno);
+    });
+
+    it('rejects invalid inode relationships', () => {
+      const result = createSampleStatvfsResult();
+      result.ffree = result.files + 10000n; // Free > total
+      expect(() => validateStatvfsResult(result)).toThrow(FuseErrno);
+
+      result.ffree = 95000n;
+      result.favail = result.ffree + 10000n; // Available > free
+      expect(() => validateStatvfsResult(result)).toThrow(FuseErrno);
+    });
+
+    it('rejects invalid name length', () => {
+      const result = createSampleStatvfsResult();
+      result.namemax = 0;
+      expect(() => validateStatvfsResult(result)).toThrow(FuseErrno);
+
+      result.namemax = -1;
+      expect(() => validateStatvfsResult(result)).toThrow(FuseErrno);
+    });
+
+    it('accepts valid BigInt values', () => {
+      const result = createSampleStatvfsResult();
+      result.blocks = 1000000n;
+      result.fsid = 12345n;
+      expect(() => validateStatvfsResult(result)).not.toThrow();
+    });
+
+    it('accepts valid number values', () => {
+      const result = createSampleStatvfsResult();
+      result.blocks = 1000000;
+      result.fsid = 12345;
+      expect(() => validateStatvfsResult(result)).not.toThrow();
     });
   });
 
-  describe('Error handling', () => {
-    it('should handle EACCES error correctly', async () => {
-      handlers.statfs = async () => {
-        throw new FuseErrno('EACCES', 'Permission denied');
-      };
+  describe('statfsWrapper', () => {
+    it('calls statfs handler when available', async () => {
+      const mockStatfs = jest.fn().mockResolvedValue(createSampleStatvfsResult());
+      const handlers = { statfs: mockStatfs };
 
-      await expect(
-        handlers.statfs!(createIno(1n), {
-          uid: 1000 as any,
-          gid: 1000 as any,
-          pid: 12345,
-          umask: 0o022 as any,
-        })
-      ).rejects.toThrow(FuseErrno);
+      const result = await statfsWrapper(handlers, ino, context);
 
-      try {
-        await handlers.statfs!(createIno(1n), {
-          uid: 1000 as any,
-          gid: 1000 as any,
-          pid: 12345,
-          umask: 0o022 as any,
+      expect(mockStatfs).toHaveBeenCalledWith(ino, context, {});
+      expect(result).toEqual(createSampleStatvfsResult());
+    });
+
+    it('throws ENOSYS when no statfs handler is available', async () => {
+      await expect(statfsWrapper({}, ino, context))
+        .rejects.toMatchObject({
+          code: 'ENOSYS',
         });
-      } catch (error) {
-        expect(error).toBeInstanceOf(FuseErrno);
-        const fuseError = error as FuseErrno;
-        expect(fuseError.code).toBe('EACCES');
-        expect(fuseError.errno).toBe(-13);
-      }
     });
 
-    it('should handle EIO error correctly', async () => {
-      handlers.statfs = async () => {
-        throw new FuseErrno('EIO', 'Input/output error');
-      };
+    it('passes options through correctly', async () => {
+      const mockStatfs = jest.fn().mockResolvedValue(createSampleStatvfsResult());
+      const handlers = { statfs: mockStatfs };
+      const options = { signal: new AbortController().signal, timeout: 5000 };
 
-      await expect(
-        handlers.statfs!(createIno(1n), {
-          uid: 1000 as any,
-          gid: 1000 as any,
-          pid: 12345,
-          umask: 0o022 as any,
-        })
-      ).rejects.toThrow(FuseErrno);
+      await statfsWrapper(handlers, ino, context, options);
 
-      try {
-        await handlers.statfs!(createIno(1n), {
-          uid: 1000 as any,
-          gid: 1000 as any,
-          pid: 12345,
-          umask: 0o022 as any,
+      expect(mockStatfs).toHaveBeenCalledWith(ino, context, options);
+    });
+
+    it('throws when statfs handler returns invalid result', async () => {
+      const mockStatfs = jest.fn().mockResolvedValue(null);
+      const handlers = { statfs: mockStatfs };
+
+      await expect(statfsWrapper(handlers, ino, context))
+        .rejects.toMatchObject({
+          code: 'EINVAL',
         });
-      } catch (error) {
-        expect(error).toBeInstanceOf(FuseErrno);
-        const fuseError = error as FuseErrno;
-        expect(fuseError.code).toBe('EIO');
-        expect(fuseError.errno).toBe(-5);
-      }
     });
 
-    it('should handle numeric errno correctly', async () => {
-      handlers.statfs = async () => {
-        const error = new Error('Custom error') as any;
-        error.errno = -13; // EACCES
-        throw error;
+    it('throws when statfs handler throws', async () => {
+      const handlers = {
+        statfs: jest.fn().mockRejectedValue(new Error('test error')),
       };
 
-      await expect(
-        handlers.statfs!(createIno(1n), {
-          uid: 1000 as any,
-          gid: 1000 as any,
-          pid: 12345,
-          umask: 0o022 as any,
-        })
-      ).rejects.toThrow();
-    });
-  });
-
-  describe('Field validation', () => {
-    it('should require all mandatory BigInt fields', async () => {
-      const incompleteResult = {
-        bsize: 4096,
-        frsize: 4096,
-        // Missing blocks, bfree, bavail, files, ffree, favail, fsid
-        flag: 0,
-        namemax: 255,
-      } as Partial<StatvfsResult>;
-
-      handlers.statfs = async () => incompleteResult as StatvfsResult;
-
-      // The type system should catch this at compile time,
-      // but we can also test runtime behavior
-      const result = await handlers.statfs!(createIno(1n), {
-        uid: 1000 as any,
-        gid: 1000 as any,
-        pid: 12345,
-        umask: 0o022 as any,
-      });
-
-      // Check that undefined values are handled appropriately
-      expect(result.bsize).toBe(4096);
-      expect(result.namemax).toBe(255);
+      await expect(statfsWrapper(handlers, ino, context))
+        .rejects.toThrow('test error');
     });
 
-    it('should handle zero values correctly', async () => {
-      const zeroResult: StatvfsResult = {
-        bsize: 1024,
-        frsize: 1024,
-        blocks: 0n,
-        bfree: 0n,
-        bavail: 0n,
-        files: 0n,
-        ffree: 0n,
-        favail: 0n,
-        fsid: 0n,
-        flag: 0,
-        namemax: 255,
-      };
+    it('validates the result from handler', async () => {
+      const invalidResult = createSampleStatvfsResult();
+      invalidResult.bsize = 0; // Invalid
 
-      handlers.statfs = async () => zeroResult;
+      const mockStatfs = jest.fn().mockResolvedValue(invalidResult);
+      const handlers = { statfs: mockStatfs };
 
-      const result = await handlers.statfs!(createIno(1n), {
-        uid: 1000 as any,
-        gid: 1000 as any,
-        pid: 12345,
-        umask: 0o022 as any,
-      });
-
-      expect(result.blocks).toBe(0n);
-      expect(result.bfree).toBe(0n);
-      expect(result.bavail).toBe(0n);
-      expect(result.files).toBe(0n);
-      expect(result.ffree).toBe(0n);
-      expect(result.favail).toBe(0n);
-      expect(result.fsid).toBe(0n);
-    });
-  });
-
-  describe('Context and options handling', () => {
-    it('should receive correct context information', async () => {
-      let receivedContext: any;
-      let receivedIno: any;
-      let receivedOptions: any;
-
-      handlers.statfs = async (ino, context, options) => {
-        receivedIno = ino;
-        receivedContext = context;
-        receivedOptions = options;
-
-        return {
-          bsize: 4096,
-          frsize: 4096,
-          blocks: 1000n,
-          bfree: 500n,
-          bavail: 400n,
-          files: 100n,
-          ffree: 50n,
-          favail: 40n,
-          fsid: 1n,
-          flag: 0,
-          namemax: 255,
-        };
-      };
-
-      const testContext = {
-        uid: 1001 as any,
-        gid: 1002 as any,
-        pid: 54321,
-        umask: 0o027 as any,
-      };
-
-      const testOptions = {
-        signal: new AbortController().signal,
-        timeout: 5000,
-      };
-
-      await handlers.statfs!(createIno(42n), testContext, testOptions);
-
-      expect(receivedIno).toBe(createIno(42n));
-      expect(receivedContext.uid).toBe(1001);
-      expect(receivedContext.gid).toBe(1002);
-      expect(receivedContext.pid).toBe(54321);
-      expect(receivedOptions?.timeout).toBe(5000);
-    });
-
-    it('should handle AbortSignal correctly', async () => {
-      const abortController = new AbortController();
-      let abortedCalled = false;
-
-      handlers.statfs = async (ino, context, options) => {
-        return new Promise(resolve => {
-          options?.signal?.addEventListener('abort', () => {
-            abortedCalled = true;
-            resolve({
-              bsize: 4096,
-              frsize: 4096,
-              blocks: 1000n,
-              bfree: 500n,
-              bavail: 400n,
-              files: 100n,
-              ffree: 50n,
-              favail: 40n,
-              fsid: 1n,
-              flag: 0,
-              namemax: 255,
-            });
-          });
-
-          // Simulate abort after 100ms
-          setTimeout(() => {
-            abortController.abort();
-          }, 100);
+      await expect(statfsWrapper(handlers, ino, context))
+        .rejects.toMatchObject({
+          code: 'EINVAL',
         });
-      };
-
-      const result = await handlers.statfs!(
-        createIno(1n),
-        {
-          uid: 1000 as any,
-          gid: 1000 as any,
-          pid: 12345,
-          umask: 0o022 as any,
-        },
-        {
-          signal: abortController.signal,
-        }
-      );
-
-      expect(abortedCalled).toBe(true);
-      expect(result.blocks).toBe(1000n);
     });
   });
 });

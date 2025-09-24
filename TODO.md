@@ -50,22 +50,24 @@ Verifizieren, dass **alle FUSE3-Funktionen** korrekt durch die Ebenen **C/N-API 
 - utimens - DONE
 - release - done
 - truncate - done
-
 - write_buf - done
-- read_buf ❌
+- read_buf  -done
 
-- statfs ❌ 
-- flush ❌
-- fsync ❌ 
-- fsyncdir ❌
-- access ❌ 
-- lock ❌
-- bmap ❌
-- ioctl ❌
-- poll ❌
-- flock ❌
-- fallocate ❌
-- lseek ❌
+- flush  - done
+- statfs - done
+
+- fsync - done
+- fsyncdir - done
+- access - done
+- lock - done
+- bmap - done
+- ioctl - done
+- poll - done
+- flock - done
+- fallocate -done 
+- lseek - done
+
+copy_file_range
 ```
 
 **Priorität**: **KRITISCH** - Basis für alle weiteren Arbeiten.
