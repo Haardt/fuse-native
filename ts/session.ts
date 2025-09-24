@@ -78,14 +78,15 @@ export class FuseSessionImpl implements FuseSession {
       ...options,
     };
 
-    // Register operation handlers
+    // Store operation handler names for cleanup
     this.registeredOperations = [];
-    for (const opName in operations) {
-      const op = opName as keyof FuseOperationHandlers;
-      const handler = operations[op];
-      if (handler) {
-        this.binding.setOperationHandler(op, handler);
-        this.registeredOperations.push(op);
+    if (operations && Object.keys(operations).length > 0) {
+      for (const opName in operations) {
+        const op = opName as keyof FuseOperationHandlers;
+        const handler = operations[op];
+        if (handler) {
+          this.registeredOperations.push(op);
+        }
       }
     }
 
@@ -196,7 +197,13 @@ export class FuseSessionImpl implements FuseSession {
 
       // Clear operation handlers
       for (const op of this.registeredOperations) {
-        this.binding.removeOperationHandler(op);
+        if (this.binding.removeOperationHandler) {
+          try {
+            this.binding.removeOperationHandler(op);
+          } catch (error) {
+            console.warn(`Failed to remove operation handler for ${op}:`, error);
+          }
+        }
       }
     } catch (error) {
       console.error('Error during session cleanup:', error);
@@ -322,8 +329,8 @@ export function createSession(
   options: FuseSessionOptions = {},
   binding?: any
 ): FuseSession {
-  // Mock binding for development/testing
-  const mockBinding = binding || {
+  // Use provided binding or fallback to mock for development/testing
+  const actualBinding = binding || {
     createSession: () => ({ id: Math.random() }),
     destroySession: () => {},
     mount: (_session: any, _opts: any, callback: Function) => {
@@ -334,7 +341,7 @@ export function createSession(
     },
   };
 
-  return createFuseSession(mountpoint, operations, options, mockBinding);
+  return createFuseSession(mountpoint, operations, options, actualBinding);
 }
 
 /**

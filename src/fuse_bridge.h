@@ -29,33 +29,55 @@ class FuseBridge;
  * Supported FUSE operation types for registration/dispatch.
  */
 enum class FuseOpType {
+    INIT,
+    DESTROY,
+    FORGET,
+    FORGET_MULTI,
     LOOKUP,
     GETATTR,
     SETATTR,
     READLINK,
     MKNOD,
     MKDIR,
-    CHMOD,
-    CHOWN,
-    SYMLINK,
     UNLINK,
     RMDIR,
+    SYMLINK,
     RENAME,
     LINK,
+    SETXATTR,
+    GETXATTR,
+    LISTXATTR,
+    REMOVEXATTR,
     OPEN,
     READ,
     WRITE,
+    WRITE_BUF,
+    READ_BUF,
     FLUSH,
     RELEASE,
     FSYNC,
+    FALLOCATE,
+    LSEEK,
+    COPY_FILE_RANGE,
     OPENDIR,
     READDIR,
+    READDIRPLUS,
     RELEASEDIR,
     FSYNCDIR,
     STATFS,
     ACCESS,
     CREATE,
-    COPY_FILE_RANGE,
+    BMAP,
+    IOCTL,
+    POLL,
+    FLOCK,
+    GETLK,
+    SETLK,
+    RETRIEVE_REPLY,
+    // --- Aliases for simplified dispatch ---
+    TRUNCATE,
+    CHMOD,
+    CHOWN,
     UNKNOWN
 };
 
@@ -200,7 +222,37 @@ private:
                              off_t off_out, struct fuse_file_info* fi_out,
                              size_t len, int flags);
 
+   // Handlers for operations without a specific high-level decomposition
+   void HandleInit(fuse_req_t req, struct fuse_conn_info* conn);
+   void HandleDestroy(fuse_req_t req);
+   void HandleForget(fuse_req_t req, fuse_ino_t ino, uint64_t nlookup);
+   void HandleForgetMulti(fuse_req_t req, size_t count, struct fuse_forget_data* forgets);
+   void HandleReadBuf(fuse_req_t req,
+                      fuse_ino_t ino,
+                      size_t size,
+                      off_t off,
+                      struct fuse_file_info* fi,
+                      struct fuse_bufvec** bufp);
+   void HandleWriteBuf(fuse_req_t req,
+                       fuse_ino_t ino,
+                       struct fuse_bufvec* buf,
+                       off_t off,
+                       struct fuse_file_info* fi);
+   void HandleSetxattr(fuse_req_t req,
+                       fuse_ino_t ino,
+                       const char* name,
+                       const char* value,
+                       size_t size,
+                       int flags);
+   void HandleGetxattr(fuse_req_t req, fuse_ino_t ino, const char* name, size_t size);
+   void HandleListxattr(fuse_req_t req, fuse_ino_t ino, size_t size);
+   void HandleRemovexattr(fuse_req_t req, fuse_ino_t ino, const char* name);
+
     // Static callbacks wired into fuse_lowlevel_ops
+   static void InitCallback(void* userdata, struct fuse_conn_info* conn);
+   static void DestroyCallback(void* userdata);
+   static void ForgetCallback(fuse_req_t req, fuse_ino_t ino, uint64_t nlookup);
+   static void ForgetMultiCallback(fuse_req_t req, size_t count, struct fuse_forget_data* forgets);
     static void LookupCallback(fuse_req_t req, fuse_ino_t parent, const char* name);
     static void GetattrCallback(fuse_req_t req, fuse_ino_t ino, struct fuse_file_info* fi);
     static void SetattrCallback(fuse_req_t req, fuse_ino_t ino, struct stat* attr, int to_set,
@@ -219,6 +271,11 @@ private:
                              struct fuse_file_info* fi);
     static void WriteCallback(fuse_req_t req, fuse_ino_t ino, const char* buf, size_t size, off_t off,
                               struct fuse_file_info* fi);
+   static void WriteBufCallback(fuse_req_t req,
+                                fuse_ino_t ino,
+                                struct fuse_bufvec* buf,
+                                off_t off,
+                                struct fuse_file_info* fi);
     static void FlushCallback(fuse_req_t req, fuse_ino_t ino, struct fuse_file_info* fi);
     static void ReleaseCallback(fuse_req_t req, fuse_ino_t ino, struct fuse_file_info* fi);
     static void FsyncCallback(fuse_req_t req, fuse_ino_t ino, int datasync, struct fuse_file_info* fi);
@@ -235,6 +292,16 @@ private:
                                       struct fuse_file_info* fi_in, fuse_ino_t ino_out,
                                       off_t off_out, struct fuse_file_info* fi_out,
                                       size_t len, int flags);
+
+   static void SetxattrCallback(fuse_req_t req,
+                                fuse_ino_t ino,
+                                const char* name,
+                                const char* value,
+                                size_t size,
+                                int flags);
+   static void GetxattrCallback(fuse_req_t req, fuse_ino_t ino, const char* name, size_t size);
+   static void ListxattrCallback(fuse_req_t req, fuse_ino_t ino, size_t size);
+   static void RemovexattrCallback(fuse_req_t req, fuse_ino_t ino, const char* name);
 };
 
 Napi::Value SetOperationHandler(const Napi::CallbackInfo& info);

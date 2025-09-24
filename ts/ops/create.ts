@@ -3,12 +3,13 @@ import { ModeUtils, ValidationUtils } from '../helpers.js';
 import { ensureStatResult, normalizeTimeout } from './getattr.js';
 import type {
   BaseOperationOptions,
-  CreateHandler,
-  FileInfo,
   Ino,
+  Mode,
   RequestContext,
   StatResult,
   Timeout,
+  FileInfo,
+  CreateHandler,
 } from '../types.js';
 
 const DEFAULT_CONTEXT: RequestContext = {
@@ -29,18 +30,17 @@ export type CreateResult = {
 export function validateCreate(
   parent: unknown,
   name: unknown,
-  mode: unknown
+  mode: unknown,
 ): asserts parent is Ino {
   ValidationUtils.validateIno(parent);
 
   if (typeof name !== 'string' || name.length === 0 || name.length > 255) {
-    throw new FuseErrno('EINVAL', 'Node name must be 1-255 characters long');
+    throw new FuseErrno('EINVAL', 'File name must be 1-255 characters long');
   }
 
   if (typeof mode !== 'number') {
     throw new FuseErrno('EINVAL', 'Mode must be a number');
   }
-
   if (!Number.isInteger(mode) || mode <= 0) {
     throw new FuseErrno('EINVAL', 'Mode must be a positive integer');
   }
@@ -48,9 +48,8 @@ export function validateCreate(
   if (ModeUtils.isDirectory(mode)) {
     throw new FuseErrno('EINVAL', 'Use mkdir for directories');
   }
-
   if (!ModeUtils.isFile(mode)) {
-    throw new FuseErrno('EINVAL', 'Create can only be used for regular files');
+    throw new FuseErrno('EINVAL', 'Create supports only regular files');
   }
 }
 
@@ -58,7 +57,7 @@ export async function createWrapper(
   handlers: { create?: CreateHandler },
   parent: Ino,
   name: string,
-  mode: number,
+  mode: Mode | number,
   context: RequestContext = DEFAULT_CONTEXT,
   options: BaseOperationOptions = DEFAULT_OPTIONS
 ): Promise<CreateResult> {
@@ -69,23 +68,24 @@ export async function createWrapper(
     throw new FuseErrno('ENOSYS');
   }
 
-  const result = await handler(parent, name, mode, context, options);
+  const result = await handler(parent, name, Number(mode), context, options);
   if (!result || typeof result !== 'object') {
     throw new FuseErrno('EIO', 'create handler returned invalid result');
   }
 
-  const statResult = ensureStatResult(result.attr);
-  const timeout = normalizeTimeout(result.timeout);
-
-  if (!result.fi || typeof result.fi !== 'object') {
-    throw new FuseErrno('EIO', 'create handler returned invalid fi');
+  const statResult = ensureStatResult((result as any).attr);
+  const fi = (result as any).fi as FileInfo;
+  if (!fi || typeof fi !== 'object') {
+    throw new FuseErrno('EIO', 'create handler must return fi');
+  }
+  if (typeof fi.fh !== 'number' || !Number.isInteger(fi.fh) || fi.fh < 0) {
+    throw new FuseErrno('EIO', 'fi.fh must be a non-negative integer');
+  }
+  if (typeof fi.flags !== 'number' || !Number.isInteger(fi.flags) || fi.flags < 0) {
+    throw new FuseErrno('EIO', 'fi.flags must be a non-negative integer');
   }
 
-  // Basic validation of fi
-  const fi = result.fi as FileInfo;
-  if (typeof fi.fh !== 'number' || typeof fi.flags !== 'number') {
-    throw new FuseErrno('EIO', 'create handler returned invalid fi');
-  }
+  const timeout = normalizeTimeout((result as any).timeout);
 
   return { attr: statResult, timeout, fi };
 }

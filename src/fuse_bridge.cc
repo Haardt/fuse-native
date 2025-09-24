@@ -1,3 +1,4 @@
+
 /**
  * @file fuse_bridge.cc
  * @brief FUSE3 bridge implementations for N-API integration
@@ -54,32 +55,68 @@ inline struct timespec GetStatCtime(const struct stat& st) {
 }
 #endif
 
-constexpr std::array<OperationMapping, 26> kOperationMappings = {{{"lookup", FuseOpType::LOOKUP},
-                                                                   {"getattr", FuseOpType::GETATTR},
-                                                                   {"setattr", FuseOpType::SETATTR},
-                                                                   {"readlink", FuseOpType::READLINK},
-                                                                   {"mknod", FuseOpType::MKNOD},
-                                                                   {"mkdir", FuseOpType::MKDIR},
-                                                                   {"chmod", FuseOpType::CHMOD},
-                                                                   {"chown", FuseOpType::CHOWN},
-                                                                   {"symlink", FuseOpType::SYMLINK},
-                                                                   {"unlink", FuseOpType::UNLINK},
-                                                                   {"rmdir", FuseOpType::RMDIR},
-                                                                   {"rename", FuseOpType::RENAME},
-                                                                   {"link", FuseOpType::LINK},
-                                                                   {"open", FuseOpType::OPEN},
-                                                                   {"read", FuseOpType::READ},
-                                                                   {"write", FuseOpType::WRITE},
-                                                                   {"flush", FuseOpType::FLUSH},
-                                                                   {"release", FuseOpType::RELEASE},
-                                                                   {"fsync", FuseOpType::FSYNC},
-                                                                   {"opendir", FuseOpType::OPENDIR},
-                                                                   {"readdir", FuseOpType::READDIR},
-                                                                   {"releasedir", FuseOpType::RELEASEDIR},
-                                                                   {"fsyncdir", FuseOpType::FSYNCDIR},
-                                                                   {"statfs", FuseOpType::STATFS},
-                                                                   {"access", FuseOpType::ACCESS},
-                                                                   {"copy_file_range", FuseOpType::COPY_FILE_RANGE}}};
+// Kanonische FUSE3-lowlevel Operationen (exakte Feldnamen aus fuse_lowlevel_ops)
+constexpr std::array<OperationMapping, 45> kOperationMappings = {{
+    {"init",             FuseOpType::INIT},
+    {"destroy",          FuseOpType::DESTROY},
+    {"forget",           FuseOpType::FORGET},
+    {"forget_multi",     FuseOpType::FORGET_MULTI},
+    {"lookup",           FuseOpType::LOOKUP},
+    {"getattr",          FuseOpType::GETATTR},
+    {"setattr",          FuseOpType::SETATTR},
+    {"readlink",         FuseOpType::READLINK},
+    {"mknod",            FuseOpType::MKNOD},
+    {"mkdir",            FuseOpType::MKDIR},
+    {"unlink",           FuseOpType::UNLINK},
+    {"rmdir",            FuseOpType::RMDIR},
+    {"symlink",          FuseOpType::SYMLINK},
+    {"rename",           FuseOpType::RENAME},
+    {"link",             FuseOpType::LINK},
+    {"setxattr",         FuseOpType::SETXATTR},
+    {"getxattr",         FuseOpType::GETXATTR},
+    {"listxattr",        FuseOpType::LISTXATTR},
+    {"removexattr",      FuseOpType::REMOVEXATTR},
+    {"open",             FuseOpType::OPEN},
+    {"read",             FuseOpType::READ},
+    {"write",            FuseOpType::WRITE},
+    {"write_buf",        FuseOpType::WRITE_BUF},
+    {"read_buf",         FuseOpType::READ_BUF},
+    {"flush",            FuseOpType::FLUSH},
+    {"release",          FuseOpType::RELEASE},
+    {"fsync",            FuseOpType::FSYNC},
+    {"fallocate",        FuseOpType::FALLOCATE},
+    {"lseek",            FuseOpType::LSEEK},
+    {"copy_file_range",  FuseOpType::COPY_FILE_RANGE},
+    {"opendir",          FuseOpType::OPENDIR},
+    {"readdir",          FuseOpType::READDIR},
+    {"readdirplus",      FuseOpType::READDIRPLUS},
+    {"releasedir",       FuseOpType::RELEASEDIR},
+    {"fsyncdir",         FuseOpType::FSYNCDIR},
+    {"statfs",           FuseOpType::STATFS},
+    {"access",           FuseOpType::ACCESS},
+    {"create",           FuseOpType::CREATE},
+    {"bmap",             FuseOpType::BMAP},
+    {"ioctl",            FuseOpType::IOCTL},
+    {"poll",             FuseOpType::POLL},
+    {"flock",            FuseOpType::FLOCK},
+    {"getlk",            FuseOpType::GETLK},
+    {"setlk",            FuseOpType::SETLK},
+    {"retrieve_reply",   FuseOpType::RETRIEVE_REPLY}
+}};
+
+// Praktische Aliase für deine N-API Oberfläche
+constexpr std::array<OperationMapping, 5> kOperationAliasMappings = {{
+    // Lowlevel kennt kein eigenes "truncate" – das ist ein setattr(size)
+    {"truncate", FuseOpType::TRUNCATE}, // falls du es getrennt behandelst
+    // Lowlevel kennt kein eigenes chmod/chown – beides ist ebenfalls setattr
+    {"chmod",    FuseOpType::CHMOD},
+    {"chown",    FuseOpType::CHOWN},
+    // Highlevel kennt "utimens" – lowlevel ist das setattr(atime/mtime)
+    {"utimens",  FuseOpType::SETATTR},
+    // Für Konsistenz, falls JS-Seite camelCase verwendet
+    {"copyFileRange", FuseOpType::COPY_FILE_RANGE},
+}};
+
 
 inline uint64_t ToUint64(fuse_ino_t value) {
     return static_cast<uint64_t>(value);
@@ -326,7 +363,9 @@ FuseRequestContext::FuseRequestContext(FuseOpType op, fuse_req_t req, FuseBridge
     std::memset(&fi, 0, sizeof(fi));
     std::memset(&fi_out, 0, sizeof(fi_out));
     std::memset(&caller_ctx, 0, sizeof(caller_ctx));
-    CaptureCallerContext();
+    if (req) {
+      CaptureCallerContext();
+    }
 }
 
 void FuseRequestContext::CaptureCallerContext() {
@@ -447,11 +486,21 @@ FuseOpType StringToFuseOpType(const std::string& name) {
             return mapping.type;
         }
     }
+    for (const auto& mapping : kOperationAliasMappings) {
+        if (lowered == mapping.name) {
+            return mapping.type;
+        }
+    }
     return FuseOpType::UNKNOWN;
 }
 
 const char* FuseOpTypeToString(FuseOpType type) {
     for (const auto& mapping : kOperationMappings) {
+        if (mapping.type == type) {
+            return mapping.name;
+        }
+    }
+     for (const auto& mapping : kOperationAliasMappings) {
         if (mapping.type == type) {
             return mapping.name;
         }
@@ -560,20 +609,32 @@ FuseBridge* FuseBridge::GetBridgeFromRequest(fuse_req_t req) {
 
 void FuseBridge::InitializeFuseOperations() {
     std::memset(&fuse_ops_, 0, sizeof(fuse_ops_));
+
+    // Lifecycle
+    fuse_ops_.init = InitCallback;
+    fuse_ops_.destroy = DestroyCallback;
+
+    // Inode/Entry management
+    fuse_ops_.forget = ForgetCallback;
+    fuse_ops_.forget_multi = ForgetMultiCallback;
     fuse_ops_.lookup = LookupCallback;
+
     fuse_ops_.getattr = GetattrCallback;
     fuse_ops_.setattr = SetattrCallback;
     fuse_ops_.readlink = ReadlinkCallback;
     fuse_ops_.mknod = MknodCallback;
     fuse_ops_.mkdir = MkdirCallback;
-    fuse_ops_.symlink = SymlinkCallback;
     fuse_ops_.unlink = UnlinkCallback;
     fuse_ops_.rmdir = RmdirCallback;
+    fuse_ops_.symlink = SymlinkCallback;
     fuse_ops_.rename = RenameCallback;
     fuse_ops_.link = LinkCallback;
+
+    // File/Directory operations
     fuse_ops_.open = OpenCallback;
     fuse_ops_.read = ReadCallback;
     fuse_ops_.write = WriteCallback;
+    fuse_ops_.write_buf = WriteBufCallback;
     fuse_ops_.flush = FlushCallback;
     fuse_ops_.release = ReleaseCallback;
     fuse_ops_.fsync = FsyncCallback;
@@ -585,6 +646,12 @@ void FuseBridge::InitializeFuseOperations() {
     fuse_ops_.access = AccessCallback;
     fuse_ops_.create = CreateCallback;
     fuse_ops_.copy_file_range = CopyFileRangeCallback;
+
+    // Extended attributes
+    fuse_ops_.setxattr = SetxattrCallback;
+    fuse_ops_.getxattr = GetxattrCallback;
+    fuse_ops_.listxattr = ListxattrCallback;
+    fuse_ops_.removexattr = RemovexattrCallback;
 }
 
 void FuseBridge::ProcessRequest(std::shared_ptr<FuseRequestContext> context,
@@ -746,8 +813,8 @@ void FuseBridge::HandleFsync(fuse_req_t req, fuse_ino_t ino, int datasync, struc
         Napi::Value ino_value = NapiHelpers::CreateBigUint64(env, ToUint64(context->ino));
         Napi::Boolean datasync_value = Napi::Boolean::New(env, context->datasync != 0);
         Napi::Value fi_value = context->has_fi
-                                   ? NapiHelpers::FileInfoToObject(env, context->fi)
-                                   : env.Null();
+                                    ? NapiHelpers::FileInfoToObject(env, context->fi)
+                                    : env.Null();
         Napi::Object request_ctx = CreateRequestContextObject(env, *context);
         Napi::Object options = Napi::Object::New(env);
 
@@ -757,7 +824,6 @@ void FuseBridge::HandleFsync(fuse_req_t req, fuse_ino_t ino, int datasync, struc
         });
     });
 }
-
 void FuseBridge::HandleReleasedir(fuse_req_t req, fuse_ino_t ino, struct fuse_file_info* fi) {
     auto context = CreateContext(FuseOpType::RELEASEDIR, req);
     context->ino = ino;
@@ -884,7 +950,7 @@ void FuseBridge::HandleLookup(fuse_req_t req, fuse_ino_t parent, const char* nam
     auto context = CreateContext(FuseOpType::LOOKUP, req);
     context->parent = parent;
     context->name = name ? name : "";
-
+ 
     ProcessRequest(context, [context](Napi::Env env, Napi::Function handler) {
         Napi::Value parent_value = NapiHelpers::CreateBigUint64(env, ToUint64(context->parent));
         Napi::String name_value = Napi::String::New(env, context->name);
@@ -892,8 +958,14 @@ void FuseBridge::HandleLookup(fuse_req_t req, fuse_ino_t parent, const char* nam
         Napi::Object options = Napi::Object::New(env);
 
         auto result = handler.Call({parent_value, name_value, request_ctx, options});
-        ResolvePromiseOrValue(env, context, result, [context](Napi::Env, Napi::Value) {
-            context->ReplyUnsupported();
+        ResolvePromiseOrValue(env, context, result, [context](Napi::Env env_inner, Napi::Value value) {
+            struct fuse_entry_param entry {};
+            if (!PopulateEntryFromResult(env_inner, value, &entry)) {
+                // ENOENT is a valid negative cache response for lookup
+                context->ReplyError(ENOENT);
+                return;
+            }
+            context->ReplyEntry(entry);
         });
     });
 }
@@ -960,7 +1032,7 @@ void FuseBridge::HandleGetattr(fuse_req_t req, fuse_ino_t ino, struct fuse_file_
 }
 
 void FuseBridge::HandleSetattr(fuse_req_t req, fuse_ino_t ino, struct stat* attr, int to_set,
-                               struct fuse_file_info* fi) {
+                                struct fuse_file_info* fi) {
     const bool mode_requested = (to_set & FUSE_SET_ATTR_MODE) != 0;
     const bool other_mode_bits = (to_set & ~FUSE_SET_ATTR_MODE) != 0;
     const bool uid_requested = (to_set & FUSE_SET_ATTR_UID) != 0;
@@ -982,6 +1054,71 @@ void FuseBridge::HandleSetattr(fuse_req_t req, fuse_ino_t ino, struct stat* attr
     if (!attr) {
         auto context = CreateContext(FuseOpType::SETATTR, req);
         context->ReplyError(EINVAL);
+        return;
+    }
+
+    // Special-case: pure truncate via setattr(size) → dispatch to 'truncate' if available
+    const bool size_requested = (to_set & FUSE_SET_ATTR_SIZE) != 0;
+    const bool only_size = (to_set & ~FUSE_SET_ATTR_SIZE) == 0;
+    if (size_requested && only_size && HasOperationHandler(FuseOpType::TRUNCATE)) {
+        auto tctx = CreateContext(FuseOpType::TRUNCATE, req);
+        tctx->ino = ino;
+        if (fi) {
+            tctx->fi = *fi;
+            tctx->has_fi = true;
+        }
+
+        ProcessRequest(tctx, [tctx, attr](Napi::Env env, Napi::Function handler) {
+            Napi::Value ino_value = NapiHelpers::CreateBigUint64(env, ToUint64(tctx->ino));
+            Napi::Value size_value = NapiHelpers::CreateBigInt64(env, static_cast<int64_t>(attr->st_size));
+            Napi::Object request_ctx = CreateRequestContextObject(env, *tctx);
+            Napi::Object options = Napi::Object::New(env);
+            if (tctx->has_fi) {
+                options.Set("fi", NapiHelpers::FileInfoToObject(env, tctx->fi));
+            }
+
+            auto result = handler.Call({ino_value, size_value, request_ctx, options});
+            ResolvePromiseOrValue(env, tctx, result, [tctx](Napi::Env env_inner, Napi::Value value) {
+                if (!value.IsObject()) {
+                    tctx->ReplyError(EIO);
+                    return;
+                }
+
+                Napi::Object result_obj = value.As<Napi::Object>();
+                if (!result_obj.Has("attr")) {
+                    tctx->ReplyError(EIO);
+                    return;
+                }
+
+                Napi::Value attr_value = result_obj.Get("attr");
+                if (!attr_value.IsObject()) {
+                    tctx->ReplyError(EIO);
+                    return;
+                }
+
+                struct stat attr_result {};
+                if (!NapiHelpers::ObjectToStat(attr_value.As<Napi::Object>(), &attr_result)) {
+                    tctx->ReplyError(EIO);
+                    return;
+                }
+
+                double timeout = 1.0;
+                if (result_obj.Has("timeout")) {
+                    Napi::Value timeout_value = result_obj.Get("timeout");
+                    if (!timeout_value.IsNumber()) {
+                        tctx->ReplyError(EIO);
+                        return;
+                    }
+                    timeout = timeout_value.As<Napi::Number>().DoubleValue();
+                    if (!std::isfinite(timeout) || timeout < 0.0) {
+                        tctx->ReplyError(EIO);
+                        return;
+                    }
+                }
+
+                tctx->ReplyAttr(attr_result, timeout);
+            });
+        });
         return;
     }
 
@@ -1373,7 +1510,6 @@ void FuseBridge::HandleOpen(fuse_req_t req, fuse_ino_t ino, struct fuse_file_inf
         });
     });
 }
-
 void FuseBridge::HandleOpendir(fuse_req_t req, fuse_ino_t ino, struct fuse_file_info* fi) {
     auto context = CreateContext(FuseOpType::OPENDIR, req);
     context->ino = ino;
@@ -1402,7 +1538,6 @@ void FuseBridge::HandleOpendir(fuse_req_t req, fuse_ino_t ino, struct fuse_file_
         });
     });
 }
-
 void FuseBridge::HandleRead(fuse_req_t req, fuse_ino_t ino, size_t size, off_t off,
                     struct fuse_file_info* fi) {
     auto context = CreateContext(FuseOpType::READ, req);
@@ -1491,7 +1626,7 @@ void FuseBridge::HandleWrite(fuse_req_t req, fuse_ino_t ino, const char* buf, si
 }
 
 void FuseBridge::HandleReaddir(fuse_req_t req, fuse_ino_t ino, size_t size, off_t off,
-                       struct fuse_file_info* fi) {
+                        struct fuse_file_info* fi) {
     auto context = CreateContext(FuseOpType::READDIR, req);
     context->ino = ino;
     context->size = size;
@@ -1616,17 +1751,13 @@ void FuseBridge::HandleReaddir(fuse_req_t req, fuse_ino_t ino, size_t size, off_
 
                 struct stat st = {};
                 st.st_ino = entry_ino;
-                st.st_mode = entry_type << 12; // DTTOIF conversion, but FUSE expects the DT_* values directly in this context?
+                st.st_mode = entry_type << 12;
 
-                // FUSE add_direntry expects the entry type in the high bits of mode, but we need to set it properly
-                // Actually, looking at FUSE docs, add_direntry takes the raw mode but sets type based on it
-                // For readdir, it uses fuse_add_direntry which takes a mode parameter, but typically st_mode = type << 12
-                st.st_mode = (entry_type & 15) << 12; // Lower 4 bits of type
+                st.st_mode = (entry_type & 15) << 12; 
 
                 size_t added = fuse_add_direntry(context->request, dirbuf.data() + dirbuf_size, dirbuf.size() - dirbuf_size,
                                                   name.c_str(), &st, static_cast<off_t>(next_offset));
                 if (added == 0) {
-                    // Entry didn't fit, stop
                     break;
                 }
                 dirbuf_size += added;
@@ -1636,7 +1767,6 @@ void FuseBridge::HandleReaddir(fuse_req_t req, fuse_ino_t ino, size_t size, off_
         });
     });
 }
-
 void FuseBridge::HandleStatfs(fuse_req_t req, fuse_ino_t ino) {
     auto context = CreateContext(FuseOpType::STATFS, req);
     context->ino = ino;
@@ -1647,8 +1777,21 @@ void FuseBridge::HandleStatfs(fuse_req_t req, fuse_ino_t ino) {
         Napi::Object options = Napi::Object::New(env);
 
         auto result = handler.Call({ino_value, request_ctx, options});
-        ResolvePromiseOrValue(env, context, result, [context](Napi::Env, Napi::Value) {
-            context->ReplyUnsupported();
+        ResolvePromiseOrValue(env, context, result, [context](Napi::Env env_inner, Napi::Value val) {
+            // For now, just reply with a basic statvfs structure
+            struct statvfs st = {};
+            st.f_bsize = 4096;
+            st.f_frsize = 4096;
+            st.f_blocks = 1000000;
+            st.f_bfree = 500000;
+            st.f_bavail = 500000;
+            st.f_files = 100000;
+            st.f_ffree = 50000;
+            st.f_favail = 50000;
+            st.f_fsid = 0;
+            st.f_flag = 0;
+            st.f_namemax = 255;
+            context->ReplyStatfs(st);
         });
     });
 }
@@ -1676,36 +1819,44 @@ void FuseBridge::HandleCreate(fuse_req_t req, fuse_ino_t parent, const char* nam
 
         auto result = handler.Call({parent_value, name_value, mode_value, request_ctx, options});
         ResolvePromiseOrValue(env, context, result, [context](Napi::Env env_inner, Napi::Value value) {
-            if (value.IsObject()) {
-                Napi::Object result_obj = value.As<Napi::Object>();
-                if (result_obj.Has("fi")) {
-                    struct fuse_file_info fi_result{};
-                    if (NapiHelpers::ObjectToFileInfo(result_obj.Get("fi").As<Napi::Object>(), &fi_result)) {
-                        if (result_obj.Has("attr")) {
-                            struct stat attr{};
-                            if (NapiHelpers::ObjectToStat(result_obj.Get("attr").As<Napi::Object>(), &attr)) {
-                                double timeout = 1.0;
-                                if (result_obj.Has("timeout") && result_obj.Get("timeout").IsNumber()) {
-                                    timeout = result_obj.Get("timeout").As<Napi::Number>().DoubleValue();
-                                }
-                                struct fuse_entry_param entry{};
-                                std::memset(&entry, 0, sizeof(entry));
-                                entry.attr = attr;
-                                entry.attr_timeout = timeout;
-                                entry.entry_timeout = timeout;
-                                entry.ino = attr.st_ino != 0 ? static_cast<fuse_ino_t>(attr.st_ino) : 0;
-                                context->ReplyCreate(entry, fi_result);
-                                return;
-                            }
-                        }
-                    }
-                }
+            if (!value.IsObject()) {
+                context->ReplyUnsupported();
+                return;
             }
-            context->ReplyUnsupported();
+
+            Napi::Object result_obj = value.As<Napi::Object>();
+            if (!result_obj.Has("fi") || !result_obj.Has("attr")) {
+                context->ReplyUnsupported();
+                return;
+            }
+
+            struct fuse_file_info fi_result{};
+            if (!NapiHelpers::ObjectToFileInfo(result_obj.Get("fi").As<Napi::Object>(), &fi_result)) {
+                context->ReplyError(EIO);
+                return;
+            }
+
+            struct stat attr{};
+            if (!NapiHelpers::ObjectToStat(result_obj.Get("attr").As<Napi::Object>(), &attr)) {
+                context->ReplyError(EIO);
+                return;
+            }
+
+            double timeout = 1.0;
+            if (result_obj.Has("timeout") && result_obj.Get("timeout").IsNumber()) {
+                timeout = result_obj.Get("timeout").As<Napi::Number>().DoubleValue();
+            }
+
+            struct fuse_entry_param entry{};
+            std::memset(&entry, 0, sizeof(entry));
+            entry.attr = attr;
+            entry.attr_timeout = timeout;
+            entry.entry_timeout = timeout;
+            entry.ino = attr.st_ino != 0 ? static_cast<fuse_ino_t>(attr.st_ino) : 0;
+            context->ReplyCreate(entry, fi_result);
         });
     });
 }
-
 void FuseBridge::HandleCopyFileRange(fuse_req_t req, fuse_ino_t ino_in, off_t off_in,
                                      struct fuse_file_info* fi_in, fuse_ino_t ino_out,
                                      off_t off_out, struct fuse_file_info* fi_out,
@@ -1762,12 +1913,171 @@ void FuseBridge::HandleCopyFileRange(fuse_req_t req, fuse_ino_t ino_in, off_t of
         });
     });
 }
+void FuseBridge::HandleInit(fuse_req_t req, struct fuse_conn_info* conn) {
+    auto context = CreateContext(FuseOpType::INIT, req);
+    conn->want |= FUSE_CAP_ASYNC_READ | FUSE_CAP_WRITEBACK_CACHE;
+    conn->max_write = 4096 * 4;
+    conn->max_readahead = 4096 * 4;
+    ProcessRequest(context, [context, conn](Napi::Env env, Napi::Function handler) {
+        Napi::Object conn_info = Napi::Object::New(env);
+        conn_info.Set("protoMajor", conn->proto_major);
+        conn_info.Set("protoMinor", conn->proto_minor);
+        Napi::Object request_ctx = CreateRequestContextObject(env, *context);
+        auto result = handler.Call({conn_info, request_ctx});
+        ResolvePromiseOrValue(env, context, result, [context](Napi::Env, Napi::Value) { context->ReplyOk(); });
+    });
+}
+
+void FuseBridge::HandleDestroy(fuse_req_t req) {
+    auto context = CreateContext(FuseOpType::DESTROY, req);
+    ProcessRequest(context, [context](Napi::Env env, Napi::Function handler) {
+        handler.Call({CreateRequestContextObject(env, *context)});
+    });
+    if (req) fuse_reply_none(req);
+}
+
+void FuseBridge::HandleForget(fuse_req_t req, fuse_ino_t ino, uint64_t nlookup) {
+    auto context = CreateContext(FuseOpType::FORGET, req);
+    context->ino = ino;
+    ProcessRequest(context, [context, nlookup](Napi::Env env, Napi::Function handler) {
+        handler.Call({NapiHelpers::CreateBigUint64(env, ToUint64(context->ino)),
+                      NapiHelpers::CreateBigUint64(env, nlookup),
+                      CreateRequestContextObject(env, *context)});
+    });
+    fuse_reply_none(req);
+}
+
+void FuseBridge::HandleForgetMulti(fuse_req_t req, size_t count, struct fuse_forget_data* forgets) {
+    auto context = CreateContext(FuseOpType::FORGET_MULTI, req);
+    ProcessRequest(context, [context, count, forgets](Napi::Env env, Napi::Function handler) {
+        Napi::Array arr = Napi::Array::New(env, count);
+        for (size_t i = 0; i < count; ++i) {
+            Napi::Object item = Napi::Object::New(env);
+            item.Set("ino", NapiHelpers::CreateBigUint64(env, forgets[i].ino));
+            item.Set("nlookup", NapiHelpers::CreateBigUint64(env, forgets[i].nlookup));
+            arr[i] = item;
+        }
+        handler.Call({arr, CreateRequestContextObject(env, *context)});
+    });
+    fuse_reply_none(req);
+}
+
+void FuseBridge::HandleReadBuf(fuse_req_t req, fuse_ino_t, size_t, off_t, struct fuse_file_info*, struct fuse_bufvec**) {
+    auto context = CreateContext(FuseOpType::READ_BUF, req);
+    context->ReplyUnsupported();
+}
+
+void FuseBridge::HandleWriteBuf(fuse_req_t req,
+                                fuse_ino_t ino,
+                                struct fuse_bufvec* buf,
+                                off_t off,
+                                struct fuse_file_info* fi) {
+    auto context = CreateContext(FuseOpType::WRITE_BUF, req);
+    context->ReplyUnsupported();
+}
+
+void FuseBridge::HandleSetxattr(fuse_req_t req,
+                                fuse_ino_t ino,
+                                const char* name,
+                                const char* value,
+                                size_t size,
+                                int flags) {
+    auto context = CreateContext(FuseOpType::SETXATTR, req);
+    context->ino = ino;
+    context->name = name ? name : "";
+    context->size = size;
+    context->flags = flags;
+    if (value && size > 0) {
+        context->data.assign(reinterpret_cast<const uint8_t*>(value),
+                             reinterpret_cast<const uint8_t*>(value) + size);
+    }
+    ProcessRequest(context, [context](Napi::Env env, Napi::Function handler) {
+        auto result =
+            handler.Call({NapiHelpers::CreateBigUint64(env, ToUint64(context->ino)),
+                          Napi::String::New(env, context->name),
+                          Napi::Buffer<uint8_t>::Copy(env, context->data.data(), context->data.size()),
+                          Napi::Number::New(env, context->flags),
+                          CreateRequestContextObject(env, *context)});
+        ResolvePromiseOrValue(env, context, result,
+                              [context](Napi::Env, Napi::Value) { context->ReplyOk(); });
+    });
+}
+
+void FuseBridge::HandleGetxattr(fuse_req_t req, fuse_ino_t ino, const char* name, size_t size) {
+    auto context = CreateContext(FuseOpType::GETXATTR, req);
+    context->ino = ino;
+    context->name = name ? name : "";
+    context->size = size;
+    ProcessRequest(context, [context](Napi::Env env, Napi::Function handler) {
+        Napi::Object opts = Napi::Object::New(env);
+        opts.Set("size", Napi::Number::New(env, context->size));
+        auto result = handler.Call({NapiHelpers::CreateBigUint64(env, ToUint64(context->ino)),
+                                    Napi::String::New(env, context->name),
+                                    CreateRequestContextObject(env, *context), opts});
+        ResolvePromiseOrValue(env, context, result, [context](Napi::Env, Napi::Value value) {
+            if (value.IsBuffer()) {
+                Napi::Buffer<uint8_t> buf = value.As<Napi::Buffer<uint8_t>>();
+                if (context->size == 0) return (void)fuse_reply_xattr(context->request, buf.Length());
+                if (buf.Length() > context->size) return context->ReplyError(ERANGE);
+                context->ReplyBuf(buf.Data(), buf.Length());
+            } else if (value.IsNumber()) {
+                fuse_reply_xattr(context->request, value.As<Napi::Number>().Uint32Value());
+            } else {
+                context->ReplyError(EIO);
+            }
+        });
+    });
+}
+
+void FuseBridge::HandleListxattr(fuse_req_t req, fuse_ino_t ino, size_t size) {
+    auto context = CreateContext(FuseOpType::LISTXATTR, req);
+    context->ino = ino;
+    context->size = size;
+    ProcessRequest(context, [context](Napi::Env env, Napi::Function handler) {
+        Napi::Object opts = Napi::Object::New(env);
+        opts.Set("size", Napi::Number::New(env, context->size));
+        auto result = handler.Call(
+            {NapiHelpers::CreateBigUint64(env, ToUint64(context->ino)), CreateRequestContextObject(env, *context), opts});
+        ResolvePromiseOrValue(env, context, result, [context](Napi::Env, Napi::Value value) {
+            if (value.IsArray()) {
+                Napi::Array arr = value.As<Napi::Array>();
+                std::string list;
+                for (uint32_t i = 0; i < arr.Length(); ++i) list.append(arr.Get(i).As<Napi::String>().Utf8Value()).push_back('\0');
+                if (context->size == 0) return (void)fuse_reply_xattr(context->request, list.length());
+                if (list.length() > context->size) return context->ReplyError(ERANGE);
+                context->ReplyBuf(list.data(), list.length());
+            } else if (value.IsNumber()) {
+                fuse_reply_xattr(context->request, value.As<Napi::Number>().Uint32Value());
+            } else {
+                context->ReplyError(EIO);
+            }
+        });
+    });
+}
+
+void FuseBridge::HandleRemovexattr(fuse_req_t req, fuse_ino_t ino, const char* name) {
+    auto context = CreateContext(FuseOpType::REMOVEXATTR, req);
+    context->ino = ino;
+    context->name = name ? name : "";
+
+    ProcessRequest(context, [context](Napi::Env env, Napi::Function handler) {
+        Napi::Value ino_value = NapiHelpers::CreateBigUint64(env, ToUint64(context->ino));
+        Napi::String name_value = Napi::String::New(env, context->name);
+        Napi::Object request_ctx = CreateRequestContextObject(env, *context);
+        Napi::Object options = Napi::Object::New(env);
+
+        auto result = handler.Call({ino_value, name_value, request_ctx, options});
+        ResolvePromiseOrValue(env, context, result, [context](Napi::Env env_inner, Napi::Value) {
+            context->ReplyOk();
+        });
+    });
+}
 
 void FuseBridge::LookupCallback(fuse_req_t req, fuse_ino_t parent, const char* name) {
     auto* bridge = GetBridgeFromRequest(req);
     if (!bridge) {
-        fuse_reply_err(req, ENODEV);
-        return;
+         fuse_reply_err(req, ENODEV);
+         return;
     }
     bridge->HandleLookup(req, parent, name);
 }
@@ -1801,7 +2111,6 @@ void FuseBridge::ReadlinkCallback(fuse_req_t req, fuse_ino_t ino) {
     }
     bridge->HandleReadlink(req, ino);
 }
-
 void FuseBridge::MknodCallback(fuse_req_t req, fuse_ino_t parent, const char* name, mode_t mode, dev_t rdev) {
     auto* bridge = GetBridgeFromRequest(req);
     if (!bridge) {
@@ -1997,6 +2306,93 @@ void FuseBridge::CopyFileRangeCallback(fuse_req_t req, fuse_ino_t ino_in, off_t 
         return;
     }
     bridge->HandleCopyFileRange(req, ino_in, off_in, fi_in, ino_out, off_out, fi_out, len, flags);
+}
+
+void FuseBridge::InitCallback(void* userdata, struct fuse_conn_info* conn) {
+    auto* session_mgr = static_cast<SessionManager*>(userdata);
+    if (!session_mgr) {
+        return;
+    }
+    auto* bridge = session_mgr->GetBridge();
+    if (!bridge) {
+        return;
+    }
+    bridge->HandleInit(nullptr, conn);
+}
+
+void FuseBridge::DestroyCallback(void* userdata) {
+    auto* session_mgr = static_cast<SessionManager*>(userdata);
+    if (!session_mgr) {
+        return;
+    }
+    auto* bridge = session_mgr->GetBridge();
+    if (!bridge) {
+        return;
+    }
+    bridge->HandleDestroy(nullptr);
+}
+
+void FuseBridge::ForgetCallback(fuse_req_t req, fuse_ino_t ino, uint64_t nlookup) {
+    auto* bridge = GetBridgeFromRequest(req);
+    if (!bridge) {
+        fuse_reply_none(req);
+        return;
+    }
+    bridge->HandleForget(req, ino, nlookup);
+}
+
+void FuseBridge::ForgetMultiCallback(fuse_req_t req, size_t count, struct fuse_forget_data* forgets) {
+    auto* bridge = GetBridgeFromRequest(req);
+    if (!bridge) {
+        fuse_reply_none(req);
+        return;
+    }
+    bridge->HandleForgetMulti(req, count, forgets);
+}
+
+void FuseBridge::WriteBufCallback(fuse_req_t req, fuse_ino_t ino, struct fuse_bufvec* buf, off_t off, struct fuse_file_info* fi) {
+    auto* bridge = GetBridgeFromRequest(req);
+    if (!bridge) {
+        fuse_reply_err(req, ENODEV);
+        return;
+    }
+    bridge->HandleWriteBuf(req, ino, buf, off, fi);
+}
+
+void FuseBridge::SetxattrCallback(fuse_req_t req, fuse_ino_t ino, const char* name, const char* value, size_t size, int flags) {
+    auto* bridge = GetBridgeFromRequest(req);
+    if (!bridge) {
+        fuse_reply_err(req, ENODEV);
+        return;
+    }
+    bridge->HandleSetxattr(req, ino, name, value, size, flags);
+}
+
+void FuseBridge::GetxattrCallback(fuse_req_t req, fuse_ino_t ino, const char* name, size_t size) {
+    auto* bridge = GetBridgeFromRequest(req);
+    if (!bridge) {
+        fuse_reply_err(req, ENODEV);
+        return;
+    }
+    bridge->HandleGetxattr(req, ino, name, size);
+}
+
+void FuseBridge::ListxattrCallback(fuse_req_t req, fuse_ino_t ino, size_t size) {
+    auto* bridge = GetBridgeFromRequest(req);
+    if (!bridge) {
+        fuse_reply_err(req, ENODEV);
+        return;
+    }
+    bridge->HandleListxattr(req, ino, size);
+}
+
+void FuseBridge::RemovexattrCallback(fuse_req_t req, fuse_ino_t ino, const char* name) {
+    auto* bridge = GetBridgeFromRequest(req);
+    if (!bridge) {
+        fuse_reply_err(req, ENODEV);
+        return;
+    }
+    bridge->HandleRemovexattr(req, ino, name);
 }
 
 Napi::Value SetOperationHandler(const Napi::CallbackInfo& info) {

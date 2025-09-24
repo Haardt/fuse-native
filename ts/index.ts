@@ -6,26 +6,40 @@
  * BigInt support for 64-bit values, and strict TypeScript types.
  */
 
-// Use simple require for both Jest and Node.js environments
-// Jest mocks will override the actual require calls
-let binding: any;
+import { createRequire } from 'node:module';
 
-try {
-  // This will work in Jest (with mocks) and Node.js CJS environments
-  // For pure ESM, the binding will be handled by the build system
-  const req = eval('require');
-  try {
-    binding = req('../prebuilds/linux-x64/@cocalc+fuse-native.node');
-  } catch {
+// Lazy load binding when needed
+let bindingCache: any = null;
+
+function getBinding() {
+  if (bindingCache) return bindingCache;
+
+  const req = createRequire(import.meta.url);
+
+  // Try Release first, then Debug as a fallback
+  const candidates = [
+    './build/Release/fuse-native.node',
+    // './build/Debug/fuse-native.node',
+  ];
+
+  let lastErr: unknown = null;
+  for (const candidate of candidates) {
     try {
-      binding = req('../build/Release/fuse-native.node');
-    } catch {
-      binding = req('../build/Debug/fuse-native.node');
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      console.log(`Try to load: ${process.cwd()} / ${candidate}`)
+      bindingCache = req(process.cwd() + '/' + candidate);
+      console.log(`Loaded: ${candidate}`)
+      if (bindingCache) return bindingCache;
+    } catch (e) {
+      lastErr = e;
     }
   }
-} catch (error) {
-  console.warn('Failed to load native binding:', error);
-  binding = {}; // Fallback for tests or pure ESM without require
+
+  // If we reach here, binding failed to load — fail fast (do not return {})
+  throw new Error(
+    'Failed to load native binding (expected build/Release|Debug/fuse-native.node). ' +
+    `Original error: ${String((lastErr as Error)?.message || lastErr)}`
+  );
 }
 
 // Re-export types
@@ -55,6 +69,7 @@ export {
   isValidOperationError,
   ERRNO,
 } from './errno.js';
+
 
 import { FuseErrno } from './errors.js';
 import {
@@ -90,6 +105,7 @@ import type {
 } from './types.js';
 
 import { createFuseSession } from './session.js';
+export { createFuseSession } from './session.js';
 
 /**
  * FUSE version information
@@ -197,7 +213,7 @@ export type InitCallback = (
  * Get version information
  */
 export function getVersion(): VersionInfo {
-  return binding.getVersion();
+  return getBinding().getVersion();
 }
 
 /**
@@ -206,12 +222,21 @@ export function getVersion(): VersionInfo {
  * @param operations - FUSE operation handlers
  * @param options - Optional session configuration
  */
-export function createSession(
+export async function createSession(
   mountpoint: string,
   operations: FuseOperationHandlers,
   options: FuseSessionOptions = {}
-): FuseSession {
-  return createFuseSession(mountpoint, operations, options, binding);
+): Promise<FuseSession> {
+  // Register operation handlers globally before creating session
+  for (const opName in operations) {
+    const op = opName as keyof FuseOperationHandlers;
+    const handler = operations[op];
+    if (handler) {
+      await setOperationHandler(op, handler);
+    }
+  }
+
+  return createFuseSession(mountpoint, operations, options, getBinding());
 }
 
 /**
@@ -231,7 +256,7 @@ export async function checkCapabilities(
 
   return new Promise((resolve, reject) => {
     try {
-      const result = binding.checkCapabilities(capabilities);
+      const result = getBinding().checkCapabilities(capabilities);
       resolve(result);
     } catch (error) {
       reject(error);
@@ -245,7 +270,7 @@ export async function checkCapabilities(
  */
 export function getMountOptions(): { available: string[]; defaults: string[] } {
   try {
-    return binding.getAvailableMountOptions();
+    return getBinding().getAvailableMountOptions();
   } catch (error) {
     // Fallback to static list if native call fails
     return {
@@ -336,7 +361,7 @@ export async function copyFileRange(
       const offsetOutValue =
         offsetOut === null ? 0xffffffffffffffffn : offsetOut;
 
-      const result = binding.copyFileRange(
+      const result = getBinding().copyFileRange(
         fdIn,
         offsetInValue,
         fdOut,
@@ -360,7 +385,7 @@ export async function copyFileRange(
  * @param chunkSize - Size of chunks for read/write fallback operations
  */
 export function setCopyChunkSize(chunkSize: bigint): void {
-  binding.setCopyChunkSize(chunkSize);
+  getBinding().setCopyChunkSize(chunkSize);
 }
 
 /**
@@ -369,7 +394,7 @@ export function setCopyChunkSize(chunkSize: bigint): void {
  * @returns Current chunk size in bytes
  */
 export function getCopyChunkSize(): bigint {
-  return binding.getCopyChunkSize();
+  return getBinding().getCopyChunkSize();
 }
 
 /**
@@ -382,14 +407,14 @@ export function getCopyStats(): {
   totalBytesCopied: bigint;
   kernelCopySupported: boolean;
 } {
-  return binding.getCopyStats();
+  return getBinding().getCopyStats();
 }
 
 /**
  * Reset copy_file_range operation statistics
  */
 export function resetCopyStats(): void {
-  binding.resetCopyStats();
+  getBinding().resetCopyStats();
 }
 
 /**
@@ -434,7 +459,7 @@ export async function initializeDispatcher(
         throw new Error('Invalid maxQueueSize');
       }
 
-      const result = binding.initializeDispatcher(opts);
+      const result = getBinding().initializeDispatcher(opts);
       resolve(result);
     } catch (error) {
       reject(error);
@@ -452,7 +477,7 @@ export async function shutdownDispatcher(
 ): Promise<boolean> {
   return new Promise((resolve, reject) => {
     try {
-      const result = binding.shutdownDispatcher(timeout);
+      const result = getBinding().shutdownDispatcher(timeout);
       resolve(result);
     } catch (error) {
       reject(error);
@@ -472,7 +497,7 @@ export async function getDispatcherStats(
 
   const statsPromise = new Promise<DispatcherStats>((resolve, reject) => {
     try {
-      const stats = binding.getDispatcherStats();
+      const stats = getBinding().getDispatcherStats();
       resolve(stats);
     } catch (error) {
       reject(error);
@@ -494,7 +519,7 @@ export async function resetDispatcherStats(
 
   const resetPromise = new Promise<boolean>((resolve, reject) => {
     try {
-      const result = binding.resetDispatcherStats();
+      const result = getBinding().resetDispatcherStats();
       resolve(result);
     } catch (error) {
       reject(error);
@@ -519,7 +544,7 @@ export async function setDispatcherConfig(
         throw new Error('Invalid maxQueueSize');
       }
 
-      const result = binding.setDispatcherConfig(config);
+      const result = getBinding().setDispatcherConfig(config);
       resolve(result);
     } catch (error) {
       reject(error);
@@ -544,41 +569,64 @@ export async function setOperationHandler(
         throw new Error('Invalid operation name');
       }
 
-      const validOperations = [
+      // Only register ops supported by the native bridge (see C++ mapping)
+      const supportedOperations = [
         'lookup',
         'getattr',
         'setattr',
-        'read',
-        'write',
-        'open',
-        'release',
-        'readdir',
+        'truncate',
+        'readlink',
+        'mknod',
         'mkdir',
-        'create',
-        'link',
         'chmod',
         'chown',
+        'symlink',
         'unlink',
         'rmdir',
         'rename',
-        'statfs',
+        'link',
+        'open',
+        'read',
+        'write',
         'flush',
+        'release',
         'fsync',
         'opendir',
+        'readdir',
         'releasedir',
         'fsyncdir',
+        'statfs',
         'access',
-      ];
+        'create',
+        'copy_file_range',
+          'utimens',
+          'getxattr',
+           "setxattr",
+          'listxattr',
+          'removexattr',
+          'fallocate',
+          'lseek',
+          'flock',
+          'lock',
+          'ioctl',
+          'bmap',
+          'poll',
+      ] as const;
 
-      if (!validOperations.includes(operation)) {
-        throw new Error('Unknown operation');
+      if (!supportedOperations.includes(operation as any)) {
+        // Silently skip unsupported ops instead of throwing to avoid aborting session setup
+        // This allows examples to pass richer handler sets than the current native surface.
+        // eslint-disable-next-line no-console
+        console.warn(`[fuse-native] Skipping unsupported operation handler registration: ${String(operation)}`);
+        resolve(false);
+        return;
       }
 
       if (typeof handler !== 'function') {
         throw new Error('Handler must be a function');
       }
 
-      const result = binding.setOperationHandler(operation, handler);
+      const result = getBinding().setOperationHandler(operation, handler);
       resolve(result);
     } catch (error) {
       reject(error);
@@ -596,7 +644,7 @@ export async function removeOperationHandler(
 ): Promise<boolean> {
   return new Promise((resolve, reject) => {
     try {
-      const result = binding.removeOperationHandler(operation);
+      const result = getBinding().removeOperationHandler(operation);
       resolve(result);
     } catch (error) {
       reject(error);
@@ -665,7 +713,7 @@ export async function enqueueWrite(
         throw new Error('Buffer must be ArrayBuffer or TypedArray');
       }
 
-      const result = binding.enqueueWrite(
+      const result = getBinding().enqueueWrite(
         fd,
         offset,
         size,
@@ -700,7 +748,7 @@ export async function processWriteQueues(
         throw new Error('Executor must be a function');
       }
 
-      const result = binding.processWriteQueues(executor);
+      const result = getBinding().processWriteQueues(executor);
       resolve(result);
     } catch (error) {
       reject(error);
@@ -720,7 +768,7 @@ export async function flushWriteQueue(
 ): Promise<boolean> {
   return new Promise((resolve, reject) => {
     try {
-      const result = binding.flushWriteQueue(fd, timeout);
+      const result = getBinding().flushWriteQueue(fd, timeout);
       resolve(result);
     } catch (error) {
       reject(error);
@@ -738,7 +786,7 @@ export async function flushAllWriteQueues(
 ): Promise<boolean> {
   return new Promise((resolve, reject) => {
     try {
-      const result = binding.flushAllWriteQueues(timeout);
+      const result = getBinding().flushAllWriteQueues(timeout);
       resolve(result);
     } catch (error) {
       reject(error);
@@ -756,7 +804,7 @@ export async function getWriteQueueStats(
 ): Promise<WriteQueueStats | null> {
   return new Promise((resolve, reject) => {
     try {
-      const result = binding.getWriteQueueStats(fd);
+      const result = getBinding().getWriteQueueStats(fd);
       resolve(result);
     } catch (error) {
       reject(error);
@@ -776,7 +824,7 @@ export async function resetWriteQueueStats(
 
   const resetPromise = new Promise<boolean>((resolve, reject) => {
     try {
-      const result = binding.resetWriteQueueStats();
+      const result = getBinding().resetWriteQueueStats();
       resolve(result);
     } catch (error) {
       reject(error);
@@ -813,7 +861,7 @@ export async function configureWriteQueues(
         }
       }
 
-      const result = binding.configureWriteQueues(config);
+      const result = getBinding().configureWriteQueues(config);
       resolve(result);
     } catch (error) {
       reject(error);
@@ -837,7 +885,7 @@ export async function initializeShutdownManager(
 
   const initPromise = new Promise<boolean>((resolve, reject) => {
     try {
-      const result = binding.initializeShutdownManager();
+      const result = getBinding().initializeShutdownManager();
       resolve(result);
     } catch (error) {
       reject(error);
@@ -863,7 +911,7 @@ export async function initiateGracefulShutdown(
         throw new Error('Invalid timeout');
       }
 
-      const result = binding.initiateGracefulShutdown(reason, timeout);
+      const result = getBinding().initiateGracefulShutdown(reason, timeout);
       resolve(result);
     } catch (error) {
       reject(error);
@@ -881,7 +929,7 @@ export async function forceImmediateShutdown(
 ): Promise<boolean> {
   return new Promise((resolve, reject) => {
     try {
-      const result = binding.forceImmediateShutdown(reason);
+      const result = getBinding().forceImmediateShutdown(reason);
       resolve(result);
     } catch (error) {
       reject(error);
@@ -901,7 +949,7 @@ export async function getShutdownState(
 
   const statePromise = new Promise<ShutdownState>((resolve, reject) => {
     try {
-      const stateValue = binding.getShutdownState();
+      const stateValue = getBinding().getShutdownState();
       const states: ShutdownState[] = [
         'RUNNING',
         'DRAINING',
@@ -930,7 +978,7 @@ export async function getShutdownStats(
 
   const statsPromise = new Promise<ShutdownStats>((resolve, reject) => {
     try {
-      const stats = binding.getShutdownStats();
+      const stats = getBinding().getShutdownStats();
       resolve(stats);
     } catch (error) {
       reject(error);
@@ -961,7 +1009,7 @@ export async function registerShutdownCallback(
         }
       }
 
-      const result = binding.registerShutdownCallback(callback);
+      const result = getBinding().registerShutdownCallback(callback);
       resolve(result);
     } catch (error) {
       reject(error);
@@ -979,7 +1027,7 @@ export async function waitForShutdownCompletion(
 ): Promise<boolean> {
   return new Promise((resolve, reject) => {
     try {
-      const result = binding.waitForShutdownCompletion(timeout);
+      const result = getBinding().waitForShutdownCompletion(timeout);
       resolve(result);
     } catch (error) {
       reject(error);
@@ -1004,7 +1052,7 @@ export async function configureShutdownTimeouts(
         }
       }
 
-      const result = binding.configureShutdownTimeouts(timeouts);
+      const result = getBinding().configureShutdownTimeouts(timeouts);
       resolve(result);
     } catch (error) {
       reject(error);
@@ -1043,7 +1091,7 @@ export async function getxattr(
   const effectiveSignal = createEffectiveSignal(options);
 
   const getxattrPromise = Promise.resolve(
-    binding.getxattr(path, name, size || 0n)
+    getBinding().getxattr(path, name, size || 0n)
   );
 
   const processResult = getxattrPromise.then(result => {
@@ -1098,7 +1146,7 @@ export async function setxattr(
   const effectiveSignal = createEffectiveSignal(options);
 
   const setxattrPromise = Promise.resolve(
-    binding.setxattr(path, name, value, flags)
+    getBinding().setxattr(path, name, value, flags)
   ).then(result => {
     if (result < 0n) {
       throw new FuseErrno(Number(-result), 'setxattr failed');
@@ -1129,7 +1177,7 @@ export async function listxattr(
   const effectiveSignal = createEffectiveSignal(options);
 
   const listxattrPromise = Promise.resolve(
-    binding.listxattr(path, size || 0n)
+    getBinding().listxattr(path, size || 0n)
   ).then(result => {
     if (typeof result === 'bigint') {
       // Check if it's an error (negative value)
@@ -1174,7 +1222,7 @@ export async function removexattr(
   const effectiveSignal = createEffectiveSignal(options);
 
   const removexattrPromise = Promise.resolve(
-    binding.removexattr(path, name)
+    getBinding().removexattr(path, name)
   ).then(result => {
     if (result < 0n) {
       throw new FuseErrno(Number(-result), 'removexattr failed');
@@ -1190,7 +1238,7 @@ export async function removexattr(
 export async function initializeInitBridge(): Promise<void> {
   return new Promise((resolve, reject) => {
     try {
-      binding.initializeInitBridge();
+      getBinding().initializeInitBridge();
       resolve();
     } catch (error) {
       reject(error);
@@ -1219,7 +1267,7 @@ export async function setInitCallback(callback: InitCallback): Promise<void> {
         }
       };
 
-      binding.setInitCallback(wrappedCallback);
+      getBinding().setInitCallback(wrappedCallback);
       resolve();
     } catch (error) {
       reject(error);
@@ -1233,7 +1281,7 @@ export async function setInitCallback(callback: InitCallback): Promise<void> {
 export async function removeInitCallback(): Promise<void> {
   return new Promise((resolve, reject) => {
     try {
-      binding.removeInitCallback();
+      getBinding().removeInitCallback();
       resolve();
     } catch (error) {
       reject(error);
@@ -1247,7 +1295,7 @@ export async function removeInitCallback(): Promise<void> {
  */
 export function getConnectionInfo(): FuseConnectionInfo | null {
   try {
-    return binding.getConnectionInfo();
+    return getBinding().getConnectionInfo();
   } catch (error) {
     return null;
   }
@@ -1259,7 +1307,7 @@ export function getConnectionInfo(): FuseConnectionInfo | null {
  */
 export function getFuseConfig(): FuseConfig | null {
   try {
-    return binding.getFuseConfig();
+    return getBinding().getFuseConfig();
   } catch (error) {
     return null;
   }
@@ -1271,7 +1319,7 @@ export function getFuseConfig(): FuseConfig | null {
  */
 export function getCapabilityNames(): string[] {
   try {
-    return binding.getCapabilityNames();
+    return getBinding().getCapabilityNames();
   } catch (error) {
     return [];
   }
@@ -1283,7 +1331,7 @@ export function getCapabilityNames(): string[] {
 export async function resetInitBridge(): Promise<void> {
   return new Promise((resolve, reject) => {
     try {
-      binding.resetInitBridge();
+      getBinding().resetInitBridge();
       resolve();
     } catch (error) {
       reject(error);
