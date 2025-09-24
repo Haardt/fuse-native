@@ -35,6 +35,7 @@ enum class FuseOpType {
     READLINK,
     MKNOD,
     MKDIR,
+    SYMLINK,
     UNLINK,
     RMDIR,
     RENAME,
@@ -98,6 +99,7 @@ struct FuseRequestContext : public std::enable_shared_from_this<FuseRequestConte
     fuse_ino_t new_parent;
     std::string name;
     std::string new_name;
+    std::string link_target;
     mode_t mode;
     dev_t rdev;
     uint32_t setattr_valid;
@@ -163,6 +165,7 @@ private:
     void HandleReadlink(fuse_req_t req, fuse_ino_t ino);
     void HandleMknod(fuse_req_t req, fuse_ino_t parent, const char* name, mode_t mode, dev_t rdev);
     void HandleMkdir(fuse_req_t req, fuse_ino_t parent, const char* name, mode_t mode);
+    void HandleSymlink(fuse_req_t req, const char* link, fuse_ino_t parent, const char* name);
     void HandleUnlink(fuse_req_t req, fuse_ino_t parent, const char* name);
     void HandleRmdir(fuse_req_t req, fuse_ino_t parent, const char* name);
     void HandleRename(fuse_req_t req, fuse_ino_t parent, const char* name,
@@ -194,6 +197,7 @@ private:
     static void ReadlinkCallback(fuse_req_t req, fuse_ino_t ino);
     static void MknodCallback(fuse_req_t req, fuse_ino_t parent, const char* name, mode_t mode, dev_t rdev);
     static void MkdirCallback(fuse_req_t req, fuse_ino_t parent, const char* name, mode_t mode);
+    static void SymlinkCallback(fuse_req_t req, const char* link, fuse_ino_t parent, const char* name);
     static void UnlinkCallback(fuse_req_t req, fuse_ino_t parent, const char* name);
     static void RmdirCallback(fuse_req_t req, fuse_ino_t parent, const char* name);
     static void RenameCallback(fuse_req_t req, fuse_ino_t parent, const char* name,

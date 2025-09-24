@@ -34,8 +34,8 @@ Verifizieren, dass **alle FUSE3-Funktionen** korrekt durch die Ebenen **C/N-API 
 - mkdir - 
 - unlink  - DONE
 - rmdir   - DONE
-- symlink ❌
-- rename ❌ (nur TS-Handler definiert)
+- symlink - DONE
+- rename - DONE  
 - link ❌
 - chmod ❌
 - chown ❌

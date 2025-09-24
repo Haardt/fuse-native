@@ -346,6 +346,14 @@ export type MkdirHandler = (
   options?: BaseOperationOptions
 ) => Promise<{ attr: StatResult; timeout: Timeout }>;
 
+export type SymlinkHandler = (
+  target: string,
+  parent: Ino,
+  name: string,
+  context: RequestContext,
+  options?: BaseOperationOptions
+) => Promise<{ attr: StatResult; timeout: Timeout }>;
+
 /** Mknod operation handler */
 export type MknodHandler = (
   parent: Ino,
@@ -440,6 +448,8 @@ export interface FuseOperationHandlers {
   readdir?: ReaddirHandler;
   /** Create a directory */
   mkdir?: MkdirHandler;
+  /** Create a symbolic link */
+  symlink?: SymlinkHandler;
   /** Create a special file (device node) */
   mknod?: MknodHandler;
   create?: CreateHandler;

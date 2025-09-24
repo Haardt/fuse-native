@@ -28,12 +28,13 @@ struct OperationMapping {
     FuseOpType type;
 };
 
-constexpr std::array<OperationMapping, 22> kOperationMappings = {{{"lookup", FuseOpType::LOOKUP},
+constexpr std::array<OperationMapping, 23> kOperationMappings = {{{"lookup", FuseOpType::LOOKUP},
                                                                   {"getattr", FuseOpType::GETATTR},
                                                                   {"setattr", FuseOpType::SETATTR},
                                                                   {"readlink", FuseOpType::READLINK},
                                                                   {"mknod", FuseOpType::MKNOD},
                                                                   {"mkdir", FuseOpType::MKDIR},
+                                                                  {"symlink", FuseOpType::SYMLINK},
                                                                   {"unlink", FuseOpType::UNLINK},
                                                                   {"rmdir", FuseOpType::RMDIR},
                                                                   {"rename", FuseOpType::RENAME},
@@ -535,6 +536,7 @@ void FuseBridge::InitializeFuseOperations() {
     fuse_ops_.readlink = ReadlinkCallback;
     fuse_ops_.mknod = MknodCallback;
     fuse_ops_.mkdir = MkdirCallback;
+    fuse_ops_.symlink = SymlinkCallback;
     fuse_ops_.unlink = UnlinkCallback;
     fuse_ops_.rmdir = RmdirCallback;
     fuse_ops_.rename = RenameCallback;
@@ -811,8 +813,12 @@ void FuseBridge::HandleRename(fuse_req_t req, fuse_ino_t parent, const char* nam
 
         auto result = handler.Call({parent_value, name_value, new_parent_value, new_name_value,
                                     flags_value, request_ctx, options});
-        ResolvePromiseOrValue(env, context, result, [context](Napi::Env, Napi::Value) {
-            context->ReplyOk();
+        ResolvePromiseOrValue(env, context, result, [context](Napi::Env env_inner, Napi::Value value) {
+            if (value.IsUndefined() || value.IsNull()) {
+                context->ReplyOk();
+                return;
+            }
+            context->ReplyError(EIO);
         });
     });
 }
@@ -1023,6 +1029,32 @@ void FuseBridge::HandleMkdir(fuse_req_t req, fuse_ino_t parent, const char* name
         Napi::Object options = Napi::Object::New(env);
 
         auto result = handler.Call({parent_value, name_value, mode_value, request_ctx, options});
+        ResolvePromiseOrValue(env, context, result, [context](Napi::Env env_inner, Napi::Value value) {
+            struct fuse_entry_param entry{};
+            if (!PopulateEntryFromResult(env_inner, value, &entry)) {
+                context->ReplyError(EIO);
+                return;
+            }
+
+            context->ReplyEntry(entry);
+        });
+    });
+}
+
+void FuseBridge::HandleSymlink(fuse_req_t req, const char* link, fuse_ino_t parent, const char* name) {
+    auto context = CreateContext(FuseOpType::SYMLINK, req);
+    context->link_target = link ? link : "";
+    context->parent = parent;
+    context->name = name ? name : "";
+
+    ProcessRequest(context, [context](Napi::Env env, Napi::Function handler) {
+        Napi::String target_value = Napi::String::New(env, context->link_target);
+        Napi::Value parent_value = NapiHelpers::CreateBigUint64(env, ToUint64(context->parent));
+        Napi::String name_value = Napi::String::New(env, context->name);
+        Napi::Object request_ctx = CreateRequestContextObject(env, *context);
+        Napi::Object options = Napi::Object::New(env);
+
+        auto result = handler.Call({target_value, parent_value, name_value, request_ctx, options});
         ResolvePromiseOrValue(env, context, result, [context](Napi::Env env_inner, Napi::Value value) {
             struct fuse_entry_param entry{};
             if (!PopulateEntryFromResult(env_inner, value, &entry)) {
@@ -1331,6 +1363,15 @@ void FuseBridge::MkdirCallback(fuse_req_t req, fuse_ino_t parent, const char* na
         return;
     }
     bridge->HandleMkdir(req, parent, name, mode);
+}
+
+void FuseBridge::SymlinkCallback(fuse_req_t req, const char* link, fuse_ino_t parent, const char* name) {
+    auto* bridge = GetBridgeFromRequest(req);
+    if (!bridge) {
+        fuse_reply_err(req, ENODEV);
+        return;
+    }
+    bridge->HandleSymlink(req, link, parent, name);
 }
 
 void FuseBridge::UnlinkCallback(fuse_req_t req, fuse_ino_t parent, const char* name) {
