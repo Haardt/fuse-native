@@ -664,12 +664,20 @@ void FuseBridge::InitializeFuseOperations() {
     fuse_ops_.fsync = FsyncCallback;
     fuse_ops_.opendir = OpendirCallback;
     fuse_ops_.readdir = ReaddirCallback;
+    fuse_ops_.readdirplus = nullptr;
     fuse_ops_.releasedir = ReleasedirCallback;
     fuse_ops_.fsyncdir = FsyncdirCallback;
     fuse_ops_.statfs = StatfsCallback;
     fuse_ops_.access = AccessCallback;
     fuse_ops_.create = CreateCallback;
     fuse_ops_.copy_file_range = CopyFileRangeCallback;
+    
+    // Explicitly add handlers that might be missing
+    fuse_ops_.getlk = nullptr;
+    fuse_ops_.setlk = nullptr;
+    fuse_ops_.bmap = nullptr;
+    fuse_ops_.ioctl = nullptr;
+    fuse_ops_.poll = nullptr;
 
     // Extended attributes
     fuse_ops_.setxattr = SetxattrCallback;
@@ -914,60 +922,16 @@ void FuseBridge::HandleAccess(fuse_req_t req, fuse_ino_t ino, int mask) {
     context->access_mask = static_cast<uint32_t>(mask);
 
     ProcessRequest(context, [context](Napi::Env env, Napi::Function handler) {
-        fprintf(stderr, "FUSE: HandleAccess - context->ino = %lu\n", context->ino);
-        fprintf(stderr, "FUSE: HandleAccess - context->access_mask = %u\n", context->access_mask);
-        fprintf(stderr, "FUSE: HandleAccess - env is valid: %s\n", env ? "true" : "false");
-        fprintf(stderr, "FUSE: HandleAccess - handler is valid: %s\n", handler.IsFunction() ? "true" : "false");
-        fprintf(stderr, "FUSE: HandleAccess - creating ino_value\n");
-        try {
-            fprintf(stderr, "FUSE: HandleAccess - creating ino_value\n");
-            Napi::Value ino_value = NapiHelpers::CreateBigUint64(env, ToUint64(context->ino));
-            fprintf(stderr, "FUSE: HandleAccess - ino_value created successfully\n");
-            fprintf(stderr, "FUSE: HandleAccess - creating mask_value\n");
-            Napi::Number mask_value = Napi::Number::New(env, context->access_mask);
-            fprintf(stderr, "FUSE: HandleAccess - mask_value created successfully\n");
-            fprintf(stderr, "FUSE: HandleAccess - creating request_ctx\n");
-            Napi::Object request_ctx = CreateRequestContextObject(env, *context);
-            fprintf(stderr, "FUSE: HandleAccess - request_ctx created successfully\n");
-            fprintf(stderr, "FUSE: HandleAccess - creating options\n");
-            Napi::Object options = Napi::Object::New(env);
-            options.Set("mask", mask_value);
-            fprintf(stderr, "FUSE: HandleAccess - options created successfully with mask\n");
-            fprintf(stderr, "FUSE: HandleAccess - handler type: %s\n", handler.IsFunction() ? "function" : "not function");
-            fprintf(stderr, "FUSE: HandleAccess - calling handler\n");
+        Napi::Value ino_value = NapiHelpers::CreateBigUint64(env, ToUint64(context->ino));
+        Napi::Number mask_value = Napi::Number::New(env, context->access_mask);
+        Napi::Object request_ctx = CreateRequestContextObject(env, *context);
+        Napi::Object options = Napi::Object::New(env);
+        options.Set("mask", mask_value);
 
-            try {
-                fprintf(stderr, "FUSE: HandleAccess - preparing arguments\n");
-                    fprintf(stderr, "FUSE: HandleAccess - DEBUG: Parameter order FIXED:\n");
-                    fprintf(stderr, "FUSE: HandleAccess - DEBUG: args[0] = ino_value (BigInt %lu)\n", context->ino);
-                    fprintf(stderr, "FUSE: HandleAccess - DEBUG: args[1] = request_ctx (Object)\n");
-                    fprintf(stderr, "FUSE: HandleAccess - DEBUG: args[2] = options (Object with mask %u)\n", context->access_mask);
-                    fprintf(stderr, "FUSE: HandleAccess - DEBUG: JavaScript expects: access(ino, context, options)\n");
-                    fprintf(stderr, "FUSE: HandleAccess - DEBUG: Now we're correctly passing: access(ino, context, options)\n");
-                    fprintf(stderr, "FUSE: HandleAccess - DEBUG: PARAMETER ORDER FIXED!\n");
-                
-                    std::vector<napi_value> args = {ino_value, request_ctx, options};
-                fprintf(stderr, "FUSE: HandleAccess - calling handler.Call\n");
-                auto result = handler.Call(args);
-                fprintf(stderr, "FUSE: HandleAccess - handler called successfully\n");
-                ResolvePromiseOrValue(env, context, result, [context](Napi::Env env_inner, Napi::Value) {
-                    fprintf(stderr, "FUSE: HandleAccess - replying OK\n");
-                    context->ReplyOk();
-                });
-            } catch (const std::exception& e) {
-                fprintf(stderr, "FUSE: HandleAccess - exception in handler call: %s\n", e.what());
-                context->ReplyError(EIO);
-            } catch (...) {
-                fprintf(stderr, "FUSE: HandleAccess - unknown exception in handler call\n");
-                context->ReplyError(EIO);
-            }
-        } catch (const std::exception& e) {
-            fprintf(stderr, "FUSE: HandleAccess - exception in parameter creation: %s\n", e.what());
-            context->ReplyError(EIO);
-        } catch (...) {
-            fprintf(stderr, "FUSE: HandleAccess - unknown exception in parameter creation\n");
-            context->ReplyError(EIO);
-        }
+        auto result = handler.Call({ino_value, request_ctx, options});
+        ResolvePromiseOrValue(env, context, result, [context](Napi::Env env_inner, Napi::Value) {
+            context->ReplyOk();
+        });
     });
 }
 
@@ -1732,121 +1696,57 @@ void FuseBridge::HandleReaddir(fuse_req_t req, fuse_ino_t ino, size_t size, off_
         options.Set("size", Napi::Number::New(env, context->size));
 
         auto result = handler.Call({ino_value, offset_value, request_ctx, fi_value, options});
-        ResolvePromiseOrValue(env, context, result, [context](Napi::Env env_inner, Napi::Value value) {
+        ResolvePromiseOrValue(
+        env, context, result, [context](Napi::Env env_inner, Napi::Value value) {
             if (!value.IsObject()) {
                 context->ReplyError(EIO);
                 return;
             }
 
             Napi::Object result_obj = value.As<Napi::Object>();
-            if (!result_obj.Has("entries")) {
+            if (!result_obj.Has("entries") || !result_obj.Get("entries").IsArray()) {
                 context->ReplyError(EIO);
                 return;
             }
 
-            Napi::Value entries_value = result_obj.Get("entries");
-            if (!entries_value.IsArray()) {
-                context->ReplyError(EIO);
-                return;
-            }
+            Napi::Array entries = result_obj.Get("entries").As<Napi::Array>();
+            std::vector<char> buffer(4096);
+            size_t buffer_offset = 0;
 
-            Napi::Array entries_array = entries_value.As<Napi::Array>();
+            for (uint32_t i = 0; i < entries.Length(); ++i) {
+                Napi::Value item = entries.Get(i);
+                if (!item.IsObject()) continue;
 
-            // Allocate buffer for directory entries
-            std::vector<char> dirbuf(context->size);
-            size_t dirbuf_size = 0;
-            bool has_more = false;
-
-            if (result_obj.Has("hasMore")) {
-                Napi::Value has_more_value = result_obj.Get("hasMore");
-                if (has_more_value.IsBoolean()) {
-                    has_more = has_more_value.As<Napi::Boolean>().Value();
-                }
-            }
-
-            for (uint32_t i = 0; i < entries_array.Length(); i++) {
-                Napi::Value entry_value = entries_array.Get(i);
-                if (!entry_value.IsObject()) {
-                    context->ReplyError(EIO);
-                    return;
-                }
-
-                Napi::Object entry_obj = entry_value.As<Napi::Object>();
-                if (!entry_obj.Has("name") || !entry_obj.Has("ino") || !entry_obj.Has("type")) {
-                    context->ReplyError(EIO);
-                    return;
-                }
-
-                Napi::Value name_value = entry_obj.Get("name");
-                if (!name_value.IsString()) {
-                    context->ReplyError(EIO);
-                    return;
-                }
-
-                std::string name = name_value.As<Napi::String>().Utf8Value();
-
-                Napi::Value ino_value = entry_obj.Get("ino");
-                fuse_ino_t entry_ino = 0;
-                if (ino_value.IsNumber()) {
-                    entry_ino = static_cast<fuse_ino_t>(ino_value.As<Napi::Number>().Int64Value());
-                } else if (ino_value.IsBigInt()) {
-                    bool lossless = false;
-                    entry_ino = static_cast<fuse_ino_t>(ino_value.As<Napi::BigInt>().Uint64Value(&lossless));
-                    if (!lossless) {
-                        context->ReplyError(EIO);
-                        return;
-                    }
-                } else {
-                    context->ReplyError(EIO);
-                    return;
-                }
-
-                Napi::Value type_value = entry_obj.Get("type");
-                if (!type_value.IsNumber()) {
-                    context->ReplyError(EIO);
-                    return;
-                }
-
-                int entry_type = type_value.As<Napi::Number>().Int32Value();
-
-                // Set nextOffset on the entry if provided or if it's the last in this page and has_more
-                off_t next_offset = 0;
-                if (entry_obj.Has("nextOffset")) {
-                    Napi::Value next_offset_value = entry_obj.Get("nextOffset");
-                    if (next_offset_value.IsNumber()) {
-                        next_offset = static_cast<off_t>(next_offset_value.As<Napi::Number>().Int64Value());
-                    } else if (next_offset_value.IsBigInt()) {
-                        bool lossless = false;
-                        next_offset = static_cast<off_t>(next_offset_value.As<Napi::BigInt>().Int64Value(&lossless));
-                        if (!lossless) {
-                            context->ReplyError(EIO);
-                            return;
-                        }
-                    }
-                } else if (has_more && i == entries_array.Length() - 1) {
-                    // Last entry in this page, set next_offset to indicate continuation
-                    next_offset = static_cast<off_t>(context->offset + i + 1);
-                }
-
-                size_t required_size = fuse_add_direntry(context->request, nullptr, 0, name.c_str(), nullptr, 0);
-                if (dirbuf_size + required_size > dirbuf.size()) {
-                    // Buffer full, stop adding entries
-                    break;
-                }
+                Napi::Object entry = item.As<Napi::Object>();
+                std::string name = entry.Get("name").As<Napi::String>().Utf8Value();
+                fuse_ino_t ino = NapiHelpers::GetBigUint64(env_inner, entry.Get("ino"));
+                uint32_t type = entry.Get("type").As<Napi::Number>().Uint32Value();
 
                 struct stat st = {};
-                st.st_ino = entry_ino;
-                st.st_mode = (entry_type & 15) << 12;
+                st.st_ino = ino;
+                st.st_mode = (type & 0xF) << 12;
 
-                size_t added = fuse_add_direntry(context->request, dirbuf.data() + dirbuf_size, dirbuf.size() - dirbuf_size,
-                                                  name.c_str(), &st, static_cast<off_t>(next_offset));
-                if (added == 0) {
-                    break;
+                size_t entry_len = fuse_add_direntry(context->request, nullptr, 0, name.c_str(), &st, 0);
+                if (buffer_offset + entry_len > buffer.size()) {
+                    buffer.resize(buffer_offset + entry_len);
                 }
-                dirbuf_size += added;
+
+                off_t next_offset = i + 1;
+                if (entry.Has("nextOffset")) {
+                    Napi::Value next_offset_val = entry.Get("nextOffset");
+                    if (next_offset_val.IsBigInt()) {
+                        bool lossless = false;
+                        next_offset = static_cast<off_t>(next_offset_val.As<Napi::BigInt>().Int64Value(&lossless));
+                    } else if (next_offset_val.IsNumber()) {
+                        next_offset = static_cast<off_t>(next_offset_val.As<Napi::Number>().Int64Value());
+                    }
+                }
+
+                fuse_add_direntry(context->request, buffer.data() + buffer_offset, buffer.size() - buffer_offset, name.c_str(), &st, next_offset);
+                buffer_offset += entry_len;
             }
 
-            context->ReplyBuf(dirbuf.data(), dirbuf_size);
+            context->ReplyBuf(buffer.data(), buffer_offset);
         });
     });
 }

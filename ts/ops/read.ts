@@ -48,7 +48,7 @@ export async function readWrapper(
   ino: Ino,
   context: RequestContext = DEFAULT_CONTEXT,
   options: ReadOptions = DEFAULT_OPTIONS
-): Promise<ArrayBuffer> {
+): Promise<Buffer> {
   validateRead(ino, options);
 
   const handler = handlers.read;

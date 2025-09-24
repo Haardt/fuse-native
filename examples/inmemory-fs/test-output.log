@@ -1,0 +1,155 @@
+🚀 Modular In-Memory Filesystem Example
+=====================================
+Mount point: /tmp/test-inmemory-fs-fixed
+
+📁 Creating mount point...
+   ✓ Using existing: /tmp/test-inmemory-fs-fixed
+   ✓ Mountpoint is writable
+
+💾 Creating modular in-memory filesystem instance...
+In-memory filesystem core initialized with root inode 1
+In-memory filesystem initialized with root inode 1
+   ✓ Filesystem instance created
+
+🔧 Testing native binding...
+Try to load: /home/held/workspaces/conpinion/fuse-native/dist/build/Release/fuse-native.node
+Try to load: /home/held/workspaces/conpinion/fuse-native/dist/build/Debug/fuse-native.node
+Try to load: /home/held/workspaces/conpinion/fuse-native/build/Release/fuse-native.node
+FUSE: InitializeGlobalDispatcher - creating TSFNDispatcher
+FUSE: TSFNDispatcher::Initialize - starting
+FUSE: TSFNDispatcher::Initialize - creating ThreadSafeFunction
+FUSE: TSFNDispatcher::Initialize - ThreadSafeFunction created
+FUSE: TSFNDispatcher::Initialize - starting worker threads
+FUSE: TSFNDispatcher::Initialize - worker threads started
+FUSE: TSFNDispatcher::Initialize - state set to RUNNING
+FUSE: InitializeGlobalDispatcher - Initialize() returned true
+Loaded: ../build/Release/fuse-native.node
+   ✓ Native binding loaded: FUSE 317, Binding 3.0.0-alpha.1, N-API 8
+
+🔗 Creating FUSE session...
+   ✓ Using modular operation handlers...
+[fuse-native] Skipping unsupported operation handler registration: core
+[fuse-native] Skipping unsupported operation handler registration: fileOps
+[fuse-native] Skipping unsupported operation handler registration: dirOps
+[fuse-native] Skipping unsupported operation handler registration: metaOps
+[fuse-native] Skipping unsupported operation handler registration: linkOps
+[fuse-native] Skipping unsupported operation handler registration: xattrOps
+[fuse-native] Skipping unsupported operation handler registration: advOps
+✅ FUSE session created successfully!
+
+🏔️ Mounting FUSE filesystem...
+FUSE: CreateSession - calling Initialize() on session manager
+FUSE: creating bridge...
+FUSE: bridge created, initializing...
+FUSE: FuseBridge::Initialize - starting
+FUSE: FuseBridge::Initialize - calling InitializeFuseOperations
+FUSE: FuseBridge::Initialize - completed successfully
+FUSE: bridge initialization succeeded
+FUSE: session_new succeeded
+FUSE: CreateSession - Initialize() succeeded
+FUSE: Mount1 /tmp/test-inmemory-fs-fixed
+FUSE: Mount2 /tmp/test-inmemory-fs-fixed
+FUSE: session_mount succeeded for /tmp/test-inmemory-fs-fixed
+FUSE: RunFuseLoop - starting FUSE loop thread
+FUSE: RunFuseLoop - max_read: 131072
+FUSE: RunFuseLoop - allocated buffer of size 131072
+FUSE: RunFuseLoop - loop iteration 1
+FUSE: RunFuseLoop - received buffer, processing...
+FUSE: CreateContext - creating context for op_type 0
+FUSE: FuseRequestContext - creating context for op_type 0
+FUSE: FuseRequestContext - no request provided
+FUSE: CreateContext - context created successfully
+FUSE: ProcessRequest - op_type: 0
+FUSE: ProcessRequest - op_name: init
+FUSE: ProcessRequest - no handler for init
+FUSE: RunFuseLoop - processed buffer
+FUSE: RunFuseLoop - received buffer, processing...
+FUSE: CreateContext - creating context for op_type 36
+FUSE: FuseRequestContext - creating context for op_type 36
+FUSE: FuseRequestContext - capturing caller context
+FUSE: CreateContext - context created successfully
+FUSE: ProcessRequest - op_type: 36
+FUSE: ProcessRequest - op_name: access
+FUSE: RunFuseLoop - processed buffer
+FUSE: ProcessCallback - processing request 1 for operation access
+FUSE: HandleAccess - context->ino = 1
+FUSE: HandleAccess - context->access_mask = 4
+FUSE: HandleAccess - env is valid: true
+FUSE: HandleAccess - handler is valid: true
+FUSE: HandleAccess - creating ino_value
+FUSE: HandleAccess - creating ino_value
+FUSE: HandleAccess - ino_value created successfully
+FUSE: HandleAccess - creating mask_value
+FUSE: HandleAccess - mask_value created successfully
+FUSE: HandleAccess - creating request_ctx
+FUSE: CreateRequestContextObject - creating object
+FUSE: CreateRequestContextObject - has caller context, setting values
+FUSE: CreateRequestContextObject - returning context with caller info
+FUSE: HandleAccess - request_ctx created successfully
+FUSE: HandleAccess - creating options
+FUSE: HandleAccess - options created successfully with mask
+FUSE: HandleAccess - handler type: function
+FUSE: HandleAccess - calling handler
+FUSE: HandleAccess - preparing arguments
+FUSE: HandleAccess - DEBUG: Parameter order FIXED:
+FUSE: HandleAccess - DEBUG: args[0] = ino_value (BigInt 1)
+FUSE: HandleAccess - DEBUG: args[1] = request_ctx (Object)
+FUSE: HandleAccess - DEBUG: args[2] = options (Object with mask 4)
+FUSE: HandleAccess - DEBUG: JavaScript expects: access(ino, context, options)
+FUSE: HandleAccess - DEBUG: Now we're correctly passing: access(ino, context, options)
+FUSE: HandleAccess - DEBUG: PARAMETER ORDER FIXED!
+FUSE: HandleAccess - calling handler.Call
+access called: ino=1, mask=4
+FUSE: HandleAccess - handler called successfully
+FUSE: HandleAccess - replying OK
+FUSE: RunFuseLoop - received buffer, processing...
+FUSE: CreateContext - creating context for op_type 4
+FUSE: FuseRequestContext - creating context for op_type 4
+FUSE: FuseRequestContext - capturing caller context
+FUSE: CreateContext - context created successfully
+FUSE: ProcessRequest - op_type: 4
+FUSE: ProcessRequest - op_name: lookup
+FUSE: RunFuseLoop - processed buffer
+FUSE: ProcessCallback - processing request 2 for operation lookup
+FUSE: CreateRequestContextObject - creating object
+FUSE: CreateRequestContextObject - has caller context, setting values
+FUSE: CreateRequestContextObject - returning context with caller info
+lookup called: parent=1, name=.Trash
+lookup: entry '.Trash' not found in parent 1
+lookup error for '.Trash': FuseErrno: No such file or directory
+    at DirectoryOperations.lookup (file:///home/held/workspaces/conpinion/fuse-native/examples/inmemory-fs/dist/operations/directoryOperations.js:113:23) {
+  errno: -2,
+  code: 'ENOENT',
+  syscall: undefined,
+  path: undefined
+}
+FUSE: RunFuseLoop - received buffer, processing...
+FUSE: CreateContext - creating context for op_type 4
+FUSE: FuseRequestContext - creating context for op_type 4
+FUSE: FuseRequestContext - capturing caller context
+FUSE: CreateContext - context created successfully
+FUSE: ProcessRequest - op_type: 4
+FUSE: ProcessRequest - op_name: lookup
+FUSE: RunFuseLoop - processed buffer
+FUSE: ProcessCallback - processing request 3 for operation lookup
+FUSE: CreateRequestContextObject - creating object
+FUSE: CreateRequestContextObject - has caller context, setting values
+FUSE: CreateRequestContextObject - returning context with caller info
+lookup called: parent=1, name=.Trash-1000
+lookup: entry '.Trash-1000' not found in parent 1
+lookup error for '.Trash-1000': FuseErrno: No such file or directory
+    at DirectoryOperations.lookup (file:///home/held/workspaces/conpinion/fuse-native/examples/inmemory-fs/dist/operations/directoryOperations.js:113:23) {
+  errno: -2,
+  code: 'ENOENT',
+  syscall: undefined,
+  path: undefined
+}
+FUSE: RunFuseLoop - exiting loop after 5 iterations
+FUSE: RunFuseLoop - freed buffer
+FUSE: CreateContext - creating context for op_type 1
+FUSE: FuseRequestContext - creating context for op_type 1
+FUSE: FuseRequestContext - no request provided
+FUSE: CreateContext - context created successfully
+FUSE: ProcessRequest - op_type: 1
+FUSE: ProcessRequest - op_name: destroy
+FUSE: ProcessRequest - no handler for destroy

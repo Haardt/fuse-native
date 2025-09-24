@@ -1,0 +1,30 @@
+{
+  "name": "inmemory-fs-example",
+  "version": "1.0.0",
+  "description": "In-memory filesystem example for FUSE3 Node.js binding",
+  "main": "dist/index.js",
+  "type": "module",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/example.js /tmp/inmemory-fs-modular",
+    "start:custom": "node dist/example.js",
+    "dev": "tsc --watch",
+    "clean": "rm -rf dist"
+  },
+  "keywords": [
+    "fuse",
+    "filesystem",
+    "in-memory",
+    "example",
+    "typescript"
+  ],
+  "author": "FUSE Native Team",
+  "license": "MIT",
+  "dependencies": {
+    "fuse-native": "file:../.."
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "typescript": "^5.0.0"
+  }
+}

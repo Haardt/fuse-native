@@ -388,7 +388,7 @@ export type ReadHandler = (
   ino: Ino,
   context: RequestContext,
   options: ReadOptions
-) => Promise<ArrayBuffer>;
+) => Promise<Buffer>;
 
 /** Write operation handler */
 export type WriteHandler = (
@@ -587,6 +587,112 @@ export type CopyFileRangeHandler = (
   context: RequestContext,
   options?: BaseOperationOptions
 ) => Promise<bigint>;
+
+/** Update file timestamps handler */
+export type UtimensHandler = (
+  ino: Ino,
+  atime: Timestamp | null,
+  mtime: Timestamp | null,
+  context: RequestContext,
+  options?: BaseOperationOptions
+) => Promise<{ attr: StatResult; timeout: Timeout }>;
+
+/** File space allocation handler */
+export type FallocateHandler = (
+  ino: Ino,
+  mode: number,
+  offset: bigint,
+  length: bigint,
+  context: RequestContext,
+  fi: FileInfo,
+  options?: BaseOperationOptions
+) => Promise<void>;
+
+/** File seek handler */
+export type LseekHandler = (
+  ino: Ino,
+  offset: bigint,
+  whence: number,
+  context: RequestContext,
+  fi: FileInfo,
+  options?: BaseOperationOptions
+) => Promise<bigint>;
+
+/** File locking handler */
+export type FlockHandler = (
+  ino: Ino,
+  fi: FileInfo,
+  op: number,
+  context: RequestContext,
+  options?: BaseOperationOptions
+) => Promise<void>;
+
+/** POSIX record locking handler */
+export type LockHandler = (
+  ino: Ino,
+  fi: FileInfo,
+  cmd: number,
+  lock: FileLock,
+  context: RequestContext,
+  options?: BaseOperationOptions
+) => Promise<void>;
+
+/** I/O control handler */
+export type IoctlHandler = (
+  ino: Ino,
+  cmd: number,
+  arg: number | bigint | Buffer | null,
+  fi: FileInfo,
+  flags: number,
+  data: ArrayBuffer | null,
+  context: RequestContext,
+  options?: BaseOperationOptions
+) => Promise<{ result: number | bigint | Buffer | null }>;
+
+/** Block map handler */
+export type BmapHandler = (
+  ino: Ino,
+  blocksize: number,
+  idx: bigint,
+  context: RequestContext,
+  options?: BaseOperationOptions
+) => Promise<{ block: bigint }>;
+
+/** Poll handler */
+export type PollHandler = (
+  ino: Ino,
+  fi: FileInfo,
+  ph: PollHandle,
+  reventsp: number,
+  context: RequestContext,
+  options?: BaseOperationOptions
+) => Promise<{ revents: number }>;
+
+/** Flush handler */
+export type FlushHandler = (
+  ino: Ino,
+  fi: FileInfo,
+  context: RequestContext,
+  options?: BaseOperationOptions
+) => Promise<void>;
+
+/** File sync handler */
+export type FsyncHandler = (
+  ino: Ino,
+  datasync: boolean,
+  fi: FileInfo,
+  context: RequestContext,
+  options?: BaseOperationOptions
+) => Promise<void>;
+
+/** Directory sync handler */
+export type FsyncdirHandler = (
+  ino: Ino,
+  datasync: boolean,
+  fi: FileInfo,
+  context: RequestContext,
+  options?: BaseOperationOptions
+) => Promise<void>;
 
 // =============================================================================
 // Complete Operation Handlers Interface

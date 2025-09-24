@@ -7,6 +7,7 @@
  */
 
 import { createRequire } from 'node:module';
+import path from 'node:path';
 
 // Lazy load binding when needed
 let bindingCache: any = null;
@@ -16,18 +17,24 @@ function getBinding() {
 
   const req = createRequire(import.meta.url);
 
+  // Get the directory of the current module
+  const moduleDir = path.dirname(new URL(import.meta.url).pathname);
+
   // Try Release first, then Debug as a fallback
   const candidates = [
     './build/Release/fuse-native.node',
     './build/Debug/fuse-native.node',
+    '../build/Release/fuse-native.node',
+    '../build/Debug/fuse-native.node',
   ];
 
   let lastErr: unknown = null;
   for (const candidate of candidates) {
     try {
       // eslint-disable-next-line @typescript-eslint/no-var-requires
-      console.log(`Try to load: ${process.cwd()} / ${candidate}`)
-      bindingCache = req(process.cwd() + '/' + candidate);
+      const fullPath = path.resolve(moduleDir, candidate);
+      console.log(`Try to load: ${fullPath}`)
+      bindingCache = req(fullPath);
       console.log(`Loaded: ${candidate}`)
       if (bindingCache) return bindingCache;
     } catch (e) {
@@ -49,6 +56,21 @@ export * from './helpers.js';
 export * from './time.js';
 export * from './abort.js';
 export * from './ops/index.js';
+
+// Explicitly export handler types that might not be included in the wildcard export
+export type {
+  UtimensHandler,
+  FallocateHandler,
+  LseekHandler,
+  FlockHandler,
+  LockHandler,
+  IoctlHandler,
+  BmapHandler,
+  PollHandler,
+  FlushHandler,
+  FsyncHandler,
+  FsyncdirHandler,
+} from './types.js';
 export {
   errno as getErrno,
   errname,

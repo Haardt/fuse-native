@@ -38,7 +38,17 @@ void InitBridge::Initialize(struct fuse_operations* ops) {
 
 void InitBridge::SetInitCallback(Napi::Function callback) {
     std::lock_guard<std::mutex> lock(mutex_);
-    
+
+    if (!callback.IsFunction()) {
+        return; // Invalid callback, silently ignore
+    }
+
+    // Clean up existing callback if present
+    if (has_callback_) {
+        init_callback_.Abort();
+        init_callback_.Release();
+    }
+
     // Create thread-safe function for callback
     init_callback_ = Napi::ThreadSafeFunction::New(
         callback.Env(),
@@ -47,17 +57,21 @@ void InitBridge::SetInitCallback(Napi::Function callback) {
         0,  // unlimited queue
         1   // single callback thread
     );
-    
+
     has_callback_ = true;
 }
 
 void InitBridge::RemoveInitCallback() {
     std::lock_guard<std::mutex> lock(mutex_);
-    
-    if (has_callback_) {
-        init_callback_.Release();
-        has_callback_ = false;
-    }
+
+    if (!has_callback_) return;
+
+    // Prevent further calls and stop the TSFN queue immediately
+    init_callback_.Abort();
+    // Release the reference count
+    init_callback_.Release();
+
+    has_callback_ = false;
 }
 
 std::shared_ptr<FuseConnectionInfo> InitBridge::GetConnectionInfo() const {
@@ -206,12 +220,13 @@ std::vector<std::string> InitBridge::GetCapabilityNames() const {
 
 void InitBridge::Reset() {
     std::lock_guard<std::mutex> lock(mutex_);
-    
+
     if (has_callback_) {
+        init_callback_.Abort();
         init_callback_.Release();
         has_callback_ = false;
     }
-    
+
     connection_info_.reset();
     config_.reset();
     initialized_ = false;
@@ -219,19 +234,24 @@ void InitBridge::Reset() {
 
 void* InitBridge::FuseInitCallback(struct fuse_conn_info *conn, struct fuse_config *cfg) {
     InitBridge& bridge = GetInstance();
-    
+
+    // Defensive null checks
+    if (!conn || !cfg) {
+        return nullptr; // userdata
+    }
+
     // Convert and store connection info and config
     {
         std::lock_guard<std::mutex> lock(bridge.mutex_);
         bridge.connection_info_ = bridge.ConvertConnectionInfo(conn);
         bridge.config_ = bridge.ConvertConfig(cfg);
     }
-    
-    // Call JavaScript callback if registered
-    if (bridge.has_callback_) {
+
+    // Call JavaScript callback if registered and we have valid data
+    if (bridge.has_callback_ && bridge.connection_info_ && bridge.config_) {
         bridge.CallJavaScriptCallback(*bridge.connection_info_, *bridge.config_);
     }
-    
+
     return nullptr; // userdata
 }
 
@@ -286,68 +306,79 @@ std::shared_ptr<FuseConfig> InitBridge::ConvertConfig(struct fuse_config *cfg) {
     config->ac_attr_timeout = cfg->ac_attr_timeout;
     config->nullpath_ok = cfg->nullpath_ok;
     config->show_help = cfg->show_help;
-    config->modules = cfg->modules; // Note: shallow copy, be careful with lifetime
+    // Note: modules field intentionally omitted - it's a pointer owned by FUSE
+    // and would cause lifetime issues if copied. JS layer doesn't need this field.
     config->debug = cfg->debug;
     
     return config;
 }
 
 void InitBridge::CallJavaScriptCallback(const FuseConnectionInfo& conn_info, const FuseConfig& config) {
-    if (!has_callback_) {
-        return;
+    // Check under lock to prevent race with RemoveInitCallback
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (!has_callback_) {
+            return;
+        }
     }
-    
+
+    // Create copies to avoid use-after-free (captured by value in lambda)
+    FuseConnectionInfo ci = conn_info;
+    FuseConfig cf = config;
+
     // Call the JavaScript callback asynchronously
-    init_callback_.BlockingCall([&conn_info, &config](Napi::Env env, Napi::Function jsCallback) {
+    init_callback_.BlockingCall([ci = std::move(ci), cf = std::move(cf)](Napi::Env env, Napi::Function jsCallback) {
+        Napi::HandleScope hs(env);
+
         try {
             // Create connection info object
             Napi::Object connObj = Napi::Object::New(env);
-            connObj.Set("protoMajor", conn_info.proto_major);
-            connObj.Set("protoMinor", conn_info.proto_minor);
-            connObj.Set("capable", conn_info.capable);
-            connObj.Set("want", conn_info.want);
-            connObj.Set("maxWrite", conn_info.max_write);
-            connObj.Set("maxRead", conn_info.max_read);
-            connObj.Set("maxReadahead", conn_info.max_readahead);
-            connObj.Set("maxBackground", conn_info.max_background);
-            connObj.Set("congestionThreshold", conn_info.congestion_threshold);
-            connObj.Set("timeGranNs", conn_info.time_gran); // This is timeGranNs as required
-            
+            connObj.Set("protoMajor", ci.proto_major);
+            connObj.Set("protoMinor", ci.proto_minor);
+            connObj.Set("capable", ci.capable);
+            connObj.Set("want", ci.want);
+            connObj.Set("maxWrite", ci.max_write);
+            connObj.Set("maxRead", ci.max_read);
+            connObj.Set("maxReadahead", ci.max_readahead);
+            connObj.Set("maxBackground", ci.max_background);
+            connObj.Set("congestionThreshold", ci.congestion_threshold);
+            connObj.Set("timeGranNs", ci.time_gran); // This is timeGranNs as required
+
             // Create capabilities array
             Napi::Array capsArray = Napi::Array::New(env);
             uint32_t index = 0;
             for (uint32_t i = 0; i < 32; i++) {
-                if (conn_info.capable & (1u << i)) {
+                if (ci.capable & (1u << i)) {
                     capsArray.Set(index++, 1u << i);
                 }
             }
             connObj.Set("caps", capsArray);
-            
+
             // Create config object
             Napi::Object cfgObj = Napi::Object::New(env);
-            cfgObj.Set("setGid", config.set_gid);
-            cfgObj.Set("gid", config.gid);
-            cfgObj.Set("setUid", config.set_uid);
-            cfgObj.Set("uid", config.uid);
-            cfgObj.Set("setMode", config.set_mode);
-            cfgObj.Set("umask", config.umask);
-            cfgObj.Set("entryTimeout", config.entry_timeout);
-            cfgObj.Set("negativeTimeout", config.negative_timeout);
-            cfgObj.Set("attrTimeout", config.attr_timeout);
-            cfgObj.Set("useIno", config.use_ino);
-            cfgObj.Set("readdirIno", config.readdir_ino);
-            cfgObj.Set("directIo", config.direct_io);
-            cfgObj.Set("kernelCache", config.kernel_cache);
-            cfgObj.Set("autoCache", config.auto_cache);
-            cfgObj.Set("acAttrTimeoutSet", config.ac_attr_timeout_set);
-            cfgObj.Set("acAttrTimeout", config.ac_attr_timeout);
-            cfgObj.Set("nullpathOk", config.nullpath_ok);
-            cfgObj.Set("showHelp", config.show_help);
-            cfgObj.Set("debug", config.debug);
-            
+            cfgObj.Set("setGid", cf.set_gid);
+            cfgObj.Set("gid", cf.gid);
+            cfgObj.Set("setUid", cf.set_uid);
+            cfgObj.Set("uid", cf.uid);
+            cfgObj.Set("setMode", cf.set_mode);
+            cfgObj.Set("umask", cf.umask);
+            cfgObj.Set("entryTimeout", cf.entry_timeout);
+            cfgObj.Set("negativeTimeout", cf.negative_timeout);
+            cfgObj.Set("attrTimeout", cf.attr_timeout);
+            cfgObj.Set("useIno", cf.use_ino);
+            cfgObj.Set("readdirIno", cf.readdir_ino);
+            cfgObj.Set("directIo", cf.direct_io);
+            cfgObj.Set("kernelCache", cf.kernel_cache);
+            cfgObj.Set("autoCache", cf.auto_cache);
+            cfgObj.Set("acAttrTimeoutSet", cf.ac_attr_timeout_set);
+            cfgObj.Set("acAttrTimeout", cf.ac_attr_timeout);
+            cfgObj.Set("nullpathOk", cf.nullpath_ok);
+            cfgObj.Set("showHelp", cf.show_help);
+            cfgObj.Set("debug", cf.debug);
+
             // Call JavaScript function with connection info and config
             jsCallback.Call({connObj, cfgObj});
-            
+
         } catch (const std::exception& e) {
             // Log error but don't propagate to avoid crashing FUSE
             // In a production system, you might want to use proper logging

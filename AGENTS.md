@@ -1,5 +1,8 @@
 # AGENTS.md (English, Compact Version)
 
+0. IMPORTANT: DON'T START THE PRGRAMM. IT WILL CRASH OR YOU CAN START IT ASNYCHRONOUSLY.
+1. LET THE USER TEST THE PROGRAMM. BUILD IT, EDIT IT > OK
+
 ## Mission
 
 Build a **modern FUSE3 binding for Node.js** — performance-oriented, robust, ergonomic:
