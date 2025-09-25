@@ -1,4 +1,3 @@
-
 /**
  * @file fuse_bridge.cc
  * @brief FUSE3 bridge implementations for N-API integration
@@ -283,7 +282,7 @@ void ResolvePromiseOrValue(Napi::Env env,
                            Napi::Value result,
                            std::function<void(Napi::Env, Napi::Value)> on_resolve,
                            std::function<void(Napi::Env, Napi::Value)> on_reject = nullptr) {
-    std::function<void(Napi::Env, Napi::Value)> rejection_handler =
+    std::function<void(Napi::Env, Napi::Value)> rejection_handler = 
         [context](Napi::Env env_inner, Napi::Value reason) {
             ReplyWithErrorValue(env_inner, context, reason);
         };
@@ -582,6 +581,9 @@ bool FuseBridge::RegisterOperationHandler(Napi::Env env, FuseOpType op_type, Nap
         return false;
     }
 
+    fprintf(stderr, "FUSE: Registering handler for %s\n", operation_name.c_str());
+    fflush(stderr);
+
     {
         std::lock_guard<std::mutex> lock(handler_mutex_);
         handler_registry_[op_type] = HandlerRecord{FuseOpTypeToString(op_type)};
@@ -616,7 +618,10 @@ bool FuseBridge::HasOperationHandler(FuseOpType op_type) {
     }
 
     std::lock_guard<std::mutex> lock(handler_mutex_);
-    return handler_registry_.find(op_type) != handler_registry_.end();
+    bool found = handler_registry_.find(op_type) != handler_registry_.end();
+    fprintf(stderr, "FUSE: Checking for handler for %s, found: %d\n", FuseOpTypeToString(op_type), found);
+    fflush(stderr);
+    return found;
 }
 
 FuseBridge* FuseBridge::GetBridgeFromRequest(fuse_req_t req) {
@@ -1996,35 +2001,21 @@ void FuseBridge::HandleInit(fuse_req_t req, struct fuse_conn_info* conn) {
 void FuseBridge::HandleDestroy(fuse_req_t req) {
     auto context = CreateContext(FuseOpType::DESTROY, req);
     ProcessRequest(context, [context](Napi::Env env, Napi::Function handler) {
-        handler.Call({CreateRequestContextObject(env, *context)});
+        auto result = handler.Call({CreateRequestContextObject(env, *context)});
+        ResolvePromiseOrValue(env, context, result, [context](Napi::Env, Napi::Value) {
+            if (context->request) {
+                fuse_reply_err(context->request, 0);
+            }
+        });
     });
-    if (req) fuse_reply_none(req);
 }
 
 void FuseBridge::HandleForget(fuse_req_t req, fuse_ino_t ino, uint64_t nlookup) {
-    auto context = CreateContext(FuseOpType::FORGET, req);
-    context->ino = ino;
-    ProcessRequest(context, [context, nlookup](Napi::Env env, Napi::Function handler) {
-        handler.Call({NapiHelpers::CreateBigUint64(env, ToUint64(context->ino)),
-                      NapiHelpers::CreateBigUint64(env, nlookup),
-                      CreateRequestContextObject(env, *context)});
-    });
-    fuse_reply_none(req);
+    if (req) fuse_reply_none(req);
 }
 
 void FuseBridge::HandleForgetMulti(fuse_req_t req, size_t count, struct fuse_forget_data* forgets) {
-    auto context = CreateContext(FuseOpType::FORGET_MULTI, req);
-    ProcessRequest(context, [context, count, forgets](Napi::Env env, Napi::Function handler) {
-        Napi::Array arr = Napi::Array::New(env, count);
-        for (size_t i = 0; i < count; ++i) {
-            Napi::Object item = Napi::Object::New(env);
-            item.Set("ino", NapiHelpers::CreateBigUint64(env, forgets[i].ino));
-            item.Set("nlookup", NapiHelpers::CreateBigUint64(env, forgets[i].nlookup));
-            arr[i] = item;
-        }
-        handler.Call({arr, CreateRequestContextObject(env, *context)});
-    });
-    fuse_reply_none(req);
+    if (req) fuse_reply_none(req);
 }
 
 void FuseBridge::HandleReadBuf(fuse_req_t req, fuse_ino_t, size_t, off_t, struct fuse_file_info*, struct fuse_bufvec**) {

@@ -104,6 +104,12 @@ export class FileSystemOperations implements FuseOperationHandlers {
     return { connectionInfo: {}, config: {} };
   };
 
+  destroy: () => Promise<void> = async () => {
+    if (this._overrides.destroy) {
+      return this._overrides.destroy();
+    }
+  };
+
   // Note: destroy is not in FuseOperationHandlers, so we don't implement it
 
   getattr: GetattrHandler = async (ino, context, fi, options) => {

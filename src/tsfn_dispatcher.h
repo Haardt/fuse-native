@@ -11,16 +11,19 @@
 #define TSFN_DISPATCHER_H
 
 #include <napi.h>
-#include <string>
+
+#include <atomic>
+#include <chrono>
+#include <condition_variable>
+#include <cstdint>
+#include <functional>
 #include <memory>
 #include <mutex>
-#include <condition_variable>
 #include <queue>
-#include <unordered_map>
-#include <atomic>
-#include <functional>
+#include <string>
 #include <thread>
-#include <chrono>
+#include <unordered_map>
+#include <vector>
 
 namespace fuse_native {
 
@@ -56,8 +59,8 @@ struct DispatcherStats {
     uint64_t total_dispatched = 0;
     uint64_t total_completed = 0;
     uint64_t total_errors = 0;
-    uint64_t queue_size = 0;
-    uint64_t max_queue_size = 0;
+    size_t queue_size = 0;
+    size_t max_queue_size = 0;
     double avg_latency_ms = 0.0;
     std::chrono::steady_clock::time_point start_time;
     
@@ -196,7 +199,7 @@ private:
         std::unique_ptr<CallbackContext> context;
         std::function<void(napi_value)> completion_callback;
         std::atomic<bool> completed{false};
-        napi_value result;
+        napi_value result{nullptr};
         
         PendingCallback(std::unique_ptr<CallbackContext> ctx,
                        std::function<void(napi_value)> completion_cb = nullptr)
@@ -231,16 +234,25 @@ private:
                        std::vector<std::shared_ptr<PendingCallback>>,
                        std::function<bool(const std::shared_ptr<PendingCallback>&,
                                         const std::shared_ptr<PendingCallback>&)>> callback_queue_;
-    
+
     // Request tracking
     std::atomic<uint64_t> next_request_id_;
     mutable std::mutex pending_requests_mutex_;
     std::unordered_map<uint64_t, std::shared_ptr<PendingCallback>> pending_requests_;
-    
+
     // Worker threads
     std::vector<std::thread> worker_threads_vec_;
     std::atomic<bool> workers_running_;
-    
+
+    // Flow control / backpressure
+    std::atomic<bool> accepting_;
+    std::atomic<int> inflight_;
+    std::mutex inflight_mtx_;
+    std::condition_variable inflight_cv_;
+
+    // Lifecycle guard to serialize shutdown/cleanup
+    mutable std::mutex lifecycle_mutex_;
+
     // Statistics
     mutable std::mutex stats_mutex_;
     DispatcherStats stats_;
@@ -256,13 +268,6 @@ private:
      * @param callback Callback to process
      */
     void ProcessCallback(std::shared_ptr<PendingCallback> callback);
-    
-    /**
-     * Complete a callback request
-     * @param request_id Request ID to complete
-     * @param result Result value from JavaScript
-     */
-    void CompleteRequest(uint64_t request_id, napi_value result);
     
     /**
      * Handle callback error
@@ -283,6 +288,17 @@ private:
      */
     static bool ComparePriority(const std::shared_ptr<PendingCallback>& a,
                                const std::shared_ptr<PendingCallback>& b);
+
+    /**
+     * Decrement the in-flight counter and notify waiters when it hits zero
+     */
+    void DecInflight();
+
+    /**
+     * Join or detach all worker threads and clear the vector.
+     * Safe to call multiple times.
+     */
+    void DrainWorkerThreads();
 };
 
 /**

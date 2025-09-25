@@ -789,6 +789,8 @@ export type InitHandler = (
 export interface FuseOperationHandlers {
   /** Initialize filesystem */
   init: InitHandler;
+  /** Destroy filesystem */
+  destroy?: () => Promise<void>;
   /** Lookup a directory entry */
   lookup?: LookupHandler;
   /** Get file attributes */

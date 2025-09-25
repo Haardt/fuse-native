@@ -24,7 +24,7 @@
     "build:ts": "tsc -p tsconfig.json",
     "clean": "rm -rf build dist node_modules",
     "clean:build": "rm -rf build dist",
-    "test": "node --experimental-vm-modules ./node_modules/jest/bin/jest.js",
+    "test": "node --experimental-vm-modules ./node_modules/jest/bin/jest.js --runInBand --detectOpenHandles",
     "test:watch": "jest --watch",
     "test:coverage": "jest --coverage",
     "lint": "eslint --ext .ts,.js ts/ test/ --fix",

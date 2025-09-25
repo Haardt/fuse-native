@@ -565,6 +565,7 @@ export class FuseNative {
                 // Only register ops supported by the native bridge (see C++ mapping)
                 const supportedOperations = [
                     'init',
+                    'destroy',
                     'lookup',
                     'getattr',
                     'setattr',
