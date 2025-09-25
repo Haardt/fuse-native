@@ -65,7 +65,7 @@ describe('FUSE Getattr Bridge Integration', () => {
                 context: RequestContext,
                 fi?: any,
                 options?: BaseOperationOptions) : Promise<{ attr: StatResult; timeout: Timeout }> => {
-                const result = testCallback(ino, context, fi, options);
+                const result = await testCallback(ino, context, fi, options);
                 attrResult = result.attr;
                 timeoutResult = result.timeout;
                 getattrDone.resolve();

@@ -788,7 +788,7 @@ export type InitHandler = (
 /** Complete FUSE operation handlers */
 export interface FuseOperationHandlers {
   /** Initialize filesystem */
-  init?: InitHandler;
+  init: InitHandler;
   /** Lookup a directory entry */
   lookup?: LookupHandler;
   /** Get file attributes */
