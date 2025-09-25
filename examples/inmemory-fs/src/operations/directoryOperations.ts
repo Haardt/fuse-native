@@ -19,11 +19,11 @@ import type {
   OpenHandler,
   ReleaseHandler,
 } from 'fuse-native';
-import type { Inode } from '../types.js';
+import type { Inode } from '../types.ts';
 import { FuseErrno, createFd, createFlags } from 'fuse-native';
 
-import { InMemoryFilesystemCore } from '../InMemoryFilesystemCore.js';
-import { InMemoryFsUtils } from '../types.js';
+import { InMemoryFilesystemCore } from '../InMemoryFilesystemCore.ts';
+import { InMemoryFsUtils } from '../types.ts';
 
 /**
  * Directory operations implementation

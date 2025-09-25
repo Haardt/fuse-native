@@ -2478,6 +2478,38 @@ void FuseBridge::SetlkCallback(fuse_req_t req, fuse_ino_t ino, struct fuse_file_
     bridge->HandleSetlk(req, ino, fi, lock, sleep);
 }
 
+void FuseBridge::LogMissingOperationHandlers() {
+    fprintf(stderr, "FUSE: === REGISTERED OPERATION HANDLERS ===\n");
+
+    bool has_any_handlers = false;
+    for (const auto& mapping : kOperationMappings) {
+        if (HasOperationHandler(mapping.type)) {
+            fprintf(stderr, "FUSE: ✓ %s\n", mapping.name);
+            has_any_handlers = true;
+        }
+    }
+
+    if (!has_any_handlers) {
+        fprintf(stderr, "FUSE: No operation handlers registered!\n");
+        return;
+    }
+
+    fprintf(stderr, "FUSE: === MISSING OPERATION HANDLERS ===\n");
+    bool has_missing = false;
+    for (const auto& mapping : kOperationMappings) {
+        if (!HasOperationHandler(mapping.type)) {
+            fprintf(stderr, "FUSE: ✗ %s (not registered)\n", mapping.name);
+            has_missing = true;
+        }
+    }
+
+    if (!has_missing) {
+        fprintf(stderr, "FUSE: All operation handlers are registered!\n");
+    }
+
+    fprintf(stderr, "FUSE: === END OPERATION HANDLERS LOG ===\n\n");
+}
+
 Napi::Value SetOperationHandler(const Napi::CallbackInfo& info) {
     Napi::Env env = info.Env();
 

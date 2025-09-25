@@ -64,6 +64,86 @@ export const getCurrentTimestamp = (): Timestamp =>
   timestampFromDate(new Date());
 
 // =============================================================================
+// Connection and Configuration Types
+// =============================================================================
+
+/** FUSE connection information */
+export interface ConnectionInfo {
+  /** Protocol major version */
+  protoMajor: number;
+  /** Protocol minor version */
+  protoMinor: number;
+  /** Capabilities supported by kernel */
+  capable: number;
+  /** Capabilities requested by filesystem */
+  want: number;
+  /** Maximum write size */
+  maxWrite: number;
+  /** Maximum read size */
+  maxRead: number;
+  /** Maximum readahead size */
+  maxReadahead: number;
+  /** Maximum background requests */
+  maxBackground: number;
+  /** Congestion threshold */
+  congestionThreshold: number;
+  /** Time granularity in nanoseconds */
+  timeGranNs: number;
+  /** Capability flags as array */
+  caps: number[];
+}
+
+/** FUSE configuration */
+export interface FuseConfig {
+  /** Set GID flag */
+  setGid: number;
+  /** GID value */
+  gid: number;
+  /** Set UID flag */
+  setUid: number;
+  /** UID value */
+  uid: number;
+  /** Set mode flag */
+  setMode: number;
+  /** Umask value */
+  umask: number;
+  /** Entry timeout */
+  entryTimeout: number;
+  /** Negative timeout */
+  negativeTimeout: number;
+  /** Attribute timeout */
+  attrTimeout: number;
+  /** Use inode numbers */
+  useIno: number;
+  /** Read directory with inodes */
+  readdirIno: number;
+  /** Direct I/O flag */
+  directIo: number;
+  /** Kernel cache flag */
+  kernelCache: number;
+  /** Auto cache flag */
+  autoCache: number;
+  /** AC attribute timeout set flag */
+  acAttrTimeoutSet: number;
+  /** AC attribute timeout */
+  acAttrTimeout: number;
+  /** Null path OK flag */
+  nullpathOk: number;
+  /** Show help flag */
+  showHelp: number;
+  /** Debug flag */
+  debug: number;
+}
+
+/** Init operation result */
+export interface InitResult {
+  /** Modified connection info */
+  connectionInfo?: Partial<ConnectionInfo>;
+  /** Modified config */
+  config?: Partial<FuseConfig>;
+}
+
+// =============================================================================
 // File System Stat Types
 // =============================================================================
 
@@ -698,8 +778,17 @@ export type FsyncdirHandler = (
 // Complete Operation Handlers Interface
 // =============================================================================
 
+/** Init operation handler */
+export type InitHandler = (
+  connInfo: ConnectionInfo,
+  config: FuseConfig,
+  options?: BaseOperationOptions
+) => Promise<InitResult>;
+
 /** Complete FUSE operation handlers */
 export interface FuseOperationHandlers {
+  /** Initialize filesystem */
+  init?: InitHandler;
   /** Lookup a directory entry */
   lookup?: LookupHandler;
   /** Get file attributes */

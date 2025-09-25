@@ -202,38 +202,33 @@ bool SessionManager::Mount() {
 }
 
 bool SessionManager::Unmount() {
-    {
-        std::lock_guard<std::mutex> lock(state_mutex_);
-        
-        if (state_ != SessionState::MOUNTED) {
-            return false;
-        }
-        
-        state_ = SessionState::UNMOUNTING;
+  // Phase 1: FUSE/Loop stoppen (unter state_mutex_)
+  {
+    std::lock_guard<std::mutex> lock(state_mutex_);
+
+    if (state_ == SessionState::MOUNTED) {
+      if (fuse_session_) {
+        // Reihenfolge je nach FUSE-Variante:
+        fuse_session_unmount(fuse_session_);  // unmount -> löst Mount
+        fuse_session_exit(fuse_session_);     // signalisiert der Loop zu enden
+      }
+      state_ = SessionState::INITIALIZED;
     }
-    
-    // Signal FUSE session to exit
-    if (fuse_session_) {
-        fuse_session_exit(fuse_session_);
+
+    // eigenes Flag für benutzerdefinierte Loops
+    mount_thread_running_ = false;
+  }
+
+  // Phase 2: Worker-Thread joinen (ohne state_mutex_)
+  if (mount_thread_.joinable()) {
+    if (std::this_thread::get_id() == mount_thread_.get_id()) {
+      // aus demselben Thread heraus unmounten wäre fatal → nicht joinen
+      return false;
     }
-    
-    // Wait for mount thread to finish
-    if (mount_thread_.joinable()) {
-        mount_thread_running_ = false;
-        mount_thread_.join();
-    }
-    
-    // Unmount filesystem
-    if (fuse_session_) {
-        fuse_session_unmount(fuse_session_);
-    }
-    
-    {
-        std::lock_guard<std::mutex> lock(state_mutex_);
-        state_ = SessionState::UNMOUNTED;
-    }
-    
-    return true;
+    mount_thread_.join();
+  }
+
+  return true;
 }
 
 void SessionManager::Destroy() {
@@ -443,57 +438,121 @@ Napi::Value DestroySession(const Napi::CallbackInfo& info) {
 
 /**
  * Mount session (N-API exposed function)
+ * Supports both:
+ *   mount(handle, options, callback)  // preferred in your JS
+ *   const ok = mount(handle)          // boolean fallback
  */
 Napi::Value Mount(const Napi::CallbackInfo& info) {
-    Napi::Env env = info.Env();
-    
-    if (info.Length() < 1) {
-        NapiHelpers::ThrowError(env, "Expected session handle");
-        return env.Undefined();
-    }
-    
-    Napi::Object handle = info[0].As<Napi::Object>();
-    uint64_t session_id = static_cast<uint64_t>(handle.Get("id").As<Napi::Number>().DoubleValue());
-    
-    {
-        std::lock_guard<std::mutex> lock(sessions_mutex);
-        auto it = active_sessions.find(session_id);
-        if (it != active_sessions.end()) {
-            bool success = it->second->Mount();
-            return Napi::Boolean::New(env, success);
-        }
-    }
-    
-    NapiHelpers::ThrowError(env, "Session not found");
+  Napi::Env env = info.Env();
+
+  if (info.Length() < 1 || !info[0].IsObject()) {
+    Napi::TypeError::New(env, "Expected session handle").ThrowAsJavaScriptException();
     return env.Undefined();
+  }
+
+  Napi::Function cb;
+  if (info.Length() >= 2 && info[1].IsFunction()) cb = info[1].As<Napi::Function>();
+  else if (info.Length() >= 3 && info[2].IsFunction()) cb = info[2].As<Napi::Function>();
+
+  Napi::Object handle = info[0].As<Napi::Object>();
+  const uint64_t session_id =
+      static_cast<uint64_t>(handle.Get("id").As<Napi::Number>().Int64Value());
+
+  SessionManager* mgr = nullptr;
+  {
+    std::lock_guard<std::mutex> lock(sessions_mutex);
+    auto it = active_sessions.find(session_id);
+    if (it != active_sessions.end()) {
+      mgr = it->second.get();   // unique_ptr -> raw*
+    }
+  }
+
+  if (!mgr) {
+    if (cb) { cb.Call(env.Null(), { Napi::Error::New(env, "Session not found").Value() }); return env.Undefined(); }
+    Napi::Error::New(env, "Session not found").ThrowAsJavaScriptException();
+    return env.Undefined();
+  }
+
+  const bool ok = mgr->Mount();
+
+  if (cb) {
+    if (ok) cb.Call(env.Null(), { env.Null() });
+    else cb.Call(env.Null(), { Napi::Error::New(env, "mount failed").Value() });
+    return env.Undefined();
+  }
+  return Napi::Boolean::New(env, ok);
 }
 
-/**
- * Unmount session (N-API exposed function)
- */
-Napi::Value Unmount(const Napi::CallbackInfo& info) {
-    Napi::Env env = info.Env();
-    
-    if (info.Length() < 1) {
-        NapiHelpers::ThrowError(env, "Expected session handle");
-        return env.Undefined();
-    }
-    
-    Napi::Object handle = info[0].As<Napi::Object>();
-    uint64_t session_id = static_cast<uint64_t>(handle.Get("id").As<Napi::Number>().DoubleValue());
-    
-    {
-        std::lock_guard<std::mutex> lock(sessions_mutex);
-        auto it = active_sessions.find(session_id);
-        if (it != active_sessions.end()) {
-            bool success = it->second->Unmount();
-            return Napi::Boolean::New(env, success);
-        }
-    }
-    
-    NapiHelpers::ThrowError(env, "Session not found");
-    return env.Undefined();
-}
+/// erwartet: unmount(handle) -> boolean
+ //           unmount(handle, cb) -> cb(err|null)
+ //           unmount(handle, options, cb) -> options ignoriert, cb genutzt
+ Napi::Value Unmount(const Napi::CallbackInfo& info) {
+   Napi::Env env = info.Env();
+
+   if (info.Length() < 1 || !info[0].IsObject()) {
+     Napi::TypeError::New(env, "Expected session handle").ThrowAsJavaScriptException();
+     return env.Undefined();
+   }
+
+   // optionalen Callback erkennen (2. oder 3. Arg)
+   Napi::Function cb;
+   if (info.Length() >= 2 && info[1].IsFunction()) {
+     cb = info[1].As<Napi::Function>();
+   } else if (info.Length() >= 3 && info[2].IsFunction()) {
+     cb = info[2].As<Napi::Function>();
+   }
+
+   Napi::Object handle = info[0].As<Napi::Object>();
+   if (!handle.Has("id") || !handle.Get("id").IsNumber()) {
+     if (cb) { cb.Call(env.Null(), { Napi::TypeError::New(env, "Invalid session handle").Value() }); return env.Undefined(); }
+     Napi::TypeError::New(env, "Invalid session handle").ThrowAsJavaScriptException();
+     return env.Undefined();
+   }
+
+   const uint64_t session_id =
+       static_cast<uint64_t>(handle.Get("id").As<Napi::Number>().Int64Value());
+
+   // ⚠️ Map enthält unique_ptr → nur rohen Zeiger herausziehen
+   SessionManager* mgr = nullptr;
+   {
+     std::lock_guard<std::mutex> lock(sessions_mutex);
+     auto it = active_sessions.find(session_id);
+     if (it != active_sessions.end()) {
+       mgr = it->second.get();   // ✅ unique_ptr -> raw*
+       // Optional: wenn du beim Unmount aus der Map löschen willst,
+       // kannst du hier NICHT löschen, solange wir mgr verwenden.
+       // Siehe Kommentar unten.
+     }
+   }
+
+   if (!mgr) {
+     if (cb) { cb.Call(env.Null(), { Napi::Error::New(env, "Session not found").Value() }); return env.Undefined(); }
+     Napi::Error::New(env, "Session not found").ThrowAsJavaScriptException();
+     return env.Undefined();
+   }
+
+   const bool ok = mgr->Unmount();  // kann blockieren (join), aber wir halten NICHT den sessions_mutex!
+
+   // Optional: Wenn du die Session nach Unmount aus der Map entfernen willst:
+   // (nur wenn dein Design das vorsieht)
+   /*
+   {
+     std::lock_guard<std::mutex> lock(sessions_mutex);
+     auto it = active_sessions.find(session_id);
+     if (it != active_sessions.end() && it->second.get() == mgr) {
+       active_sessions.erase(it);  // unique_ptr wird zerstört
+     }
+   }
+   */
+
+   if (cb) {
+     if (ok) cb.Call(env.Null(), { env.Null() });
+     else cb.Call(env.Null(), { Napi::Error::New(env, "unmount failed").Value() });
+     return env.Undefined();
+   }
+
+   return Napi::Boolean::New(env, ok);
+ }
 
 /**
  * Check if session is ready (N-API exposed function)

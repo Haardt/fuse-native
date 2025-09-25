@@ -4,17 +4,17 @@
  */
 
 // Re-export main classes and utilities
-export { InMemoryFilesystem } from './InMemoryFilesystem.js';
-export { InMemoryFilesystemCore } from './InMemoryFilesystemCore.js';
-export { InMemoryFsUtils, InMemoryFsError } from './types.js';
+export { InMemoryFilesystem } from './InMemoryFilesystem.ts';
+export { InMemoryFilesystemCore } from './InMemoryFilesystemCore.ts';
+export { InMemoryFsUtils, InMemoryFsError } from './types.ts';
 
 // Re-export operation modules for advanced usage
-export { FileOperations } from './operations/fileOperations.js';
-export { DirectoryOperations } from './operations/directoryOperations.js';
-export { MetadataOperations } from './operations/metadataOperations.js';
-export { LinkOperations } from './operations/linkOperations.js';
-export { XattrOperations } from './operations/xattrOperations.js';
-export { AdvancedOperations } from './operations/advancedOperations.js';
+export { FileOperations } from './operations/fileOperations.ts';
+export { DirectoryOperations } from './operations/directoryOperations.ts';
+export { MetadataOperations } from './operations/metadataOperations.ts';
+export { LinkOperations } from './operations/linkOperations.ts';
+export { XattrOperations } from './operations/xattrOperations.ts';
+export { AdvancedOperations } from './operations/advancedOperations.ts';
 
 // Re-export types
 export type {
@@ -24,7 +24,7 @@ export type {
   InMemoryFsStats,
   InMemoryDirent,
   OperationContext,
-} from './types.js';
+} from './types.ts';
 
 // Import and run the example if this is the main module
-import './example.js';
+import './example.ts';

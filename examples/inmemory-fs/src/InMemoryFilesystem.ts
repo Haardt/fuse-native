@@ -65,16 +65,16 @@ import type {
   InMemoryFsStats,
   InMemoryDirent,
   OperationContext,
-} from './types.js';
+} from './types.ts';
 
-import { InMemoryFsUtils, InMemoryFsError } from './types.js';
-import { InMemoryFilesystemCore } from './InMemoryFilesystemCore.js';
-import { FileOperations } from './operations/fileOperations.js';
-import { DirectoryOperations } from './operations/directoryOperations.js';
-import { MetadataOperations } from './operations/metadataOperations.js';
-import { LinkOperations } from './operations/linkOperations.js';
-import { XattrOperations } from './operations/xattrOperations.js';
-import { AdvancedOperations } from './operations/advancedOperations.js';
+import { InMemoryFsUtils, InMemoryFsError } from './types.ts';
+import { InMemoryFilesystemCore } from './InMemoryFilesystemCore.ts';
+import { FileOperations } from './operations/fileOperations.ts';
+import { DirectoryOperations } from './operations/directoryOperations.ts';
+import { MetadataOperations } from './operations/metadataOperations.ts';
+import { LinkOperations } from './operations/linkOperations.ts';
+import { XattrOperations } from './operations/xattrOperations.ts';
+import { AdvancedOperations } from './operations/advancedOperations.ts';
 
 /**
  * In-memory filesystem implementation

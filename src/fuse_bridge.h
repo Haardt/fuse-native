@@ -256,6 +256,8 @@ private:
    void HandleRemovexattr(fuse_req_t req, fuse_ino_t ino, const char* name);
 
     // Static callbacks wired into fuse_lowlevel_ops
+   static void LogMissingOperationHandlers();
+
    static void InitCallback(void* userdata, struct fuse_conn_info* conn);
    static void DestroyCallback(void* userdata);
    static void ForgetCallback(fuse_req_t req, fuse_ino_t ino, uint64_t nlookup);

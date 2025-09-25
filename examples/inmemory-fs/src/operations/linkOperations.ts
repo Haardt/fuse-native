@@ -19,8 +19,8 @@ import type {
 
 import { FuseErrno, createMode } from 'fuse-native';
 
-import { InMemoryFilesystemCore } from '../InMemoryFilesystemCore.js';
-import { InMemoryFsUtils } from '../types.js';
+import { InMemoryFilesystemCore } from '../InMemoryFilesystemCore.ts';
+import { InMemoryFsUtils } from '../types.ts';
 
 /**
  * Link operations implementation

@@ -1,5 +1,5 @@
-import { FuseErrno } from '../errors.js';
-import { ValidationUtils } from '../helpers.js';
+import { FuseErrno } from '../errors.ts';
+import { ValidationUtils } from '../helpers.ts';
 import type {
   BaseOperationOptions,
   FileInfo,
@@ -8,7 +8,7 @@ import type {
   RequestContext,
   StatResult,
   Timeout,
-} from '../types.js';
+} from '../types.ts';
 
 const DEFAULT_CONTEXT: RequestContext = {
   uid: 0 as any,

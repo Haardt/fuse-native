@@ -12,9 +12,9 @@ import type {
   FuseOperationHandlers,
   MountOptions,
   UnmountOptions,
-} from './types.js';
+} from './types.ts';
 
-import { FuseErrno, toFuseError } from './errors.js';
+import { FuseErrno, toFuseError } from './errors.ts';
 
 /**
  * Session state enumeration

@@ -6,7 +6,7 @@
  * and nanosecond-precision BigInt timestamps used throughout the FUSE binding.
  */
 
-import type { Timestamp } from './types.js';
+import type { Timestamp } from './types.ts';
 
 // =============================================================================
 // Type Definitions

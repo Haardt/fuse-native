@@ -1,6 +1,6 @@
-import { FuseErrno } from '../errors.js';
-import { ValidationUtils } from '../helpers.js';
-import { ensureStatResult, normalizeTimeout } from './getattr.js';
+import { FuseErrno } from '../errors.ts';
+import { ValidationUtils } from '../helpers.ts';
+import { ensureStatResult, normalizeTimeout } from './getattr.ts';
 import type {
   BaseOperationOptions,
   Ino,
@@ -8,7 +8,7 @@ import type {
   StatResult,
   SymlinkHandler,
   Timeout,
-} from '../types.js';
+} from '../types.ts';
 
 const DEFAULT_CONTEXT: RequestContext = {
   uid: 0 as any,

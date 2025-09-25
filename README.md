@@ -458,7 +458,7 @@ unshare -rm pnpm test test/integration/
 The library includes comprehensive mocking utilities:
 
 ```typescript
-import { createMockStat, createMockContext, createMockFileInfo } from '../test/setup.js';
+import { createMockStat, createMockContext, createMockFileInfo } from '../test/setup.ts';
 
 const mockStat = createMockStat();
 const mockContext = createMockContext();

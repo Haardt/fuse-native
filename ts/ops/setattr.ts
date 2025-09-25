@@ -1,6 +1,6 @@
-import { FuseErrno } from '../errors.js';
-import { ValidationUtils } from '../helpers.js';
-import { ensureStatResult, normalizeTimeout } from './getattr.js';
+import { FuseErrno } from '../errors.ts';
+import { ValidationUtils } from '../helpers.ts';
+import { ensureStatResult, normalizeTimeout } from './getattr.ts';
 import {
   FUSE_SET_ATTR_ATIME,
   FUSE_SET_ATTR_ATIME_NOW,
@@ -11,7 +11,7 @@ import {
   FUSE_SET_ATTR_MTIME_NOW,
   FUSE_SET_ATTR_SIZE,
   FUSE_SET_ATTR_UID,
-} from '../constants.js';
+} from '../constants.ts';
 import {
   createGid,
   createMode,
@@ -22,7 +22,7 @@ import {
   type SetattrOptions,
   type StatResult,
   type Timeout,
-} from '../types.js';
+} from '../types.ts';
 
 const DEFAULT_CONTEXT: RequestContext = {
   uid: 0 as any,

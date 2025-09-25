@@ -1,13 +1,13 @@
-import { FuseErrno } from '../errors.js';
-import { ValidationUtils } from '../helpers.js';
-import { FuseBufFlags } from '../types.js';
+import { FuseErrno } from '../errors.ts';
+import { ValidationUtils } from '../helpers.ts';
+import { FuseBufFlags } from '../types.ts';
 import type {
   FuseBufvec,
   Ino,
   ReadBufHandler,
   ReadOptions,
   RequestContext,
-} from '../types.js';
+} from '../types.ts';
 
 export type ReadBufResult = FuseBufvec;
 

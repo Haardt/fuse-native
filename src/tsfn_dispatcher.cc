@@ -91,71 +91,58 @@ bool TSFNDispatcher::Initialize() {
     }
 }
 
-bool TSFNDispatcher::Shutdown(uint32_t timeout_ms) {
-    DispatcherState expected = DispatcherState::RUNNING;
-    if (!state_.compare_exchange_strong(expected, DispatcherState::SHUTTING_DOWN)) {
-        if (state_ == DispatcherState::SHUTDOWN) {
-            return true; // Already shut down
-        }
-        return false; // Not in a state to shutdown
+bool TSFNDispatcher::Shutdown(uint32_t /*timeout_ms*/) {
+  DispatcherState expected = DispatcherState::RUNNING;
+  if (!state_.compare_exchange_strong(expected, DispatcherState::SHUTTING_DOWN)) {
+    if (state_ == DispatcherState::SHUTDOWN) return true;
+    return false;
+  }
+
+  // 1) Worker stoppen und wecken
+  workers_running_ = false;
+  queue_cv_.notify_all();
+
+  // 2) ALLE Worker synchron joinen (kein Temp-Thread!)
+  for (auto &t : worker_threads_vec_) {
+    if (t.joinable()) {
+      // Sicherheit: kein self-join
+      if (std::this_thread::get_id() == t.get_id()) {
+        // sollte nicht passieren; zur Not detach:
+        t.detach();
+      } else {
+        t.join();
+      }
     }
-    
-    auto start_time = std::chrono::steady_clock::now();
-    auto timeout = std::chrono::milliseconds(timeout_ms);
-    
-    // Signal worker threads to stop
-    workers_running_ = false;
-    queue_cv_.notify_all();
-    
-    // Wait for worker threads to finish
-    for (auto& thread : worker_threads_vec_) {
-        if (thread.joinable()) {
-            auto elapsed = std::chrono::steady_clock::now() - start_time;
-            auto remaining = timeout - elapsed;
-            
-            if (remaining.count() > 0) {
-                // Try to join with remaining timeout
-                std::thread temp_thread([&thread]() { thread.join(); });
-                temp_thread.detach();
-            } else {
-                // Timeout exceeded, detach thread
-                thread.detach();
-            }
-        }
+  }
+  worker_threads_vec_.clear();
+
+  // 3) Keine neuen Calls mehr → Handler-TSFN freigeben
+  {
+    std::lock_guard<std::mutex> lock(handlers_mutex_);
+    for (auto &kv : handlers_) {
+      kv.second.Release(); // oder Abort() wenn du hart abbrechen willst
     }
-    
-    worker_threads_vec_.clear();
-    
-    // Clean up ThreadSafeFunction
-    if (tsfn_) {
-        tsfn_.Release();
-    }
-    
-    // Clear handlers
-    {
-        std::lock_guard<std::mutex> lock(handlers_mutex_);
-        for (auto& pair : handlers_) {
-            pair.second.Release();
-        }
-        handlers_.clear();
-    }
-    
-    // Clear pending requests
-    {
-        std::lock_guard<std::mutex> lock(pending_requests_mutex_);
-        pending_requests_.clear();
-    }
-    
-    // Clear callback queue
-    {
-        std::lock_guard<std::mutex> lock(queue_mutex_);
-        while (!callback_queue_.empty()) {
-            callback_queue_.pop();
-        }
-    }
-    
-    state_ = DispatcherState::SHUTDOWN;
-    return true;
+    handlers_.clear();
+  }
+
+  // 4) Globale/dummy TSFN freigeben
+  if (tsfn_) {
+    tsfn_.Release();
+    tsfn_ = Napi::ThreadSafeFunction();
+  }
+
+  // 5) Queues/Pending aufräumen
+  {
+    std::lock_guard<std::mutex> ql(queue_mutex_);
+    while (!callback_queue_.empty()) callback_queue_.pop();
+  }
+  {
+    std::lock_guard<std::mutex> pl(pending_requests_mutex_);
+    pending_requests_.clear();
+  }
+
+  state_ = DispatcherState::SHUTDOWN;
+  return true;
 }
 
 bool TSFNDispatcher::RegisterHandler(const std::string& operation_name, Napi::Function callback) {

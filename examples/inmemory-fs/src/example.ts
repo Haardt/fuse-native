@@ -9,8 +9,8 @@
  */
 
 import { createSession, createMode, createUid, createGid } from 'fuse-native';
-import { InMemoryFilesystem } from './InMemoryFilesystem.js';
-import { InMemoryFsUtils } from './types.js';
+import { InMemoryFilesystem } from './InMemoryFilesystem.ts';
+import { InMemoryFsUtils } from './types.ts';
 
 import fs from 'fs';
 import path from 'path';

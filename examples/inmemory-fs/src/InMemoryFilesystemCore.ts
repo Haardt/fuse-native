@@ -27,9 +27,9 @@ import type {
   InMemoryFsConfig,
   InMemoryFsStats,
   InMemoryDirent,
-} from './types.js';
+} from './types.ts';
 
-import { InMemoryFsError, InMemoryFsUtils } from './types.js';
+import { InMemoryFsError, InMemoryFsUtils } from './types.ts';
 
 /**
  * Core in-memory filesystem state management

@@ -6,7 +6,7 @@
  * including lookups, validation, and FUSE-specific error handling.
  */
 
-import { FuseErrno, ERRNO_CODES, ERRNO_MESSAGES } from './errors.js';
+import { FuseErrno, ERRNO_CODES, ERRNO_MESSAGES } from './errors.ts';
 
 // =============================================================================
 // Core Errno Functions

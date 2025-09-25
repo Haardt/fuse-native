@@ -15,7 +15,7 @@ import type {
 
 import { FuseErrno } from 'fuse-native';
 
-import { InMemoryFilesystemCore } from '../InMemoryFilesystemCore.js';
+import { InMemoryFilesystemCore } from '../InMemoryFilesystemCore.ts';
 
 /**
  * Extended attributes operations implementation

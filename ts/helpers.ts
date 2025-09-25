@@ -16,7 +16,7 @@ import type {
   StatResult,
   DirentEntry,
   ReaddirResult,
-} from './types.js';
+} from './types.ts';
 
 import {
   createMode,
@@ -26,7 +26,7 @@ import {
   timestampFromDate,
   dateFromTimestamp,
   getCurrentTimestamp,
-} from './types.js';
+} from './types.ts';
 
 import {
   S_IFMT,
@@ -48,9 +48,9 @@ import {
   S_IXOTH,
   DirentType,
   ROOT_INO,
-} from './constants.js';
+} from './constants.ts';
 
-import { FuseErrno } from './errors.js';
+import { FuseErrno } from './errors.ts';
 
 /**
  * Path utility functions
