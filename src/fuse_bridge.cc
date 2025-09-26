@@ -282,7 +282,7 @@ void ResolvePromiseOrValue(Napi::Env env,
                            Napi::Value result,
                            std::function<void(Napi::Env, Napi::Value)> on_resolve,
                            std::function<void(Napi::Env, Napi::Value)> on_reject = nullptr) {
-    std::function<void(Napi::Env, Napi::Value)> rejection_handler = 
+    std::function<void(Napi::Env, Napi::Value)> rejection_handler =
         [context](Napi::Env env_inner, Napi::Value reason) {
             ReplyWithErrorValue(env_inner, context, reason);
         };
@@ -676,7 +676,7 @@ void FuseBridge::InitializeFuseOperations() {
     fuse_ops_.access = AccessCallback;
     fuse_ops_.create = CreateCallback;
     fuse_ops_.copy_file_range = CopyFileRangeCallback;
-    
+
     // Explicitly add handlers that might be missing
     fuse_ops_.getlk = nullptr;
     fuse_ops_.setlk = nullptr;
@@ -696,51 +696,41 @@ void FuseBridge::InitializeFuseOperations() {
 }
 
 void FuseBridge::ProcessRequest(std::shared_ptr<FuseRequestContext> context,
-                                 std::function<void(Napi::Env, Napi::Function)> js_invoker) {
-    if (!context) {
-        fprintf(stderr, "FUSE: ProcessRequest - context is null\n");
-        return;
+                                std::function<void(Napi::Env, Napi::Function)> js_invoker) {
+  if (!context) { fprintf(stderr, "FUSE: ProcessRequest - context is null\n"); return; }
+
+  const char* op_name_str = FuseOpTypeToString(context->op_type);
+
+  if (!HasOperationHandler(context->op_type)) {
+    fprintf(stderr, "FUSE: ProcessRequest - no handler for %s\n", op_name_str);
+    context->ReplyError(ENOSYS);
+    return;
+  }
+
+  auto dispatcher = GetGlobalDispatcher();
+  if (!dispatcher) {
+    // *** WICHTIG: DESTROY ohne Dispatcher -> NICHT neu initialisieren ***
+    if (context->op_type == FuseOpType::DESTROY) {
+      context->ReplyOk();
+      return;
     }
-
-    fprintf(stderr, "FUSE: ProcessRequest - op_type: %d\n", static_cast<int>(context->op_type));
-    const char* op_name_str = FuseOpTypeToString(context->op_type);
-    fprintf(stderr, "FUSE: ProcessRequest - op_name: %s\n", op_name_str);
-
-    if (!HasOperationHandler(context->op_type)) {
-        fprintf(stderr, "FUSE: ProcessRequest - no handler for %s\n", op_name_str);
-        context->ReplyError(ENOSYS);
-        return;
-    }
-
-    auto dispatcher = GetGlobalDispatcher();
-    if (!dispatcher) {
-        if (!env_) {
-            context->ReplyError(EINVAL);
-            return;
-        }
-
-        if (!InitializeGlobalDispatcher(Napi::Env(env_))) {
-            context->ReplyError(EIO);
-            return;
-        }
-        dispatcher = GetGlobalDispatcher();
-        if (!dispatcher) {
-            context->ReplyError(EIO);
-            return;
-        }
-    }
+    if (!env_) { context->ReplyError(EINVAL); return; }
+    if (!InitializeGlobalDispatcher(Napi::Env(env_))) { context->ReplyError(EIO); return; }
+    dispatcher = GetGlobalDispatcher();
+    if (!dispatcher) { context->ReplyError(EIO); return; }
+  }
 
     std::string op_name = op_name_str;
     auto shared_context = context;
     auto invoker_copy = std::move(js_invoker);
 
-uint64_t request_id = dispatcher->DispatchCustom(
+      uint64_t request_id = dispatcher->DispatchCustom(
     op_name,
     [shared_context, invoker = std::move(invoker_copy), op_name](Napi::Env env, Napi::Function handler) mutable {
         Napi::HandleScope hs(env);
-        if (!shared_context || !handler.IsFunction()) { 
-            if (shared_context) shared_context->ReplyError(EIO); 
-            return; 
+        if (!shared_context || !handler.IsFunction()) {
+            if (shared_context) shared_context->ReplyError(EIO);
+            return;
         }
         invoker(env, handler);
     },
@@ -1000,7 +990,7 @@ void FuseBridge::HandleLookup(fuse_req_t req, fuse_ino_t parent, const char* nam
     auto context = CreateContext(FuseOpType::LOOKUP, req);
     context->parent = parent;
     context->name = name ? name : "";
- 
+
     ProcessRequest(context, [context](Napi::Env env, Napi::Function handler) {
         Napi::Value parent_value = NapiHelpers::CreateBigUint64(env, ToUint64(context->parent));
         Napi::String name_value = Napi::String::New(env, context->name);
@@ -1643,7 +1633,7 @@ void FuseBridge::HandleWrite(fuse_req_t req, fuse_ino_t ino, const char* buf, si
 
     ProcessRequest(context, [context](Napi::Env env, Napi::Function handler) {
         Napi::Value ino_value = NapiHelpers::CreateBigUint64(env, ToUint64(context->ino));
-        
+
         // Copy buffer data to new ArrayBuffer to ensure proper lifetime management
         Napi::ArrayBuffer buffer;
         if (context->data.empty()) {
@@ -1999,15 +1989,19 @@ void FuseBridge::HandleInit(fuse_req_t req, struct fuse_conn_info* conn) {
 }
 
 void FuseBridge::HandleDestroy(fuse_req_t req) {
-    auto context = CreateContext(FuseOpType::DESTROY, req);
-    ProcessRequest(context, [context](Napi::Env env, Napi::Function handler) {
-        auto result = handler.Call({CreateRequestContextObject(env, *context)});
-        ResolvePromiseOrValue(env, context, result, [context](Napi::Env, Napi::Value) {
-            if (context->request) {
-                fuse_reply_err(context->request, 0);
-            }
-        });
+  auto context = CreateContext(FuseOpType::DESTROY, req);
+
+  if (!GetGlobalDispatcher() || !HasOperationHandler(FuseOpType::DESTROY)) {
+    if (context->request) fuse_reply_err(context->request, 0);
+    return;
+  }
+
+  ProcessRequest(context, [context](Napi::Env env, Napi::Function handler) {
+    auto result = handler.Call({ CreateRequestContextObject(env, *context) });
+    ResolvePromiseOrValue(env, context, result, [context](Napi::Env, Napi::Value) {
+      if (context->request) fuse_reply_err(context->request, 0);
     });
+  });
 }
 
 void FuseBridge::HandleForget(fuse_req_t req, fuse_ino_t ino, uint64_t nlookup) {
