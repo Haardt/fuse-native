@@ -45,9 +45,7 @@ bool TSFNDispatcher::Initialize() {
         }),
         "TSFNDispatcher",
         0,
-        1,
-        [this](Napi::Env) { state_.store(DispatcherState::SHUTDOWN, std::memory_order_release); });
-
+        1);
     workers_running_.store(true, std::memory_order_release);
     worker_threads_vec_.reserve(worker_threads_);
     for (size_t i = 0; i < worker_threads_; ++i) {
@@ -78,11 +76,7 @@ bool TSFNDispatcher::Shutdown(uint32_t /*timeout_ms*/) {
   std::unique_lock<std::mutex> lifecycle_lock(lifecycle_mutex_);
 
   DispatcherState current = state_.load(std::memory_order_acquire);
-  if (current == DispatcherState::SHUTDOWN) {
-    DrainWorkerThreads();
-    return true;
-  }
-
+  if (current == DispatcherState::SHUTDOWN) { DrainWorkerThreads(); return true; }
   if (current == DispatcherState::UNINITIALIZED) {
     state_.store(DispatcherState::SHUTDOWN, std::memory_order_release);
     DrainWorkerThreads();
@@ -90,26 +84,18 @@ bool TSFNDispatcher::Shutdown(uint32_t /*timeout_ms*/) {
   }
 
   state_.store(DispatcherState::SHUTTING_DOWN, std::memory_order_release);
-
   accepting_.store(false, std::memory_order_release);
   workers_running_.store(false, std::memory_order_release);
   queue_cv_.notify_all();
 
-  {
-    std::unique_lock<std::mutex> inflight_lock(inflight_mtx_);
-    inflight_cv_.wait(inflight_lock, [&] {
-      return inflight_.load(std::memory_order_acquire) == 0;
-    });
+  { std::unique_lock<std::mutex> inflight_lock(inflight_mtx_);
+    inflight_cv_.wait(inflight_lock, [&]{ return inflight_.load(std::memory_order_acquire) == 0; });
   }
 
   DrainWorkerThreads();
 
-  {
-    std::lock_guard<std::mutex> handlers_lock(handlers_mutex_);
-    for (auto& entry : handlers_) {
-      entry.second.Abort();
-      entry.second.Release();
-    }
+  { std::lock_guard<std::mutex> handlers_lock(handlers_mutex_);
+    for (auto& entry : handlers_) { entry.second.Abort(); entry.second.Release(); }
     handlers_.clear();
   }
 
@@ -119,15 +105,10 @@ bool TSFNDispatcher::Shutdown(uint32_t /*timeout_ms*/) {
     tsfn_ = Napi::ThreadSafeFunction();
   }
 
-  {
-    std::lock_guard<std::mutex> queue_lock(queue_mutex_);
-    while (!callback_queue_.empty()) {
-      callback_queue_.pop();
-    }
+  { std::lock_guard<std::mutex> queue_lock(queue_mutex_);
+    while (!callback_queue_.empty()) callback_queue_.pop();
   }
-
-  {
-    std::lock_guard<std::mutex> pending_lock(pending_requests_mutex_);
+  { std::lock_guard<std::mutex> pending_lock(pending_requests_mutex_);
     pending_requests_.clear();
   }
 
