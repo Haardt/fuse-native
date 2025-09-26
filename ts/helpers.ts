@@ -427,6 +427,10 @@ export class StatUtils {
     };
   }
 
+  static toBigInt(value: number | bigint): bigint {
+    return typeof value === 'bigint' ? value : BigInt(value);
+  }
+
   /**
    * Create stat for directory
    */

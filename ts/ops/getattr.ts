@@ -1,13 +1,13 @@
 import { FuseErrno } from '../errors.ts';
 import { ValidationUtils } from '../helpers.ts';
-import type {
-  BaseOperationOptions,
-  FileInfo,
-  GetattrHandler,
-  Ino,
-  RequestContext,
-  StatResult,
-  Timeout,
+import {
+  type BaseOperationOptions, createIno,
+  type FileInfo,
+  type GetattrHandler,
+  type Ino,
+  type RequestContext,
+  type StatResult,
+  type Timeout,
 } from '../types.ts';
 
 const DEFAULT_CONTEXT: RequestContext = {
@@ -87,7 +87,7 @@ export async function getattrWrapper(
     throw new FuseErrno('ENOSYS');
   }
 
-  const result = await handler(ino, context, fi, options);
+  const result = await handler(createIno(ino), context, fi, options);
   if (!result || typeof result !== 'object') {
     throw new FuseErrno('EIO', 'getattr handler returned invalid result');
   }
