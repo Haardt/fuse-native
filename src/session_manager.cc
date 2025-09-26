@@ -15,6 +15,12 @@
 #include <thread>
 #include <chrono>
 #include <cstring>
+#if defined(_WIN32)
+// TODO: Windows support
+#else
+  #include <poll.h>
+#endif
+#include <errno.h>
 
 namespace fuse_native {
 
@@ -210,6 +216,7 @@ bool SessionManager::Unmount() {
       if (fuse_session_) {
         // Reihenfolge je nach FUSE-Variante:
         fuse_session_unmount(fuse_session_);  // unmount -> löst Mount
+        mount_thread_running_ = false;
         fuse_session_exit(fuse_session_);     // signalisiert der Loop zu enden
       }
       state_ = SessionState::INITIALIZED;
@@ -260,11 +267,14 @@ void SessionManager::RunFuseLoop() {
         return;
     }
 
+    size_t buf_size = options_.max_read;
+    if (buf_size < 4096) buf_size = 128 * 1024;
+
     fprintf(stderr, "FUSE: RunFuseLoop - starting FUSE loop thread\n");
-    fprintf(stderr, "FUSE: RunFuseLoop - max_read: %u\n", options_.max_read);
+    fprintf(stderr, "FUSE: RunFuseLoop - max_read: %u\n", buf_size);
 
     struct fuse_buf fbuf = {
-        .size = options_.max_read,
+        .size = buf_size,
         .flags = static_cast<enum fuse_buf_flags>(0),
         .mem = nullptr,
         .fd = -1,
@@ -281,29 +291,31 @@ void SessionManager::RunFuseLoop() {
 
     // Main FUSE loop
     int loop_count = 0;
-    while (mount_thread_running_ && !fuse_session_exited(fuse_session_)) {
-        loop_count++;
-        if (loop_count % 100 == 1) {
-            fprintf(stderr, "FUSE: RunFuseLoop - loop iteration %d\n", loop_count);
-        }
+    int fd = fuse_session_fd(fuse_session_);
+    while (mount_thread_running_.load(std::memory_order_acquire) &&
+           !fuse_session_exited(fuse_session_)) {
 
+      struct pollfd pfd{fd, POLLIN, 0};
+      int pr = poll(&pfd, 1, 250);            // 250 ms
+      if (pr < 0) {
+        if (errno == EINTR) continue;
+        break;
+      }
+      if (pr == 0) continue;                  // Timeout → Flags erneut prüfen
+
+      if (pfd.revents & POLLIN) {
         int res = fuse_session_receive_buf(fuse_session_, &fbuf);
-        if (res == -EINTR || res == 0) {
-            if (res == -EINTR) {
-                fprintf(stderr, "FUSE: RunFuseLoop - received EINTR, continuing\n");
-            }
+        if (res <= 0) {
+          if (res == -EINTR || res == 0) {
+            if (!mount_thread_running_.load(std::memory_order_acquire) ||
+                fuse_session_exited(fuse_session_)) break;
             continue;
+          }
+          // andere Fehler → raus
+          break;
         }
-        if (res < 0) {
-            // Log error for debugging
-            fprintf(stderr, "FUSE: RunFuseLoop - receive_buf failed with %d\n", res);
-            fprintf(stderr, "FUSE: RunFuseLoop - errno: %d (%s)\n", errno, strerror(errno));
-            break;
-        }
-
-        fprintf(stderr, "FUSE: RunFuseLoop - received buffer, processing...\n");
         fuse_session_process_buf(fuse_session_, &fbuf);
-        fprintf(stderr, "FUSE: RunFuseLoop - processed buffer\n");
+      }
     }
 
     fprintf(stderr, "FUSE: RunFuseLoop - exiting loop after %d iterations\n", loop_count);
@@ -362,6 +374,8 @@ Napi::Value CreateSession(const Napi::CallbackInfo& info) {
     
     if (options_obj.Has("maxRead")) {
         options.max_read = options_obj.Get("maxRead").As<Napi::Number>().Uint32Value();
+    } else {
+       options.max_read = 128 * 1024;
     }
     
     try {

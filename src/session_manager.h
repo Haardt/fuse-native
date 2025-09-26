@@ -148,7 +148,7 @@ private:
     
     // Mount thread management
     std::thread mount_thread_;
-    std::atomic<bool> mount_thread_running_;
+    std::atomic<bool> mount_thread_running_{false};
     
     /**
      * Main FUSE loop (runs in separate thread)

@@ -62,8 +62,8 @@ describe('FUSE Init Bridge Integration', () => {
 
             } finally {
                 await sessionWrap.session.unmount();
-                await sessionWrap.session.destroy();
                 await sessionWrap.fuseNative.shutdownDispatcher(0)
+                await sessionWrap.session.destroy();
             }
         });
     });
