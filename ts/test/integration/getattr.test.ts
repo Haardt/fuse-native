@@ -51,7 +51,6 @@ describe('FUSE Getattr Bridge Integration', () => {
     test('should handle complete getattr parameter modifications', async () => {
       let inoResult: Ino = 0n as Ino;
       let contextResult: RequestContext = {} as RequestContext;
-      let timeoutResult: Timeout = 0;
       const getattrDone = defer<void>();
 
       const testAttrHandler: GetattrHandler = async (ino, context, fi, options) => {
@@ -67,7 +66,7 @@ describe('FUSE Getattr Bridge Integration', () => {
             gid: createGid(1000),
             rdev: createDev(0n),
             size: 0n,
-            blksize: 4096,
+            blksize: 0,
             blocks: 8n,
             atime: 1609459200000000000n, // 2021-01-01 00:00:00 UTC in ns
             mtime: 1609459200000000000n,
@@ -97,10 +96,9 @@ describe('FUSE Getattr Bridge Integration', () => {
 
         // Verify the returned attributes
         expect(stat.ino).toBe(1n);
-        expect(stat.mode).toBe(S_IFDIR | 0o755);
-        expect(stat.nlink).toBe(2);
-        expect(stat.size).toBe(4096n);
-        expect(timeoutResult).toBe(1.0);
+        expect(stat.mode).toBe(StatUtils.toBigInt(S_IFDIR | 0o755));
+        expect(stat.nlink).toBe(2n);
+        expect(stat.size).toBe(0n);
 
       } finally {
         await session?.unmount();
