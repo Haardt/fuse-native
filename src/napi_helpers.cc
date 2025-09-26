@@ -197,33 +197,146 @@ Napi::Object NapiHelpers::StatToObject(Napi::Env env, const struct stat& st) {
     return obj;
 }
 
+namespace {
+
+template <typename Getter>
+void AssignTimespecField(Napi::Value value, struct stat* st, Getter setter) {
+    if (!value.IsBigInt() || !st) {
+        return;
+    }
+
+    struct timespec ts {0, 0};
+    if (!NapiHelpers::NsBigIntToTimespec(value.As<Napi::BigInt>(), &ts)) {
+        return;
+    }
+
+    setter(st, ts);
+}
+
+#if defined(__APPLE__)
+inline void SetStatAtime(struct stat* st, const struct timespec& ts) {
+    st->st_atimespec = ts;
+    st->st_atime = ts.tv_sec;
+}
+
+inline void SetStatMtime(struct stat* st, const struct timespec& ts) {
+    st->st_mtimespec = ts;
+    st->st_mtime = ts.tv_sec;
+}
+
+inline void SetStatCtime(struct stat* st, const struct timespec& ts) {
+    st->st_ctimespec = ts;
+    st->st_ctime = ts.tv_sec;
+}
+#else
+inline void SetStatAtime(struct stat* st, const struct timespec& ts) {
+    st->st_atim = ts;
+    st->st_atime = ts.tv_sec;
+}
+
+inline void SetStatMtime(struct stat* st, const struct timespec& ts) {
+    st->st_mtim = ts;
+    st->st_mtime = ts.tv_sec;
+}
+
+inline void SetStatCtime(struct stat* st, const struct timespec& ts) {
+    st->st_ctim = ts;
+    st->st_ctime = ts.tv_sec;
+}
+#endif
+
+} // namespace
+
 bool NapiHelpers::ObjectToStat(Napi::Object obj, struct stat* st) {
     if (!obj.IsObject()) {
         return false;
     }
-    
+
     memset(st, 0, sizeof(*st));
-    
-    // Extract values with error checking
+
     auto ino_opt = SafeGetBigIntU64(obj.Get("ino"));
-    if (ino_opt) st->st_ino = *ino_opt;
-    
+    if (ino_opt) {
+        st->st_ino = *ino_opt;
+    }
+
     if (obj.Has("mode")) {
         Napi::Value mode_val = obj.Get("mode");
         if (mode_val.IsNumber()) {
             st->st_mode = mode_val.As<Napi::Number>().Uint32Value();
         }
     }
-    
+
     if (obj.Has("nlink")) {
         Napi::Value nlink_val = obj.Get("nlink");
         if (nlink_val.IsNumber()) {
             st->st_nlink = nlink_val.As<Napi::Number>().Uint32Value();
         }
     }
-    
-    // Continue for other fields...
-    
+
+    if (obj.Has("uid")) {
+        Napi::Value uid_val = obj.Get("uid");
+        if (uid_val.IsNumber()) {
+            st->st_uid = uid_val.As<Napi::Number>().Uint32Value();
+        }
+    }
+
+    if (obj.Has("gid")) {
+        Napi::Value gid_val = obj.Get("gid");
+        if (gid_val.IsNumber()) {
+            st->st_gid = gid_val.As<Napi::Number>().Uint32Value();
+        }
+    }
+
+    auto rdev_opt = SafeGetBigIntU64(obj.Get("rdev"));
+    if (rdev_opt) {
+        st->st_rdev = static_cast<dev_t>(*rdev_opt);
+    }
+
+    if (obj.Has("size")) {
+        Napi::Value size_val = obj.Get("size");
+        if (auto size_opt = NapiHelpers::SafeGetBigInt64(size_val)) {
+            st->st_size = static_cast<off_t>(*size_opt);
+        } else if (size_val.IsNumber()) {
+            st->st_size = static_cast<off_t>(size_val.As<Napi::Number>().Int64Value());
+        }
+    }
+
+    if (obj.Has("blksize")) {
+        Napi::Value blksize_val = obj.Get("blksize");
+        if (blksize_val.IsNumber()) {
+            st->st_blksize = blksize_val.As<Napi::Number>().Int32Value();
+        }
+    }
+
+    if (obj.Has("blocks")) {
+        Napi::Value blocks_val = obj.Get("blocks");
+        if (auto blocks_opt = NapiHelpers::SafeGetBigInt64(blocks_val)) {
+            st->st_blocks = static_cast<blkcnt_t>(*blocks_opt);
+        } else if (blocks_val.IsNumber()) {
+            st->st_blocks = static_cast<blkcnt_t>(blocks_val.As<Napi::Number>().Int64Value());
+        }
+    }
+
+    if (obj.Has("atime")) {
+        AssignTimespecField(obj.Get("atime"), st, SetStatAtime);
+    }
+
+    if (obj.Has("mtime")) {
+        AssignTimespecField(obj.Get("mtime"), st, SetStatMtime);
+    }
+
+    if (obj.Has("ctime")) {
+        AssignTimespecField(obj.Get("ctime"), st, SetStatCtime);
+    }
+
+    if (obj.Has("birthtime")) {
+#if defined(__APPLE__)
+        AssignTimespecField(obj.Get("birthtime"), st, [](struct stat* target, const struct timespec& ts) {
+            target->st_birthtimespec = ts;
+        });
+#endif
+    }
+
     return true;
 }
 

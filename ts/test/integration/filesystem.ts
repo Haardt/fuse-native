@@ -45,6 +45,7 @@ export interface SimpleInode {
   mtime: Timestamp;
   ctime: Timestamp;
   nlink: number;
+  generation: bigint;
   data: Buffer | Map<string, SimpleInode> | null;
 }
 
@@ -64,8 +65,72 @@ export interface SeedingEntry {
   uid?: number;
   gid?: number;
   content?: string | Buffer;
+  size?: bigint | number;
+  generation?: bigint | number;
+  nlink?: number;
+  timestamps?: {
+    atime?: Timestamp;
+    mtime?: Timestamp;
+    ctime?: Timestamp;
+  };
   children?: { [name: string]: SeedingEntry };
 }
+
+const DEFAULT_ROOT_TIMESTAMP = 1609459200000000000n as Timestamp;
+const DEFAULT_FILE_ATIME = 1609459201000000000n as Timestamp;
+const DEFAULT_FILE_MTIME = 1609459202000000000n as Timestamp;
+const DEFAULT_FILE_CTIME = 1609459203000000000n as Timestamp;
+const DEFAULT_DIR_TIMESTAMP = 1609459204000000000n as Timestamp;
+
+export const DEFAULT_FILESYSTEM_SEED: SeedingFilesystem = {
+  '/': {
+    type: 'directory',
+    mode: 0o755,
+    uid: 1000,
+    gid: 1000,
+    timestamps: {
+      atime: DEFAULT_ROOT_TIMESTAMP,
+      mtime: DEFAULT_ROOT_TIMESTAMP,
+      ctime: DEFAULT_ROOT_TIMESTAMP,
+    },
+    children: {
+      'test-file': {
+        type: 'file',
+        mode: 0o644,
+        uid: 1001,
+        gid: 1002,
+        size: 1234n,
+        generation: 7n,
+        timestamps: {
+          atime: DEFAULT_FILE_ATIME,
+          mtime: DEFAULT_FILE_MTIME,
+          ctime: DEFAULT_FILE_CTIME,
+        },
+      },
+      notes: {
+        type: 'directory',
+        mode: 0o755,
+        uid: 1000,
+        gid: 1000,
+        timestamps: {
+          atime: DEFAULT_DIR_TIMESTAMP,
+          mtime: DEFAULT_DIR_TIMESTAMP,
+          ctime: DEFAULT_DIR_TIMESTAMP,
+        },
+        children: {
+          'readme.md': {
+            type: 'file',
+            mode: 0o600,
+            uid: 1000,
+            gid: 1000,
+            size: 512n,
+            generation: 11n,
+          },
+        },
+      },
+    },
+  },
+};
 
 /**
  * Simplified filesystem class
@@ -75,7 +140,7 @@ export class FileSystem {
   private nextIno: bigint = 1n;
   private root: SimpleInode;
 
-  constructor(seeding: SeedingFilesystem = {}) {
+  constructor(seeding: SeedingFilesystem = DEFAULT_FILESYSTEM_SEED) {
     // Create root inode
     this.root = this.createInodeInternal('directory', S_IFDIR | 0o755);
     this.inodes.set(this.root.id, this.root);
@@ -171,6 +236,7 @@ export class FileSystem {
       mtime: now,
       ctime: now,
       nlink: type === 'directory' ? 2 : 1,
+      generation: 0n,
       data: type === 'directory' ? new Map() : null,
     };
     return inode;
@@ -180,7 +246,8 @@ export class FileSystem {
    * Seed the filesystem with initial structure
    */
   private seedFilesystem(seeding: SeedingFilesystem): void {
-    for (const [path, entry] of Object.entries(seeding)) {
+    const entries = Object.entries(seeding).sort(([a], [b]) => a.localeCompare(b));
+    for (const [path, entry] of entries) {
       this.createEntry(path, entry);
     }
   }
@@ -190,6 +257,19 @@ export class FileSystem {
    */
   private createEntry(path: string, entry: SeedingEntry): void {
     const parts = path.split('/').filter(p => p.length > 0);
+    if (parts.length === 0) {
+      if (entry.type !== 'directory') {
+        throw new Error('Root entry must be a directory');
+      }
+
+      this.applyEntryMetadata(this.root, entry);
+
+      if (entry.children) {
+        this.seedDirectoryChildren(this.root, entry.children);
+      }
+      return;
+    }
+
     let current = this.root;
 
     // Navigate to parent directory
@@ -200,8 +280,8 @@ export class FileSystem {
       }
       let child = current.data.get(part);
       if (!child) {
-        child = this.createInodeInternal('directory', S_IFDIR | 0o755);
-        current.data.set(part, child);
+        child = this.createInodeInternal('directory', this.computeMode('directory'));
+        (current.data as Map<string, SimpleInode>).set(part, child);
         this.inodes.set(child.id, child);
       }
       current = child;
@@ -213,33 +293,100 @@ export class FileSystem {
       throw new Error(`ENOTDIR: ${path}`);
     }
 
-    const inode = this.createInodeInternal(entry.type, (entry.type === 'directory' ? S_IFDIR : S_IFREG) | (entry.mode || 0o644));
-    inode.uid = createUid(entry.uid || 1000);
-    inode.gid = createGid(entry.gid || 1000);
+    const inode = this.createInodeInternal(entry.type, this.computeMode(entry.type, entry.mode));
+    this.applyEntryMetadata(inode, entry);
 
-    if (entry.type === 'file' && entry.content) {
-      const content = typeof entry.content === 'string' ? Buffer.from(entry.content) : entry.content;
-      inode.data = content;
-      inode.size = BigInt(content.length);
-    } else if (entry.type === 'directory' && entry.children) {
-      inode.data = new Map();
-      for (const [childName, childEntry] of Object.entries(entry.children)) {
-        const childInode = this.createInodeInternal(childEntry.type, (childEntry.type === 'directory' ? S_IFDIR : S_IFREG) | (childEntry.mode || 0o644));
-        childInode.uid = createUid(childEntry.uid || 1000);
-        childInode.gid = createGid(childEntry.gid || 1000);
-        if (childEntry.type === 'file' && childEntry.content) {
-          const content = typeof childEntry.content === 'string' ? Buffer.from(childEntry.content) : childEntry.content;
-          childInode.data = content;
-          childInode.size = BigInt(content.length);
-        } else if (childEntry.type === 'directory') {
-          childInode.data = new Map();
-        }
-        (inode.data as Map<string, SimpleInode>).set(childName, childInode);
-        this.inodes.set(childInode.id, childInode);
+    if (entry.type === 'directory' && entry.children) {
+      this.seedDirectoryChildren(inode, entry.children);
+    }
+
+    (current.data as Map<string, SimpleInode>).set(name, inode);
+    this.inodes.set(inode.id, inode);
+  }
+
+  private computeMode(type: SimpleInodeType, mode?: number): number {
+    const permissions = mode ?? (type === 'directory' ? 0o755 : 0o644);
+    const typeBits = type === 'directory' ? S_IFDIR : S_IFREG;
+    return typeBits | permissions;
+  }
+
+  private applyEntryMetadata(inode: SimpleInode, entry: SeedingEntry): void {
+    if (entry.mode !== undefined) {
+      inode.mode = createMode(this.computeMode(entry.type, entry.mode));
+    }
+
+    inode.uid = createUid(entry.uid ?? 1000);
+    inode.gid = createGid(entry.gid ?? 1000);
+
+    if (entry.nlink !== undefined) {
+      inode.nlink = entry.nlink;
+    }
+
+    if (entry.generation !== undefined) {
+      inode.generation = typeof entry.generation === 'bigint'
+        ? entry.generation
+        : BigInt(entry.generation);
+    }
+
+    if (entry.timestamps) {
+      if (entry.timestamps.atime !== undefined) {
+        inode.atime = entry.timestamps.atime;
+      }
+      if (entry.timestamps.mtime !== undefined) {
+        inode.mtime = entry.timestamps.mtime;
+      }
+      if (entry.timestamps.ctime !== undefined) {
+        inode.ctime = entry.timestamps.ctime;
       }
     }
 
-    current.data.set(name, inode);
-    this.inodes.set(inode.id, inode);
+    if (entry.type === 'file') {
+      if (entry.content !== undefined) {
+        const content = typeof entry.content === 'string'
+          ? Buffer.from(entry.content)
+          : entry.content;
+        inode.data = content;
+        inode.size = BigInt(content.length);
+      }
+      if (entry.size !== undefined) {
+        inode.size = typeof entry.size === 'bigint'
+          ? entry.size
+          : BigInt(entry.size);
+      }
+    } else if (entry.type === 'directory') {
+      if (!(inode.data instanceof Map)) {
+        inode.data = new Map();
+      }
+      if (entry.size !== undefined) {
+        inode.size = typeof entry.size === 'bigint'
+          ? entry.size
+          : BigInt(entry.size);
+      }
+    }
+  }
+
+  private seedDirectoryChildren(parent: SimpleInode, children: { [name: string]: SeedingEntry }): void {
+    if (parent.type !== 'directory') {
+      throw new Error('Cannot add children to non-directory inode');
+    }
+    if (!(parent.data instanceof Map)) {
+      parent.data = new Map();
+    }
+
+    const sortedChildren = Object.entries(children).sort(([a], [b]) => a.localeCompare(b));
+    for (const [childName, childEntry] of sortedChildren) {
+      const childInode = this.createInodeInternal(
+        childEntry.type,
+        this.computeMode(childEntry.type, childEntry.mode)
+      );
+      this.applyEntryMetadata(childInode, childEntry);
+
+      if (childEntry.type === 'directory' && childEntry.children) {
+        this.seedDirectoryChildren(childInode, childEntry.children);
+      }
+
+      (parent.data as Map<string, SimpleInode>).set(childName, childInode);
+      this.inodes.set(childInode.id, childInode);
+    }
   }
 }

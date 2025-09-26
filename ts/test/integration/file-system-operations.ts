@@ -83,55 +83,19 @@ export type OperationOverrides = Partial<FuseOperationHandlers>;
  * Filesystem operations class
  */
 export class FileSystemOperations implements FuseOperationHandlers {
-  private _fs: FileSystem;
-  private _overrides: OperationOverrides;
-
-  constructor(fs: FileSystem, overrides: OperationOverrides = {}) {
-    this._fs = fs;
-    this._overrides = overrides;
-  }
-
-  public overrideOperationsWith(overrides: OperationOverrides) {
-    this._overrides = overrides;
-  }
-  // FUSE Operation Handlers
-
-  init: InitHandler = async (connInfo, config, options) => {
-    if (this._overrides.init) {
-      return this._overrides.init(connInfo, config, options);
-    }
-    // Default init implementation
-    return { connectionInfo: {}, config: {} };
-  };
-
-  destroy: () => Promise<void> = async () => {
-    if (this._overrides.destroy) {
-      return this._overrides.destroy();
-    }
-  };
-
-  // Note: destroy is not in FuseOperationHandlers, so we don't implement it
-
-  getattr: GetattrHandler = async (ino, context, fi, options) => {
-    if (this._overrides.getattr) {
-      return this._overrides.getattr(ino, context, fi, options);
-    }
-
-    const inode = this._fs.getInode(ino);
+  #fs: FileSystem;
+  #overrides: OperationOverrides;
+  #performGetattr: GetattrHandler = async (ino, context, fi, options) => {
+    const inode = this.#fs.getInode(ino);
     if (!inode) {
       throw new FuseErrno('ENOENT');
     }
 
-    const stat = this._fs.inodeToStat(inode);
+    const stat = this.#fs.inodeToStat(inode);
     return { attr: stat, timeout: 1.0 };
   };
-
-  readdir: ReaddirHandler = async (ino, offset, context, fi, options) => {
-    if (this._overrides.readdir) {
-      return this._overrides.readdir(ino, offset, context, fi, options);
-    }
-
-    const inode = this._fs.getInode(ino);
+  #performReaddir: ReaddirHandler = async (ino, offset, context, fi, options) => {
+    const inode = this.#fs.getInode(ino);
     if (!inode || inode.type !== 'directory' || !(inode.data instanceof Map)) {
       throw new FuseErrno('ENOTDIR');
     }
@@ -161,13 +125,8 @@ export class FileSystemOperations implements FuseOperationHandlers {
       hasMore: false,
     };
   };
-
-  lookup: LookupHandler = async (parent, name, context, options) => {
-    if (this._overrides.lookup) {
-      return this._overrides.lookup(parent, name, context, options);
-    }
-
-    const parentInode = this._fs.getInode(parent);
+  #performLookup: LookupHandler = async (parent, name, context, options) => {
+    const parentInode = this.#fs.getInode(parent);
     if (!parentInode || parentInode.type !== 'directory' || !(parentInode.data instanceof Map)) {
       throw new FuseErrno('ENOTDIR');
     }
@@ -177,8 +136,60 @@ export class FileSystemOperations implements FuseOperationHandlers {
       throw new FuseErrno('ENOENT');
     }
 
-    const stat = this._fs.inodeToStat(childInode);
-    return { attr: stat, timeout: 1.0 };
+    const stat = this.#fs.inodeToStat(childInode);
+    return {
+      ino: childInode.id,
+      generation: childInode.generation,
+      entry_timeout: 1.0,
+      attr_timeout: 1.0,
+      attr: stat,
+    };
+  };
+
+  constructor(fs: FileSystem, overrides: OperationOverrides = {}) {
+    this.#fs = fs;
+    this.#overrides = overrides;
+  }
+
+  public overrideOperationsWith(overrides: OperationOverrides) {
+    this.#overrides = overrides;
+  }
+
+  public getDefaultHandlers(): Pick<FuseOperationHandlers, 'getattr' | 'readdir' | 'lookup'> {
+    return {
+      getattr: this.#performGetattr,
+      readdir: this.#performReaddir,
+      lookup: this.#performLookup,
+    };
+  }
+
+  init: InitHandler = async (connInfo, config, options) => {
+    if (this.#overrides.init) {
+      return this.#overrides.init(connInfo, config, options);
+    }
+    // Default init implementation
+    return { connectionInfo: {}, config: {} };
+  };
+
+  destroy: () => Promise<void> = async () => {
+    if (this.#overrides.destroy) {
+      return this.#overrides.destroy();
+    }
+  };
+
+  getattr: GetattrHandler = async (ino, context, fi, options) => {
+    const handler = this.#overrides.getattr ?? this.#performGetattr;
+    return handler(ino, context, fi, options);
+  };
+
+  readdir: ReaddirHandler = async (ino, offset, context, fi, options) => {
+    const handler = this.#overrides.readdir ?? this.#performReaddir;
+    return handler(ino, offset, context, fi, options);
+  };
+
+  lookup: LookupHandler = async (parent, name, context, options) => {
+    const handler = this.#overrides.lookup ?? this.#performLookup;
+    return handler(parent, name, context, options);
   };
 
   // Placeholder implementations for other operations

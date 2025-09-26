@@ -2,109 +2,101 @@
  * @file getattr.test.ts
  * @brief Integration tests for FUSE Getattr Bridge functionality
  *
- * This test suite validates the complete FUSE_GETATTR operation chain:
- * FUSE3 → C++ → TypeScript callback → modifications applied back to FUSE3
+ * Verifies that the seeded in-memory filesystem provides deterministic
+ * attributes through the default getattr implementation.
  */
 
-import {describe, test, expect, beforeAll, afterAll} from '@jest/globals';
+import { afterAll, beforeAll, describe, expect, test } from '@jest/globals';
+import fs from 'fs/promises';
+import type { BigIntStats } from 'fs';
 import {
-  type BaseOperationOptions,
-  type ConnectionInfo, createIno,
-  type FuseConfig, FuseNative, type FuseSession,
+  FuseNative,
+  type FuseSession,
   type GetattrHandler,
-  type InitHandler,
-  type InitResult,
   type Ino,
   type RequestContext,
-  type StatResult, StatUtils,
-  type Timeout
-} from "../../index.ts";
-import {createMode, createUid, createGid, createDev} from "../../index.ts";
-import {S_IFDIR} from "../../constants.ts";
-import {defer, fuseIntegrationSessionSetup} from "./integration-setup.ts";
-import fs from 'fs/promises';
-import {FileSystemOperations} from "./file-system-operations.ts";
-import {FileSystem} from "./filesystem.ts";
+  type StatResult,
+  type Timeout,
+  StatUtils,
+} from '../../index.ts';
+import { S_IFDIR } from '../../constants.ts';
+import { defer, fuseIntegrationSessionSetup } from './integration-setup.ts';
+import { FileSystemOperations } from './file-system-operations.ts';
+import { FileSystem } from './filesystem.ts';
 
 describe('FUSE Getattr Bridge Integration', () => {
-  const filesystem: FileSystem = new FileSystem()
-  let session: FuseSession | undefined = undefined
-  let fuse: FuseNative | undefined = undefined
-  const filesystemOperations: FileSystemOperations = new FileSystemOperations(filesystem, {})
-  let mountPoint: string = ''
+  const filesystem = new FileSystem();
+  let session: FuseSession | undefined;
+  let fuse: FuseNative | undefined;
+  const filesystemOperations = new FileSystemOperations(filesystem, {});
+  let mountPoint = '';
 
   beforeAll(async () => {
     const sessionWrap = await fuseIntegrationSessionSetup(filesystemOperations, {});
-    fuse = sessionWrap.fuseNative
+    fuse = sessionWrap.fuseNative;
     await sessionWrap.session.mount();
-    mountPoint = sessionWrap.mountPoint
-    session = sessionWrap.session
-  })
+    mountPoint = sessionWrap.mountPoint;
+    session = sessionWrap.session;
+  });
 
   afterAll(async () => {
-    session?.unmount()
-    session?.destroy()
-    fuse?.shutdownDispatcher(0)
-  })
+    session?.unmount();
+    session?.destroy();
+    fuse?.shutdownDispatcher(0);
+  });
 
   describe('Complete Parameter Round-trip Testing', () => {
-    test('should handle complete getattr parameter modifications', async () => {
+    test('should read seeded root attributes through getattr', async () => {
       let inoResult: Ino = 0n as Ino;
       let contextResult: RequestContext = {} as RequestContext;
+      let handlerAttr: StatResult | undefined;
+      let handlerTimeout: Timeout | undefined;
       const getattrDone = defer<void>();
 
-      const testAttrHandler: GetattrHandler = async (ino, context, fi, options) => {
+      const defaultGetattr = filesystemOperations.getDefaultHandlers().getattr!;
+
+      const recordingGetattr: GetattrHandler = async (ino, context, fi, options) => {
         inoResult = ino;
         contextResult = context;
-        getattrDone.resolve()
-        return {
-          attr: {
-            ino: ino,
-            mode: createMode(S_IFDIR | 0o755),
-            nlink: 2,
-            uid: createUid(1000),
-            gid: createGid(1000),
-            rdev: createDev(0n),
-            size: 0n,
-            blksize: 0,
-            blocks: 8n,
-            atime: 1609459200000000000n, // 2021-01-01 00:00:00 UTC in ns
-            mtime: 1609459200000000000n,
-            ctime: 1609459200000000000n
-          },
-          timeout: 1.0
-        };
+        const result = await defaultGetattr(ino, context, fi, options);
+        handlerAttr = result.attr;
+        handlerTimeout = result.timeout;
+        getattrDone.resolve();
+        return result;
       };
 
+      filesystemOperations.overrideOperationsWith({ getattr: recordingGetattr });
 
       try {
-        filesystemOperations.overrideOperationsWith({getattr: testAttrHandler});
-
-        // Trigger getattr by stat'ing the mount point
-        const stat = await fs.stat(mountPoint, {bigint: true});
-        console.log('Stat result:', stat.ino);
-
-        // Wait for getattr handler to be called
+        const stat = (await fs.stat(mountPoint, { bigint: true })) as BigIntStats;
         await getattrDone.promise;
-        console.log('Getattr handler called');
 
-        // Verify the parameters passed to the handler
-        expect(inoResult).toBe(createIno(1n)); // Root inode
-        expect(contextResult.uid).toBe(1000); // Default uid
-        expect(contextResult.gid).toBe(1000); // Default gid
+        const rootInode = filesystem.getRoot();
+        const expectedStat = filesystem.inodeToStat(rootInode);
+
+        expect(inoResult).toBe(rootInode.id);
+        expect(contextResult.uid).toBe(1000);
+        expect(contextResult.gid).toBe(1000);
         expect(contextResult.pid).toBeGreaterThan(0);
 
-        // Verify the returned attributes
-        expect(stat.ino).toBe(1n);
-        expect(stat.mode).toBe(StatUtils.toBigInt(S_IFDIR | 0o755));
-        expect(stat.nlink).toBe(2n);
-        expect(stat.size).toBe(0n);
+        expect(handlerAttr).toBeDefined();
+        expect(handlerAttr).toEqual(expectedStat);
+        expect(handlerTimeout).toBeCloseTo(1.0);
 
+        expect(stat.ino).toBe(rootInode.id);
+        expect(stat.mode).toBe(StatUtils.toBigInt(S_IFDIR | 0o755));
+        expect(stat.nlink).toBe(BigInt(expectedStat.nlink));
+        expect(stat.size).toBe(expectedStat.size);
+        expect(stat.mtimeNs).toBe(expectedStat.mtime);
+        expect(stat.ctimeNs).toBe(expectedStat.ctime);
+        expect(Number(stat.uid)).toBe(Number(expectedStat.uid));
+        expect(Number(stat.gid)).toBe(Number(expectedStat.gid));
       } finally {
+        filesystemOperations.overrideOperationsWith({});
         await session?.unmount();
         await fuse?.shutdownDispatcher(0);
         await session?.destroy();
       }
     });
-  })
-})
+  });
+});

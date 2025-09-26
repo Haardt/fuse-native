@@ -426,12 +426,21 @@ export interface XattrOptions extends BaseOperationOptions {
 // =============================================================================
 
 /** Lookup operation handler */
+export type EntryResult = {
+  ino: Ino;
+  generation: bigint;
+  entry_timeout: Timeout;
+  attr_timeout: Timeout;
+  attr: StatResult;
+}
+
+/** Lookup operation handler */
 export type LookupHandler = (
   parent: Ino,
   name: string,
   context: RequestContext,
   options?: BaseOperationOptions
-) => Promise<{ attr: StatResult; timeout: Timeout }>;
+) => Promise<EntryResult>;
 
 /** Getattr operation handler */
 export type GetattrHandler = (

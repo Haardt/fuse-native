@@ -151,7 +151,8 @@ bool PopulateEntryFromResult(Napi::Env env,
     }
 
     Napi::Object result_obj = value.As<Napi::Object>();
-    if (!result_obj.Has("attr")) {
+    if (!result_obj.Has("attr") || !result_obj.Has("ino") || !result_obj.Has("generation") ||
+        !result_obj.Has("entry_timeout") || !result_obj.Has("attr_timeout")) {
         return false;
     }
 
@@ -165,10 +166,10 @@ bool PopulateEntryFromResult(Napi::Env env,
         return false;
     }
 
-    double attr_timeout = 1.0;
-    double entry_timeout = 1.0;
+    double attr_timeout = 0.0;
+    double entry_timeout = 0.0;
 
-    auto extract_timeout = [](Napi::Env inner_env, Napi::Value timeout_value, double* target) {
+    auto extract_timeout = [](Napi::Value timeout_value, double* target) {
         if (!timeout_value.IsNumber() || !target) {
             return false;
         }
@@ -180,55 +181,43 @@ bool PopulateEntryFromResult(Napi::Env env,
         return true;
     };
 
-    if (result_obj.Has("timeout")) {
-        Napi::Value timeout_value = result_obj.Get("timeout");
-        if (!extract_timeout(env, timeout_value, &attr_timeout)) {
-            return false;
-        }
-        entry_timeout = attr_timeout;
-    }
-
-    if (result_obj.Has("attrTimeout")) {
-        if (!extract_timeout(env, result_obj.Get("attrTimeout"), &attr_timeout)) {
-            return false;
-        }
-    }
-
-    if (result_obj.Has("entryTimeout")) {
-        if (!extract_timeout(env, result_obj.Get("entryTimeout"), &entry_timeout)) {
-            return false;
-        }
+    if (!extract_timeout(result_obj.Get("attr_timeout"), &attr_timeout) ||
+        !extract_timeout(result_obj.Get("entry_timeout"), &entry_timeout)) {
+        return false;
     }
 
     uint64_t generation = 0;
     if (result_obj.Has("generation")) {
         Napi::Value gen_value = result_obj.Get("generation");
         if (gen_value.IsBigInt()) {
-            bool lossless = false;
-            uint64_t gen = gen_value.As<Napi::BigInt>().Uint64Value(&lossless);
-            if (!lossless) {
-                return false;
-            }
-            generation = gen;
+            bool lossless = true;
+            generation = gen_value.As<Napi::BigInt>().Uint64Value(&lossless);
+            if (!lossless) return false;
         } else if (gen_value.IsNumber()) {
-            double gen_num = gen_value.As<Napi::Number>().DoubleValue();
-            if (!std::isfinite(gen_num) || gen_num < 0) {
-                return false;
-            }
-            generation = static_cast<uint64_t>(gen_num);
+            generation = gen_value.As<Napi::Number>().Int64Value();
         } else {
             return false;
         }
     }
 
-    struct fuse_entry_param entry{};
-    entry.attr = attr;
-    entry.attr_timeout = attr_timeout;
-    entry.entry_timeout = entry_timeout;
-    entry.generation = generation;
-    entry.ino = attr.st_ino != 0 ? static_cast<fuse_ino_t>(attr.st_ino) : 0;
+    uint64_t ino = 0;
+    Napi::Value ino_value = result_obj.Get("ino");
+    if (ino_value.IsBigInt()) {
+        bool lossless = true;
+        ino = ino_value.As<Napi::BigInt>().Uint64Value(&lossless);
+        if (!lossless) return false;
+    } else if (ino_value.IsNumber()) {
+        ino = ino_value.As<Napi::Number>().Int64Value();
+    } else {
+        return false;
+    }
 
-    *entry_out = entry;
+    entry_out->ino = ino;
+    entry_out->generation = generation;
+    entry_out->entry_timeout = entry_timeout;
+    entry_out->attr_timeout = attr_timeout;
+    entry_out->attr = attr;
+
     return true;
 }
 
