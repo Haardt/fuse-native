@@ -85,12 +85,15 @@ enum class FuseOpType {
 FuseOpType StringToFuseOpType(const std::string& name);
 const char* FuseOpTypeToString(FuseOpType type);
 
+#include <atomic>
+#include <memory>
+#include <vector>
+
 struct FuseRequestContext : public std::enable_shared_from_this<FuseRequestContext> {
     FuseRequestContext(FuseOpType op_type, fuse_req_t request, FuseBridge* bridge);
 
     FuseRequestContext(const FuseRequestContext&) = delete;
     FuseRequestContext& operator=(const FuseRequestContext&) = delete;
-
     FuseRequestContext(FuseRequestContext&&) = delete;
     FuseRequestContext& operator=(FuseRequestContext&&) = delete;
 
@@ -111,43 +114,46 @@ struct FuseRequestContext : public std::enable_shared_from_this<FuseRequestConte
     void ReplyReadlink(const std::string& target_path);
     void ReplyGetlk(const struct flock& lock);
 
+    // --- NEU: hält Antwortdaten bis nach fuse_reply_* am Leben ---
+    std::shared_ptr<void> keepalive;
+
     FuseOpType op_type;
     fuse_req_t request;
     FuseBridge* bridge;
-    uint64_t request_id;
-    CallbackPriority priority;
-    std::chrono::steady_clock::time_point start_time;
-    struct fuse_ctx caller_ctx;
-    bool has_caller_ctx;
+    uint64_t request_id{};
+    CallbackPriority priority{};
+    std::chrono::steady_clock::time_point start_time{};
+    struct fuse_ctx caller_ctx{};
+    bool has_caller_ctx{false};
 
-    // Generic request metadata (populated per-operation)
-    fuse_ino_t ino;
-    fuse_ino_t parent;
-    fuse_ino_t new_parent;
+    // Generic request metadata
+    fuse_ino_t ino{};
+    fuse_ino_t parent{};
+    fuse_ino_t new_parent{};
     std::string name;
     std::string new_name;
     std::string link_target;
-    mode_t mode;
-    dev_t rdev;
-    uint32_t setattr_valid;
-    struct stat attr;
-    bool has_attr;
-    struct fuse_file_info fi;
-    bool has_fi;
-    struct fuse_file_info fi_out;
-    bool has_fi_out;
-    uint64_t offset;
-    uint64_t new_offset;
-    size_t size;
-    int flags;
-    int datasync;
-    uint32_t access_mask;
+    mode_t mode{};
+    dev_t rdev{};
+    uint32_t setattr_valid{};
+    struct stat attr{};
+    bool has_attr{false};
+    struct fuse_file_info fi{};
+    bool has_fi{false};
+    struct fuse_file_info fi_out{};
+    bool has_fi_out{false};
+    uint64_t offset{};
+    uint64_t new_offset{};
+    size_t size{};
+    int flags{};
+    int datasync{};
+    uint32_t access_mask{};
     std::vector<uint8_t> data;
-    struct flock lock;
-    bool has_lock;
-    int sleep;
+    struct flock lock{};
+    bool has_lock{false};
+    int sleep{};
 
-    std::atomic<bool> replied;
+    std::atomic<bool> replied{false};
 };
 
 /**

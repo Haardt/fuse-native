@@ -227,18 +227,18 @@ export interface DirentEntry {
   ino: Ino;
   /** Entry type */
   type: DirentType;
-  /** Next offset for pagination */
-  nextOffset?: bigint | undefined;
+  /** Offset to resume iteration (maps to fuse_dirent.off) */
+  nextOffset: bigint;
 }
 
 /** Directory listing result */
 export interface ReaddirResult {
   /** Array of directory entries */
   entries: DirentEntry[];
-  /** Next offset for pagination (if more entries available) */
-  nextOffset?: bigint | undefined;
-  /** Whether there are more entries */
+  /** Whether additional entries remain after this batch */
   hasMore: boolean;
+  /** Suggested offset for subsequent requests */
+  nextOffset?: bigint | undefined;
 }
 
 // =============================================================================
@@ -375,6 +375,12 @@ export interface ReadOptions extends BaseOperationOptions {
   size: number;
   /** File info */
   fi?: FileInfo;
+}
+
+/** Options for readdir operations */
+export interface ReaddirOptions extends BaseOperationOptions {
+  /** Requested buffer size from kernel */
+  size: number;
 }
 
 /** Options for open operations */
@@ -547,7 +553,7 @@ export type ReaddirHandler = (
   offset: bigint,
   context: RequestContext,
   fi?: FileInfo,
-  options?: BaseOperationOptions
+  options?: ReaddirOptions
 ) => Promise<ReaddirResult>;
 
 /** Mkdir operation handler */

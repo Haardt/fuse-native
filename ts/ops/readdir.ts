@@ -1,10 +1,10 @@
 import { FuseErrno } from '../errors.ts';
 import { ValidationUtils } from '../helpers.ts';
 import type {
-  BaseOperationOptions,
   FileInfo,
   Ino,
   ReaddirHandler,
+  ReaddirOptions,
   ReaddirResult,
   RequestContext,
 } from '../types.ts';
@@ -16,7 +16,9 @@ const DEFAULT_CONTEXT: RequestContext = {
   umask: 0 as any,
 };
 
-const DEFAULT_OPTIONS: BaseOperationOptions = {};
+const DEFAULT_OPTIONS: ReaddirOptions = {
+  size: 0,
+};
 
 export function validateReaddir(
   ino: unknown,
@@ -58,8 +60,12 @@ export function ensureReaddirResult(value: unknown): ReaddirResult {
       throw new FuseErrno('EIO', `readdir entry[${i}].type must be an integer`);
     }
 
-    if (entry.nextOffset !== undefined && typeof entry.nextOffset !== 'bigint') {
-      throw new FuseErrno('EIO', `readdir entry[${i}].nextOffset must be a BigInt when present`);
+    if (typeof entry.nextOffset !== 'bigint') {
+      throw new FuseErrno('EIO', `readdir entry[${i}].nextOffset must be a BigInt`);
+    }
+
+    if (entry.nextOffset < 0n) {
+      throw new FuseErrno('EIO', `readdir entry[${i}].nextOffset must be non-negative`);
     }
   }
 
@@ -82,7 +88,7 @@ export async function readdirWrapper(
   offset: bigint,
   context: RequestContext = DEFAULT_CONTEXT,
   fi?: FileInfo,
-  options: BaseOperationOptions = DEFAULT_OPTIONS
+  options: ReaddirOptions = DEFAULT_OPTIONS
 ): Promise<ReaddirResult> {
   validateReaddir(ino, offset);
 

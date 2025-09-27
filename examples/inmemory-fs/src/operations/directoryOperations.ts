@@ -121,6 +121,7 @@ export class DirectoryOperations {
       return {
           entries: entries,
           hasMore: false, // In-memory fs always returns all entries
+          nextOffset: entries.length > 0 ? entries[entries.length - 1].nextOffset : undefined,
       };
   };
 

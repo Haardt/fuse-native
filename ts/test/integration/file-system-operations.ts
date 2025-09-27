@@ -132,6 +132,8 @@ export class FileSystemOperations implements FuseOperationHandlers {
     }
 
     const entries: DirentEntry[] = [];
+    let sequenceOffset = 0n;
+    const startOffset = offset > 0n ? offset : 0n;
     for (const [name, childInode] of inode.data) {
       let type: DirentType;
       switch (childInode.type) {
@@ -144,16 +146,23 @@ export class FileSystemOperations implements FuseOperationHandlers {
         default:
           type = DirentType.Unknown;
       }
+      sequenceOffset += 1n;
+      const entryOffset = sequenceOffset;
+      if (entryOffset <= startOffset) {
+        continue;
+      }
       entries.push({
         name,
         ino: childInode.id,
         type,
+        nextOffset: entryOffset,
       });
     }
 
     return {
       entries,
       hasMore: false,
+      nextOffset: entries.length > 0 ? entries[entries.length - 1].nextOffset : undefined,
     };
   };
 

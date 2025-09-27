@@ -12,6 +12,7 @@
 #include <cmath>
 #include <cstring>
 #include <utility>
+#include <optional>
 #include <sys/statvfs.h>
 
 #include "errno_mapping.h"
@@ -368,6 +369,7 @@ FuseRequestContext::FuseRequestContext(FuseOpType op, fuse_req_t req, FuseBridge
     }
 }
 
+
 void FuseRequestContext::CaptureCallerContext() {
     const struct fuse_ctx* ctx = fuse_req_ctx(request);
     if (ctx != nullptr) {
@@ -380,7 +382,7 @@ void FuseRequestContext::CaptureCallerContext() {
 
 bool FuseRequestContext::TryMarkReplied() {
     bool expected = false;
-    return replied.compare_exchange_strong(expected, true);
+    return replied.compare_exchange_strong(expected, true, std::memory_order_acq_rel);
 }
 
 void FuseRequestContext::ReplyError(int errno_code) {
@@ -398,6 +400,7 @@ void FuseRequestContext::ReplyError(int errno_code) {
     }
 
     fuse_reply_err(request, fuse_errno);
+    keepalive.reset();
 }
 
 void FuseRequestContext::ReplyOk() {
@@ -405,6 +408,7 @@ void FuseRequestContext::ReplyOk() {
         return;
     }
     fuse_reply_err(request, 0);
+    keepalive.reset();
 }
 
 void FuseRequestContext::ReplyUnsupported() {
@@ -430,6 +434,7 @@ void FuseRequestContext::ReplyBuf(const void* data_ptr, size_t length) {
         return;
     }
     fuse_reply_buf(request, static_cast<const char*>(data_ptr), length);
+    keepalive.reset(); // Puffer freigeben
 }
 
 void FuseRequestContext::ReplyWrite(size_t bytes_written) {
@@ -1659,81 +1664,83 @@ void FuseBridge::HandleWrite(fuse_req_t req, fuse_ino_t ino, const char* buf, si
 }
 
 void FuseBridge::HandleReaddir(fuse_req_t req, fuse_ino_t ino, size_t size, off_t off,
-                        struct fuse_file_info* fi) {
+                               struct fuse_file_info* fi) {
     auto context = CreateContext(FuseOpType::READDIR, req);
     context->ino = ino;
     context->size = size;
     context->offset = static_cast<uint64_t>(off);
-    if (fi) {
-        context->fi = *fi;
-        context->has_fi = true;
-    }
+    if (fi) { context->fi = *fi; context->has_fi = true; }
 
     ProcessRequest(context, [context](Napi::Env env, Napi::Function handler) {
-        Napi::Value ino_value = NapiHelpers::CreateBigUint64(env, ToUint64(context->ino));
+        Napi::Value ino_value    = NapiHelpers::CreateBigUint64(env, ToUint64(context->ino));
         Napi::Value offset_value = NapiHelpers::CreateBigUint64(env, context->offset);
         Napi::Object request_ctx = CreateRequestContextObject(env, *context);
-        Napi::Value fi_value = context->has_fi
-                                   ? NapiHelpers::FileInfoToObject(env, context->fi)
-                                   : env.Null();
-        Napi::Object options = Napi::Object::New(env);
-        options.Set("size", Napi::Number::New(env, context->size));
+        Napi::Value fi_value     = context->has_fi ? NapiHelpers::FileInfoToObject(env, context->fi) : env.Null();
+        Napi::Object options     = Napi::Object::New(env);
+        options.Set("size", Napi::Number::New(env, static_cast<double>(context->size)));
 
         auto result = handler.Call({ino_value, offset_value, request_ctx, fi_value, options});
-        ResolvePromiseOrValue(
-        env, context, result, [context](Napi::Env env_inner, Napi::Value value) {
-            if (!value.IsObject()) {
-                context->ReplyError(EIO);
-                return;
-            }
 
+        ResolvePromiseOrValue(env, context, result, [context](Napi::Env env_inner, Napi::Value value) {
+            if (!value.IsObject()) { context->ReplyError(EIO); return; }
             Napi::Object result_obj = value.As<Napi::Object>();
             if (!result_obj.Has("entries") || !result_obj.Get("entries").IsArray()) {
-                context->ReplyError(EIO);
-                return;
+                context->ReplyError(EIO); return;
             }
 
             Napi::Array entries = result_obj.Get("entries").As<Napi::Array>();
-            std::vector<char> buffer(4096);
+            const size_t max_size = context->size;
+            if (max_size == 0) { context->ReplyBuf(nullptr, 0); return; }
+
+            // Eigentümer-Puffer → Lebensdauer bis nach fuse_reply_buf gesichert
+            auto buf = std::make_shared<std::vector<char>>();
+            buf->resize(max_size);
             size_t buffer_offset = 0;
 
             for (uint32_t i = 0; i < entries.Length(); ++i) {
                 Napi::Value item = entries.Get(i);
                 if (!item.IsObject()) continue;
-
                 Napi::Object entry = item.As<Napi::Object>();
-                std::string name = entry.Get("name").As<Napi::String>().Utf8Value();
-                fuse_ino_t ino = NapiHelpers::GetBigUint64(env_inner, entry.Get("ino"));
-                uint32_t type = entry.Get("type").As<Napi::Number>().Uint32Value();
 
-                struct stat st = {};
-                st.st_ino = ino;
+                const std::string name = entry.Get("name").As<Napi::String>().Utf8Value();
+                fuse_ino_t e_ino       = NapiHelpers::GetBigUint64(env_inner, entry.Get("ino"));
+                const uint32_t type    = entry.Has("type") ? entry.Get("type").As<Napi::Number>().Uint32Value() : 0;
+
+                if (!entry.Has("nextOffset")) { context->ReplyError(EIO); return; }
+                off_t next_offset = 0;
+                Napi::Value next = entry.Get("nextOffset");
+                if (next.IsBigInt()) {
+                    bool lossless=false;
+                    next_offset = static_cast<off_t>(next.As<Napi::BigInt>().Int64Value(&lossless));
+                    if (!lossless || next_offset < 0) { context->ReplyError(EIO); return; }
+                } else if (next.IsNumber()) {
+                    next_offset = static_cast<off_t>(next.As<Napi::Number>().Int64Value());
+                    if (next_offset < 0) { context->ReplyError(EIO); return; }
+                } else {
+                    context->ReplyError(EIO); return;
+                }
+
+                struct stat st{};
+                st.st_ino  = e_ino;
                 st.st_mode = (type & 0xF) << 12;
 
-                size_t entry_len = fuse_add_direntry(context->request, nullptr, 0, name.c_str(), &st, 0);
-                if (buffer_offset + entry_len > buffer.size()) {
-                    buffer.resize(buffer_offset + entry_len);
-                }
+                const size_t need = fuse_add_direntry(context->request, nullptr, 0, name.c_str(), &st, next_offset);
+                if (need > max_size - buffer_offset) break;
 
-                off_t next_offset = i + 1;
-                if (entry.Has("nextOffset")) {
-                    Napi::Value next_offset_val = entry.Get("nextOffset");
-                    if (next_offset_val.IsBigInt()) {
-                        bool lossless = false;
-                        next_offset = static_cast<off_t>(next_offset_val.As<Napi::BigInt>().Int64Value(&lossless));
-                    } else if (next_offset_val.IsNumber()) {
-                        next_offset = static_cast<off_t>(next_offset_val.As<Napi::Number>().Int64Value());
-                    }
-                }
-
-                fuse_add_direntry(context->request, buffer.data() + buffer_offset, buffer.size() - buffer_offset, name.c_str(), &st, next_offset);
-                buffer_offset += entry_len;
+                fuse_add_direntry(context->request,
+                                  buf->data() + buffer_offset,
+                                  max_size - buffer_offset,
+                                  name.c_str(), &st, next_offset);
+                buffer_offset += need;
             }
 
-            context->ReplyBuf(buffer.data(), buffer_offset);
+            buf->resize(buffer_offset);
+            context->keepalive = buf; // <-- jetzt vorhanden
+            context->ReplyBuf(buf->data(), buf->size());
         });
     });
 }
+
 void FuseBridge::HandleStatfs(fuse_req_t req, fuse_ino_t ino) {
     auto context = CreateContext(FuseOpType::STATFS, req);
     context->ino = ino;
@@ -1979,6 +1986,11 @@ void FuseBridge::HandleInit(fuse_req_t req, struct fuse_conn_info* conn) {
 
 void FuseBridge::HandleDestroy(fuse_req_t req) {
   auto context = CreateContext(FuseOpType::DESTROY, req);
+
+  {
+    std::lock_guard<std::mutex> lock(handler_mutex_);
+    handler_registry_.clear();
+  }
 
   if (!GetGlobalDispatcher() || !HasOperationHandler(FuseOpType::DESTROY)) {
     if (context->request) fuse_reply_err(context->request, 0);

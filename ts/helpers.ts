@@ -506,13 +506,13 @@ export class DirentUtils {
     name: string,
     ino: Ino,
     type: DirentType,
-    nextOffset?: bigint
+    nextOffset: bigint
   ): DirentEntry {
     return {
       name,
       ino,
       type,
-      nextOffset: nextOffset ?? undefined,
+      nextOffset,
     };
   }
 
@@ -539,8 +539,8 @@ export class DirentUtils {
     parentIno: Ino = ROOT_INO as Ino
   ): DirentEntry[] {
     return [
-      this.create('.', currentIno, DirentType.Directory),
-      this.create('..', parentIno, DirentType.Directory),
+      this.create('.', currentIno, DirentType.Directory, 1n),
+      this.create('..', parentIno, DirentType.Directory, 2n),
     ];
   }
 }
