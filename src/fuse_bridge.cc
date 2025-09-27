@@ -29,6 +29,20 @@ struct OperationMapping {
     FuseOpType type;
 };
 
+std::shared_ptr<void> CreateKeepaliveFromJsValue(const Napi::Value& value) {
+    if (value.IsEmpty() || value.IsUndefined() || value.IsNull()) {
+        return {};
+    }
+
+    auto* ref = new Napi::Reference<Napi::Value>(Napi::Persistent(value));
+    ref->SuppressDestruct();
+    return std::shared_ptr<void>(ref, [](void* ptr) {
+        auto* reference = static_cast<Napi::Reference<Napi::Value>*>(ptr);
+        reference->Unref();
+        delete reference;
+    });
+}
+
 #if defined(__APPLE__)
 inline struct timespec GetStatAtime(const struct stat& st) {
     return st.st_atimespec;
@@ -1597,12 +1611,15 @@ void FuseBridge::HandleRead(fuse_req_t req, fuse_ino_t ino, size_t size, off_t o
         ResolvePromiseOrValue(env, context, result, [context](Napi::Env env_inner, Napi::Value value) {
             if (value.IsArrayBuffer()) {
                 Napi::ArrayBuffer buffer = value.As<Napi::ArrayBuffer>();
+                context->keepalive = CreateKeepaliveFromJsValue(value);
                 context->ReplyBuf(buffer.Data(), buffer.ByteLength());
                 return;
             }
             if (value.IsTypedArray()) {
                 Napi::TypedArray typed = value.As<Napi::TypedArray>();
-                context->ReplyBuf(typed.ArrayBuffer().Data(), typed.ByteLength());
+                context->keepalive = CreateKeepaliveFromJsValue(value);
+                auto* base = static_cast<uint8_t*>(typed.ArrayBuffer().Data());
+                context->ReplyBuf(base + typed.ByteOffset(), typed.ByteLength());
                 return;
             }
             context->ReplyUnsupported();
@@ -2070,6 +2087,7 @@ void FuseBridge::HandleGetxattr(fuse_req_t req, fuse_ino_t ino, const char* name
                 Napi::Buffer<uint8_t> buf = value.As<Napi::Buffer<uint8_t>>();
                 if (context->size == 0) return (void)fuse_reply_xattr(context->request, buf.Length());
                 if (buf.Length() > context->size) return context->ReplyError(ERANGE);
+                context->keepalive = CreateKeepaliveFromJsValue(value);
                 context->ReplyBuf(buf.Data(), buf.Length());
             } else if (value.IsNumber()) {
                 fuse_reply_xattr(context->request, value.As<Napi::Number>().Uint32Value());
@@ -2096,7 +2114,9 @@ void FuseBridge::HandleListxattr(fuse_req_t req, fuse_ino_t ino, size_t size) {
                 for (uint32_t i = 0; i < arr.Length(); ++i) list.append(arr.Get(i).As<Napi::String>().Utf8Value()).push_back('\0');
                 if (context->size == 0) return (void)fuse_reply_xattr(context->request, list.length());
                 if (list.length() > context->size) return context->ReplyError(ERANGE);
-                context->ReplyBuf(list.data(), list.length());
+                auto owner = std::make_shared<std::string>(std::move(list));
+                context->keepalive = owner;
+                context->ReplyBuf(owner->data(), owner->length());
             } else if (value.IsNumber()) {
                 fuse_reply_xattr(context->request, value.As<Napi::Number>().Uint32Value());
             } else {
