@@ -1,7 +1,7 @@
 /**
  * @file napi_helpers.cc
  * @brief N-API helper functions implementation for type conversions and error handling
- * 
+ *
  * This file implements utility functions for seamless conversion between
  * Node.js N-API types and native C++ types, with focus on BigInt handling,
  * timespec conversion, and errno error propagation.
@@ -12,6 +12,7 @@
 #include <cstring>
 #include <chrono>
 #include <iostream>
+#include <cmath>
 
 namespace fuse_native {
 
@@ -26,7 +27,7 @@ void NapiHelpers::InitializeErrorHandling(Napi::Env env) {
     if (error_handling_initialized_) {
         return;
     }
-    
+
     InitializeErrnoErrorConstructor(env);
     error_handling_initialized_ = true;
 }
@@ -50,7 +51,7 @@ bool NapiHelpers::GetBigInt64(Napi::BigInt bigint, int64_t* result) {
     if (!bigint.IsBigInt()) {
         return false;
     }
-    
+
     bool lossless = false;
     *result = bigint.Int64Value(&lossless);
     return lossless;
@@ -60,7 +61,7 @@ bool NapiHelpers::GetBigIntU64(Napi::BigInt bigint, uint64_t* result) {
     if (!bigint.IsBigInt()) {
         return false;
     }
-    
+
     bool lossless = false;
     *result = bigint.Uint64Value(&lossless);
     return lossless;
@@ -71,7 +72,7 @@ uint64_t NapiHelpers::GetBigUint64(Napi::Env env, Napi::Value value) {
         ThrowTypeError(env, "Expected BigInt");
         return 0;
     }
-    
+
     bool lossless = false;
     uint64_t result = value.As<Napi::BigInt>().Uint64Value(&lossless);
     if (!lossless) {
@@ -122,12 +123,12 @@ std::optional<int64_t> NapiHelpers::SafeGetBigInt64(Napi::Value value) {
     if (!value.IsBigInt()) {
         return std::nullopt;
     }
-    
+
     int64_t result;
     if (GetBigInt64(value.As<Napi::BigInt>(), &result)) {
         return result;
     }
-    
+
     return std::nullopt;
 }
 
@@ -135,12 +136,12 @@ std::optional<uint64_t> NapiHelpers::SafeGetBigIntU64(Napi::Value value) {
     if (!value.IsBigInt()) {
         return std::nullopt;
     }
-    
+
     uint64_t result;
     if (GetBigIntU64(value.As<Napi::BigInt>(), &result)) {
         return result;
     }
-    
+
     return std::nullopt;
 }
 
@@ -148,7 +149,7 @@ std::optional<uint64_t> NapiHelpers::SafeGetBigIntU64(Napi::Value value) {
  * Timespec conversions (ns-epoch BigInt)
  */
 Napi::BigInt NapiHelpers::TimespecToNsBigInt(Napi::Env env, const struct timespec& ts) {
-    uint64_t ns = static_cast<uint64_t>(ts.tv_sec) * 1000000000ULL + 
+    uint64_t ns = static_cast<uint64_t>(ts.tv_sec) * 1000000000ULL +
                   static_cast<uint64_t>(ts.tv_nsec);
     return CreateBigIntU64(env, ns);
 }
@@ -158,7 +159,7 @@ bool NapiHelpers::NsBigIntToTimespec(Napi::BigInt ns_bigint, struct timespec* ts
     if (!GetBigIntU64(ns_bigint, &ns)) {
         return false;
     }
-    
+
     ts->tv_sec = static_cast<time_t>(ns / 1000000000ULL);
     ts->tv_nsec = static_cast<long>(ns % 1000000000ULL);
     return true;
@@ -175,7 +176,7 @@ Napi::BigInt NapiHelpers::CurrentTimeNs(Napi::Env env) {
  */
 Napi::Object NapiHelpers::StatToObject(Napi::Env env, const struct stat& st) {
     Napi::Object obj = Napi::Object::New(env);
-    
+
     obj.Set("ino", CreateBigIntU64(env, st.st_ino));
     obj.Set("mode", Napi::Number::New(env, st.st_mode));
     obj.Set("nlink", Napi::Number::New(env, st.st_nlink));
@@ -185,15 +186,15 @@ Napi::Object NapiHelpers::StatToObject(Napi::Env env, const struct stat& st) {
     obj.Set("size", CreateBigIntU64(env, st.st_size));
     obj.Set("blksize", Napi::Number::New(env, st.st_blksize));
     obj.Set("blocks", CreateBigIntU64(env, st.st_blocks));
-    
+
     struct timespec atime = {st.st_atime, 0};
     struct timespec mtime = {st.st_mtime, 0};
     struct timespec ctime = {st.st_ctime, 0};
-    
+
     obj.Set("atime", TimespecToNsBigInt(env, atime));
     obj.Set("mtime", TimespecToNsBigInt(env, mtime));
     obj.Set("ctime", TimespecToNsBigInt(env, ctime));
-    
+
     return obj;
 }
 
@@ -345,7 +346,7 @@ bool NapiHelpers::ObjectToStat(Napi::Object obj, struct stat* st) {
  */
 Napi::Object NapiHelpers::StatvfsToObject(Napi::Env env, const struct statvfs& stvfs) {
     Napi::Object obj = Napi::Object::New(env);
-    
+
     obj.Set("bsize", Napi::Number::New(env, stvfs.f_bsize));
     obj.Set("frsize", Napi::Number::New(env, stvfs.f_frsize));
     obj.Set("blocks", CreateBigIntU64(env, stvfs.f_blocks));
@@ -357,14 +358,14 @@ Napi::Object NapiHelpers::StatvfsToObject(Napi::Env env, const struct statvfs& s
     obj.Set("fsid", CreateBigIntU64(env, stvfs.f_fsid));
     obj.Set("flag", Napi::Number::New(env, stvfs.f_flag));
     obj.Set("namemax", Napi::Number::New(env, stvfs.f_namemax));
-    
+
     return obj;
 }
 
 /**
  * Buffer and ArrayBuffer utilities
  */
-Napi::ArrayBuffer NapiHelpers::CreateExternalArrayBuffer(Napi::Env env, void* data, size_t length, 
+Napi::ArrayBuffer NapiHelpers::CreateExternalArrayBuffer(Napi::Env env, void* data, size_t length,
                                                          void (*finalize_cb)(Napi::Env, void*, void*),
                                                          void* finalize_hint) {
     if (finalize_cb) {
@@ -436,14 +437,14 @@ void NapiHelpers::ThrowErrnoError(Napi::Env env, int errno_code, const std::stri
 }
 
 Napi::Error NapiHelpers::CreateErrnoError(Napi::Env env, int errno_code, const std::string& message) {
-    std::string full_message = message.empty() ? 
-        ErrnoToMessage(errno_code) : 
+    std::string full_message = message.empty() ?
+        ErrnoToMessage(errno_code) :
         message;
-    
+
     Napi::Error error = Napi::Error::New(env, full_message);
     error.Set("errno", Napi::Number::New(env, errno_code));
     error.Set("code", Napi::String::New(env, ErrnoToString(errno_code)));
-    
+
     return error;
 }
 
@@ -459,50 +460,50 @@ void NapiHelpers::ThrowTypeError(Napi::Env env, const std::string& message) {
  * Errno utilities
  */
 std::string NapiHelpers::ErrnoToString(int errno_code) {
-    switch (-errno_code) {
-        case 1: return "EPERM";
-        case 2: return "ENOENT";
-        case 3: return "ESRCH";
-        case 4: return "EINTR";
-        case 5: return "EIO";
-        case 6: return "ENXIO";
-        case 9: return "EBADF";
-        case 11: return "EAGAIN";
-        case 12: return "ENOMEM";
-        case 13: return "EACCES";
-        case 14: return "EFAULT";
-        case 16: return "EBUSY";
-        case 17: return "EEXIST";
-        case 18: return "EXDEV";
-        case 19: return "ENODEV";
-        case 20: return "ENOTDIR";
-        case 21: return "EISDIR";
-        case 22: return "EINVAL";
-        case 23: return "ENFILE";
-        case 24: return "EMFILE";
-        case 28: return "ENOSPC";
-        case 30: return "EROFS";
-        case 38: return "ENOSYS";
-        case 39: return "ENOTEMPTY";
-        default: return "UNKNOWN";
-    }
+  switch (errno_code) {
+    case EPERM:   return "EPERM";
+    case ENOENT:  return "ENOENT";
+    case ESRCH:   return "ESRCH";
+    case EINTR:   return "EINTR";
+    case EIO:     return "EIO";
+    case ENXIO:   return "ENXIO";
+    case EBADF:   return "EBADF";
+    case EAGAIN:  return "EAGAIN";
+    case ENOMEM:  return "ENOMEM";
+    case EACCES:  return "EACCES";
+    case EFAULT:  return "EFAULT";
+    case EBUSY:   return "EBUSY";
+    case EEXIST:  return "EEXIST";
+    case EXDEV:   return "EXDEV";
+    case ENODEV:  return "ENODEV";
+    case ENOTDIR: return "ENOTDIR";
+    case EISDIR:  return "EISDIR";
+    case EINVAL:  return "EINVAL";
+    case ENFILE:  return "ENFILE";
+    case EMFILE:  return "EMFILE";
+    case ENOSPC:  return "ENOSPC";
+    case EROFS:   return "EROFS";
+    case ENOSYS:  return "ENOSYS";
+    case ENOTEMPTY:return "ENOTEMPTY";
+    default:      return "UNKNOWN";
+  }
 }
 
 std::string NapiHelpers::ErrnoToMessage(int errno_code) {
-    switch (-errno_code) {
-        case 1: return "Operation not permitted";
-        case 2: return "No such file or directory";
-        case 5: return "Input/output error";
-        case 13: return "Permission denied";
-        case 17: return "File exists";
-        case 20: return "Not a directory";
-        case 21: return "Is a directory";
-        case 22: return "Invalid argument";
-        case 28: return "No space left on device";
-        case 38: return "Function not implemented";
-        case 39: return "Directory not empty";
-        default: return "Unknown error";
-    }
+  switch (errno_code) {
+    case EPERM:   return "Operation not permitted";
+    case ENOENT:  return "No such file or directory";
+    case EIO:     return "Input/output error";
+    case EACCES:  return "Permission denied";
+    case EEXIST:  return "File exists";
+    case ENOTDIR: return "Not a directory";
+    case EISDIR:  return "Is a directory";
+    case EINVAL:  return "Invalid argument";
+    case ENOSPC:  return "No space left on device";
+    case ENOSYS:  return "Function not implemented";
+    case ENOTEMPTY:return "Directory not empty";
+    default:      return "Unknown error";
+  }
 }
 
 int NapiHelpers::GetLastErrno() {
@@ -532,7 +533,7 @@ void NapiHelpers::DebugLog(const char* format, ...) {
             va_start(args, format);
             vsnprintf(buffer, sizeof(buffer), format, args);
             va_end(args);
-            
+
             std::cerr << "[fuse-native] " << buffer << std::endl;
         }
     }
@@ -559,7 +560,9 @@ void NapiHelpers::InitializeErrnoErrorConstructor(Napi::Env env) {
 }
 
 const char* NapiHelpers::GetErrnoName(int errno_code) {
-    return ErrnoToString(errno_code).c_str();
+  static thread_local std::string s;
+  s = ErrnoToString(errno_code);
+  return s.c_str(); // jetzt kein Dangling-Pointer mehr
 }
 
 /**
@@ -567,7 +570,7 @@ const char* NapiHelpers::GetErrnoName(int errno_code) {
  */
 Napi::Object NapiHelpers::FileInfoToObject(Napi::Env env, const struct fuse_file_info& fi) {
     Napi::Object obj = Napi::Object::New(env);
-    
+
     obj.Set("flags", Napi::Number::New(env, fi.flags));
     obj.Set("writepage", Napi::Boolean::New(env, fi.writepage));
     obj.Set("direct_io", Napi::Boolean::New(env, fi.direct_io));
@@ -579,97 +582,92 @@ Napi::Object NapiHelpers::FileInfoToObject(Napi::Env env, const struct fuse_file
     obj.Set("fh", CreateBigUint64(env, fi.fh));
     obj.Set("lock_owner", CreateBigUint64(env, fi.lock_owner));
     obj.Set("poll_events", Napi::Number::New(env, fi.poll_events));
-    
+
     return obj;
 }
 
 bool NapiHelpers::ObjectToFileInfo(Napi::Object obj, struct fuse_file_info* fi) {
-    if (!obj.IsObject() || !fi) {
-        return false;
+  if (!obj.IsObject() || fi == nullptr) {
+    return false;
+  }
+
+  std::memset(fi, 0, sizeof(*fi));
+
+  // Helper: uint64 aus BigInt ODER Number (verlustfrei)
+  auto read_u64_bigint_or_number = [&](const char* key, uint64_t* out) -> bool {
+    if (!obj.Has(key)) return false; // optional
+    Napi::Value v = obj.Get(key);
+
+    if (v.IsBigInt()) {
+      bool lossless = false;
+      uint64_t tmp = v.As<Napi::BigInt>().Uint64Value(&lossless);
+      if (!lossless) return false;
+      if (out) *out = tmp;
+      return true;
     }
-    
-    memset(fi, 0, sizeof(*fi));
-    
-    if (obj.Has("flags")) {
-        Napi::Value flags_val = obj.Get("flags");
-        if (flags_val.IsNumber()) {
-            fi->flags = flags_val.As<Napi::Number>().Int32Value();
-        }
+
+    if (v.IsNumber()) {
+      double d = v.As<Napi::Number>().DoubleValue();
+      if (!std::isfinite(d) || d < 0.0) return false;
+      uint64_t tmp = static_cast<uint64_t>(d);
+      if (static_cast<double>(tmp) != d) return false; // keine Nachkommastellen
+      if (out) *out = tmp;
+      return true;
     }
-    
-    if (obj.Has("writepage")) {
-        Napi::Value val = obj.Get("writepage");
-        if (val.IsBoolean()) {
-            fi->writepage = val.As<Napi::Boolean>().Value() ? 1 : 0;
-        }
+
+    return false;
+  };
+
+  // flags (int32)
+  if (obj.Has("flags") && obj.Get("flags").IsNumber()) {
+    fi->flags = obj.Get("flags").As<Napi::Number>().Int32Value();
+  }
+
+  // Bitfields: direkt setzen, KEINE Adresse nehmen
+  if (obj.Has("writepage") && obj.Get("writepage").IsBoolean()) {
+    fi->writepage = obj.Get("writepage").As<Napi::Boolean>().Value() ? 1 : 0;
+  }
+  if (obj.Has("direct_io") && obj.Get("direct_io").IsBoolean()) {
+    fi->direct_io = obj.Get("direct_io").As<Napi::Boolean>().Value() ? 1 : 0;
+  }
+  if (obj.Has("keep_cache") && obj.Get("keep_cache").IsBoolean()) {
+    fi->keep_cache = obj.Get("keep_cache").As<Napi::Boolean>().Value() ? 1 : 0;
+  }
+  if (obj.Has("flush") && obj.Get("flush").IsBoolean()) {
+    fi->flush = obj.Get("flush").As<Napi::Boolean>().Value() ? 1 : 0;
+  }
+  if (obj.Has("nonseekable") && obj.Get("nonseekable").IsBoolean()) {
+    fi->nonseekable = obj.Get("nonseekable").As<Napi::Boolean>().Value() ? 1 : 0;
+  }
+  if (obj.Has("flock_release") && obj.Get("flock_release").IsBoolean()) {
+    fi->flock_release = obj.Get("flock_release").As<Napi::Boolean>().Value() ? 1 : 0;
+  }
+  if (obj.Has("cache_readdir") && obj.Get("cache_readdir").IsBoolean()) {
+    fi->cache_readdir = obj.Get("cache_readdir").As<Napi::Boolean>().Value() ? 1 : 0;
+  }
+
+  // fh (u64)
+  {
+    uint64_t tmp = 0;
+    if (read_u64_bigint_or_number("fh", &tmp)) {
+      fi->fh = tmp;
     }
-    
-    if (obj.Has("direct_io")) {
-        Napi::Value val = obj.Get("direct_io");
-        if (val.IsBoolean()) {
-            fi->direct_io = val.As<Napi::Boolean>().Value() ? 1 : 0;
-        }
+  }
+
+  // lock_owner (u64)
+  {
+    uint64_t tmp = 0;
+    if (read_u64_bigint_or_number("lock_owner", &tmp)) {
+      fi->lock_owner = tmp;
     }
-    
-    if (obj.Has("keep_cache")) {
-        Napi::Value val = obj.Get("keep_cache");
-        if (val.IsBoolean()) {
-            fi->keep_cache = val.As<Napi::Boolean>().Value() ? 1 : 0;
-        }
-    }
-    
-    if (obj.Has("flush")) {
-        Napi::Value val = obj.Get("flush");
-        if (val.IsBoolean()) {
-            fi->flush = val.As<Napi::Boolean>().Value() ? 1 : 0;
-        }
-    }
-    
-    if (obj.Has("nonseekable")) {
-        Napi::Value val = obj.Get("nonseekable");
-        if (val.IsBoolean()) {
-            fi->nonseekable = val.As<Napi::Boolean>().Value() ? 1 : 0;
-        }
-    }
-    
-    if (obj.Has("flock_release")) {
-        Napi::Value val = obj.Get("flock_release");
-        if (val.IsBoolean()) {
-            fi->flock_release = val.As<Napi::Boolean>().Value() ? 1 : 0;
-        }
-    }
-    
-    if (obj.Has("cache_readdir")) {
-        Napi::Value val = obj.Get("cache_readdir");
-        if (val.IsBoolean()) {
-            fi->cache_readdir = val.As<Napi::Boolean>().Value() ? 1 : 0;
-        }
-    }
-    
-    if (obj.Has("fh")) {
-        Napi::Value val = obj.Get("fh");
-        if (val.IsBigInt()) {
-            bool lossless = false;
-            fi->fh = val.As<Napi::BigInt>().Uint64Value(&lossless);
-        }
-    }
-    
-    if (obj.Has("lock_owner")) {
-        Napi::Value val = obj.Get("lock_owner");
-        if (val.IsBigInt()) {
-            bool lossless = false;
-            fi->lock_owner = val.As<Napi::BigInt>().Uint64Value(&lossless);
-        }
-    }
-    
-    if (obj.Has("poll_events")) {
-        Napi::Value val = obj.Get("poll_events");
-        if (val.IsNumber()) {
-            fi->poll_events = val.As<Napi::Number>().Uint32Value();
-        }
-    }
-    
-    return true;
+  }
+
+  // poll_events (uint32)
+  if (obj.Has("poll_events") && obj.Get("poll_events").IsNumber()) {
+    fi->poll_events = obj.Get("poll_events").As<Napi::Number>().Uint32Value();
+  }
+
+  return true;
 }
 
 } // namespace fuse_native

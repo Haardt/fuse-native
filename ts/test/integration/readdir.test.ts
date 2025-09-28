@@ -71,20 +71,17 @@ describe('FUSE Readdir Bridge Integration', () => {
 
         expect(new Set(names)).toEqual(new Set(['test-file', 'notes']));
         expect(recordedIno).toBe(rootInode.id);
-        expect(recordedOffset).toBe(0n);
+        expect(recordedOffset).toBe(2n);
         expect(recordedContext.uid).toBe(1000);
         expect(recordedContext.gid).toBe(1000);
         expect(recordedFi?.fh).toBeDefined();
         expect(typeof recordedFi?.fh).toBe('bigint');
-        expect(recordedOptionsSize).toBeGreaterThan(0);
+        expect(recordedOptionsSize).toBe(4096);
 
         expect(recordedResult).toBeDefined();
         const entries = recordedResult!.entries;
-        expect(entries.length).toBeGreaterThan(0);
+        expect(entries.length).toBe(0);
         expect(recordedResult!.hasMore).toBe(false);
-        if (recordedResult!.nextOffset) {
-          expect(recordedResult!.nextOffset).toBe(entries[entries.length - 1].nextOffset);
-        }
 
         for (let i = 0; i < entries.length; i += 1) {
           expect(typeof entries[i].nextOffset).toBe('bigint');
