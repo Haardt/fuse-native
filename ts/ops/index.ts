@@ -13,7 +13,6 @@ export { validateRename, renameWrapper } from './rename.ts';
 export { validateMknod, mknodWrapper } from './mknod.ts';
 export type { MknodResult } from './mknod.ts';
 export { validateCreate, createWrapper } from './create.ts';
-export type { CreateResult } from './create.ts';
 export { validateTruncate, truncateWrapper } from './truncate.ts';
 export type { TruncateResult } from './truncate.ts';
 export { validateOpen, openWrapper } from './open.ts';

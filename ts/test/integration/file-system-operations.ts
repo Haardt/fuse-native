@@ -54,7 +54,10 @@ import type {
   StatResult,
   DirentEntry,
   ReaddirResult,
-  Timeout, StatvfsResult, FlushHandler,
+  Timeout,
+  StatvfsResult,
+  FlushHandler,
+  SetattrOptions,
 } from "../../index.ts";
 
 import type { SimpleInode } from "./filesystem.ts";
@@ -71,8 +74,36 @@ import {
 } from "../../index.ts";
 
 import { FuseErrno } from "../../errors.ts";
-import { DirentType } from "../../constants.ts";
+import {
+  DirentType,
+  FUSE_SET_ATTR_ATIME,
+  FUSE_SET_ATTR_ATIME_NOW,
+  FUSE_SET_ATTR_CTIME,
+  FUSE_SET_ATTR_GID,
+  FUSE_SET_ATTR_MODE,
+  FUSE_SET_ATTR_MTIME,
+  FUSE_SET_ATTR_MTIME_NOW,
+  FUSE_SET_ATTR_SIZE,
+  FUSE_SET_ATTR_UID,
+} from "../../constants.ts";
 import { FileSystem } from "./filesystem.ts";
+
+const shouldLogFuseOps = (() => {
+  const level = process.env.FUSE_TS_LOG?.toUpperCase() ?? '';
+  return level === 'DEBUG' || level === 'TRACE';
+})();
+
+const logFuseOp = (op: string, phase: string, fields?: Record<string, unknown>) => {
+  if (!shouldLogFuseOps) {
+    return;
+  }
+  const prefix = `[ts-fuse] ${op} ${phase}`;
+  if (fields) {
+    console.debug(prefix, fields);
+  } else {
+    console.debug(prefix);
+  }
+};
 
 /**
  * Partial overrides for operations
@@ -97,10 +128,12 @@ export class FileSystemOperations implements FuseOperationHandlers {
   }
 
   init: InitHandler = async (connInfo, config, options) => {
+    logFuseOp('init', 'start');
     if (this._overrides.init) {
       return this._overrides.init(connInfo, config, options);
     }
     // Default init implementation
+    logFuseOp('init', 'default');
     return { connectionInfo: {}, config: {} };
   };
 
@@ -114,6 +147,7 @@ export class FileSystemOperations implements FuseOperationHandlers {
     if (this._overrides.getattr) {
       return this._overrides.getattr(ino, context, fi, options)
     }
+    logFuseOp('getattr', 'default', { ino: ino.toString() });
     const inode = this._fs.getInode(ino);
     if (!inode) {
       throw new FuseErrno('ENOENT');
@@ -127,6 +161,7 @@ export class FileSystemOperations implements FuseOperationHandlers {
     if (this._overrides.readdir) {
       return this._overrides.readdir(ino, offset, context, fi, options);
     }
+    logFuseOp('readdir', 'default', { ino: ino.toString(), offset: offset.toString(), size: options?.size });
     const dir = this._fs.getInode(ino);
     if (!dir || dir.type !== 'directory' || !(dir.data instanceof Map)) {
       throw new FuseErrno('ENOTDIR');
@@ -182,6 +217,7 @@ export class FileSystemOperations implements FuseOperationHandlers {
     if (this._overrides.lookup) {
       return this._overrides.lookup(parent, name, context, options)
     }
+    logFuseOp('lookup', 'default', { parent: parent.toString(), name });
     const parentInode = this._fs.getInode(parent);
     if (!parentInode || parentInode.type !== 'directory' || !(parentInode.data instanceof Map)) {
       throw new FuseErrno('ENOTDIR');
@@ -209,6 +245,13 @@ export class FileSystemOperations implements FuseOperationHandlers {
     if (this._overrides.create) {
       return this._overrides.create(parent, name, mode, context, options);
     }
+    logFuseOp('################ create', 'default', {
+      parent: parent.toString(),
+      name,
+      mode,
+      uid: context.uid,
+      gid: context.gid,
+    });
     const parentInode = this._fs.getInode(parent);
     if (!parentInode || parentInode.type !== 'directory') {
       throw new FuseErrno('ENOTDIR');
@@ -220,23 +263,51 @@ export class FileSystemOperations implements FuseOperationHandlers {
     const path = parentPath === '/' ? `/${name}` : `${parentPath}/${name}`;
     const newInode = this._fs.createFile(path, mode, context.uid, context.gid);
     const fd = createFd(this._nextFd++);
-    const fi: FileInfo = { fh: fd, flags: createFlags(0) };
+    const incomingFi = (options as (typeof options & { fi?: FileInfo | undefined }))?.fi;
+    const fi: FileInfo = {
+      fh: fd,
+      flags: incomingFi?.flags ?? createFlags(0),
+      // direct_io: incomingFi?.direct_io,
+      // keep_cache: incomingFi?.keep_cache,
+      direct_io: true,
+      keep_cache: false,
+      flush: incomingFi?.flush,
+      nonseekable: incomingFi?.nonseekable,
+      cache_readdir: incomingFi?.cache_readdir,
+      parallel_direct_writes: incomingFi?.parallel_direct_writes,
+    };
     const attr = this._fs.inodeToStat(newInode);
-    return { attr, timeout: 1.0, fi };
+    return {
+      ino: newInode.id,
+      generation: newInode.generation,
+      entry_timeout: 1.0,
+      attr_timeout: 1.0,
+      attr,
+      fi,
+    };
   };
 
   open: OpenHandler = async (ino, context, options) => {
     if (this._overrides.open) {
       return this._overrides.open(ino, context, options);
     }
+    logFuseOp('open', 'default', {
+      ino: ino.toString(),
+      flags: options?.flags,
+    });
     const fd = createFd(this._nextFd++);
-    return { fh: fd, flags: options?.flags ?? createFlags(0), direct_io: true };
+    return { fh: fd, flags: options?.flags ?? createFlags(0) };
   };
 
   read: ReadHandler = async (ino, context, options) => {
     if (this._overrides.read) {
       return this._overrides.read(ino, context, options);
     }
+    logFuseOp('read', 'default', {
+      ino: ino.toString(),
+      offset: options.offset.toString(),
+      size: options.size,
+    });
     const inode = this._fs.getInode(ino);
     if (!inode) {
       throw new FuseErrno('ENOENT');
@@ -248,6 +319,7 @@ export class FileSystemOperations implements FuseOperationHandlers {
     const start = Number(options.offset);
     const end = start + options.size;
     const data = inode.data.slice(start, end);
+    inode.atime = getCurrentTimestamp();
     return data;
   };
 
@@ -255,6 +327,11 @@ export class FileSystemOperations implements FuseOperationHandlers {
     if (this._overrides.write) {
       return this._overrides.write(ino, data, context, options);
     }
+    logFuseOp('write', 'default', {
+      ino: ino.toString(),
+      offset: options.offset.toString(),
+      size: data.byteLength,
+    });
     const inode = this._fs.getInode(ino);
     if (!inode) {
       throw new FuseErrno('ENOENT');
@@ -276,22 +353,33 @@ export class FileSystemOperations implements FuseOperationHandlers {
     newData.copy(inode.data, offset);
     inode.size = BigInt(inode.data.length);
 
+    const now = getCurrentTimestamp();
+    inode.mtime = now;
+    inode.ctime = now;
+
     return newDataLength;
   };
 
   release: ReleaseHandler = async (ino, fi, context, options) => {
-    console.log('release', ino, fi, context, options);
     if (this._overrides.release) {
       return this._overrides.release(ino, fi, context, options);
     }
-    // Default release implementation - no-op
+    logFuseOp('#################### release', 'default', {
+      ino: ino.toString(),
+      fh: fi.fh.toString(),
+    });
+    return;
   };
 
   flush: FlushHandler = async (ino, fi, context, options) => {
     if (this._overrides.flush) {
       return this._overrides.flush(ino, fi, context, options);
     }
-    // Default release implementation - no-op
+    logFuseOp('################## flush', 'default', {
+      ino: ino.toString(),
+      fh: fi.fh.toString(),
+    });
+    return;
   };
 
   mkdir: MkdirHandler = async (parent, name, mode, context, options) => {
@@ -429,77 +517,162 @@ export class FileSystemOperations implements FuseOperationHandlers {
     if (this._overrides.setattr) {
       return this._overrides.setattr(ino, attr, context, options);
     }
+
     const inode = this._fs.getInode(ino);
     if (!inode) {
       throw new FuseErrno('ENOENT');
     }
 
-    const now = getCurrentTimestamp();
-    const touchCtime = () => {
-      inode.ctime = now;
+    const maskFromOptions = options?.valid ?? 0;
+    let effectiveMask = maskFromOptions;
+
+    const inferMaskFromAttr = () => {
+      let mask = 0;
+      if (attr.mode !== undefined) mask |= FUSE_SET_ATTR_MODE;
+      if (attr.uid !== undefined) mask |= FUSE_SET_ATTR_UID;
+      if (attr.gid !== undefined) mask |= FUSE_SET_ATTR_GID;
+      if (attr.size !== undefined) mask |= FUSE_SET_ATTR_SIZE;
+      if (attr.atime !== undefined) mask |= FUSE_SET_ATTR_ATIME;
+      if (attr.mtime !== undefined) mask |= FUSE_SET_ATTR_MTIME;
+      if (attr.ctime !== undefined) mask |= FUSE_SET_ATTR_CTIME;
+      return mask;
     };
 
-    if (attr.mode !== undefined) {
-      inode.mode = attr.mode;
-      touchCtime();
+    if (options?.atimeNow) {
+      effectiveMask |= FUSE_SET_ATTR_ATIME_NOW;
+    }
+    if (options?.mtimeNow) {
+      effectiveMask |= FUSE_SET_ATTR_MTIME_NOW;
     }
 
-    if (attr.uid !== undefined) {
-      inode.uid = attr.uid;
-      touchCtime();
+    if (effectiveMask === 0) {
+      effectiveMask = inferMaskFromAttr();
+    } else {
+      effectiveMask |= inferMaskFromAttr();
     }
 
-    if (attr.gid !== undefined) {
-      inode.gid = attr.gid;
-      touchCtime();
+    const supportedMask =
+      FUSE_SET_ATTR_MODE |
+      FUSE_SET_ATTR_UID |
+      FUSE_SET_ATTR_GID |
+      FUSE_SET_ATTR_SIZE |
+      FUSE_SET_ATTR_ATIME |
+      FUSE_SET_ATTR_ATIME_NOW |
+      FUSE_SET_ATTR_MTIME |
+      FUSE_SET_ATTR_MTIME_NOW |
+      FUSE_SET_ATTR_CTIME;
+
+    if ((effectiveMask & ~supportedMask) !== 0) {
+      throw new FuseErrno('ENOTSUP', 'Unsupported setattr mask');
     }
 
-    if (attr.size !== undefined) {
-      if (attr.size < 0n) {
-        throw new FuseErrno('EINVAL');
+    logFuseOp('setattr', 'default:start', {
+      ino: ino.toString(),
+      valid: effectiveMask,
+      hasSize: attr.size !== undefined,
+      hasMode: attr.mode !== undefined,
+      atimeNow: Boolean(effectiveMask & FUSE_SET_ATTR_ATIME_NOW),
+      mtimeNow: Boolean(effectiveMask & FUSE_SET_ATTR_MTIME_NOW),
+    });
+
+    const now = getCurrentTimestamp();
+    let ctimeUpdated = false;
+
+    const requireNumber = (value: number | undefined, name: string): number => {
+      if (value === undefined) {
+        throw new FuseErrno('EINVAL', `${name} is required for setattr`);
       }
+      if (!Number.isInteger(value) || value < 0) {
+        throw new FuseErrno('EINVAL', `${name} must be a non-negative integer`);
+      }
+      return value;
+    };
+
+    const requireBigInt = (value: bigint | undefined, name: string): bigint => {
+      if (value === undefined) {
+        throw new FuseErrno('EINVAL', `${name} is required for setattr`);
+      }
+      if (value < 0n) {
+        throw new FuseErrno('EINVAL', `${name} cannot be negative`);
+      }
+      return value;
+    };
+
+    if ((effectiveMask & FUSE_SET_ATTR_MODE) !== 0) {
+      const raw = attr.mode !== undefined ? Number(attr.mode) : undefined;
+      const modeValue = requireNumber(raw, 'attr.mode');
+      inode.mode = createMode(modeValue);
+      ctimeUpdated = true;
+    }
+
+    if ((effectiveMask & FUSE_SET_ATTR_UID) !== 0) {
+      const raw = attr.uid !== undefined ? Number(attr.uid) : undefined;
+      const uidValue = requireNumber(raw, 'attr.uid');
+      inode.uid = createUid(uidValue);
+      ctimeUpdated = true;
+    }
+
+    if ((effectiveMask & FUSE_SET_ATTR_GID) !== 0) {
+      const raw = attr.gid !== undefined ? Number(attr.gid) : undefined;
+      const gidValue = requireNumber(raw, 'attr.gid');
+      inode.gid = createGid(gidValue);
+      ctimeUpdated = true;
+    }
+
+    if ((effectiveMask & FUSE_SET_ATTR_SIZE) !== 0) {
+      const targetSizeBigInt = requireBigInt(attr.size, 'attr.size');
       if (inode.type !== 'file' || !(inode.data instanceof Buffer)) {
         throw new FuseErrno('EISDIR');
       }
-
-      const newLength = Number(attr.size);
-      if (!Number.isSafeInteger(newLength)) {
+      if (targetSizeBigInt > BigInt(Number.MAX_SAFE_INTEGER)) {
         throw new FuseErrno('EFBIG');
       }
 
-      if (newLength !== inode.data.length) {
-        const resized = Buffer.alloc(newLength);
-        const copyLength = Math.min(newLength, inode.data.length);
+      const targetSize = Number(targetSizeBigInt);
+      if (targetSize !== inode.data.length) {
+        const resized = Buffer.alloc(targetSize);
+        const copyLength = Math.min(targetSize, inode.data.length);
         if (copyLength > 0) {
           inode.data.copy(resized, 0, 0, copyLength);
         }
         inode.data = resized;
       }
-      inode.size = BigInt(newLength);
-      touchCtime();
+      inode.size = BigInt(targetSize);
+      ctimeUpdated = true;
     }
 
-    if (options?.atimeNow) {
+    if ((effectiveMask & FUSE_SET_ATTR_ATIME) !== 0) {
+      if ((effectiveMask & FUSE_SET_ATTR_ATIME_NOW) !== 0) {
+        inode.atime = now;
+      } else {
+        inode.atime = requireBigInt(attr.atime, 'attr.atime');
+      }
+    } else if ((effectiveMask & FUSE_SET_ATTR_ATIME_NOW) !== 0) {
       inode.atime = now;
-      touchCtime();
-    } else if (attr.atime !== undefined) {
-      inode.atime = attr.atime;
-      touchCtime();
     }
 
-    if (options?.mtimeNow) {
+    if ((effectiveMask & FUSE_SET_ATTR_MTIME) !== 0) {
+      if ((effectiveMask & FUSE_SET_ATTR_MTIME_NOW) !== 0) {
+        inode.mtime = now;
+      } else {
+        inode.mtime = requireBigInt(attr.mtime, 'attr.mtime');
+      }
+    } else if ((effectiveMask & FUSE_SET_ATTR_MTIME_NOW) !== 0) {
       inode.mtime = now;
-      touchCtime();
-    } else if (attr.mtime !== undefined) {
-      inode.mtime = attr.mtime;
-      touchCtime();
     }
 
-    if (attr.ctime !== undefined) {
-      inode.ctime = attr.ctime;
+    if ((effectiveMask & FUSE_SET_ATTR_CTIME) !== 0) {
+      inode.ctime = requireBigInt(attr.ctime, 'attr.ctime');
+    } else if (ctimeUpdated) {
+      inode.ctime = now;
     }
 
     const stat = this._fs.inodeToStat(inode);
+    logFuseOp('setattr', 'default:done', {
+      ino: ino.toString(),
+      size: stat.size.toString(),
+      mtime: stat.mtime.toString(),
+    });
     return { attr: stat, timeout: 1.0 };
   };
 
@@ -530,7 +703,12 @@ export class FileSystemOperations implements FuseOperationHandlers {
     if (this._overrides.fsync) {
       return this._overrides.fsync(ino, datasync, fi, context, options);
     }
-    throw new FuseErrno('ENOSYS');
+    logFuseOp('fsync', 'default', {
+      ino: ino.toString(),
+      datasync,
+      fh: fi.fh.toString(),
+    });
+    // Default fsync implementation - treated as a no-op for the in-memory FS
   };
 
   fsyncdir: FsyncdirHandler = async (ino, datasync, fi, context, options) => {

@@ -32,6 +32,8 @@
         "<!@(pkg-config --cflags fuse3)"
       ],
       "cflags_cc": [
+        "-DFUSE_LOG_ENABLED=1",
+        "-DFUSE_LOG_DEFAULT_LEVEL=FUSE_LOG_LEVEL_TRACE",
         "-std=c++17",
         "-fexceptions",
         "-Wall",

@@ -7,18 +7,31 @@ import { afterAll, beforeAll, describe, expect, test } from '@jest/globals';
 import fs from 'fs/promises';
 import {
   FuseNative,
-  FuseErrno,
-  getCurrentTimestamp,
   type FuseSession,
   type Ino,
   type RequestContext,
-  type SetattrOptions,
-  type StatResult,
   type WriteOptions,
 } from '../../index.ts';
 import { defer, fuseIntegrationSessionSetup } from './integration-setup.ts';
 import { FileSystemOperations } from './file-system-operations.ts';
 import { FileSystem } from './filesystem.ts';
+
+const shouldLogTestOps = (() => {
+  const level = process.env.FUSE_TS_LOG?.toUpperCase() ?? '';
+  return level === 'DEBUG' || level === 'TRACE';
+})();
+
+const logTestOp = (op: string, phase: string, fields?: Record<string, unknown>) => {
+  if (!shouldLogTestOps) {
+    return;
+  }
+  const prefix = `[ts-fuse-test] ${op} ${phase}`;
+  if (fields) {
+    console.debug(prefix, fields);
+  } else {
+    console.debug(prefix);
+  }
+};
 
 describe('FUSE write Bridge Integration', () => {
   const filesystem = new FileSystem();
@@ -52,86 +65,20 @@ describe('FUSE write Bridge Integration', () => {
       recordedIno = ino;
       recordedData = data;
       recordedOptions = options;
+      logTestOp('write', 'override', {
+        ino: ino.toString(),
+        offset: options.offset.toString(),
+        size: data.byteLength,
+        uid: context.uid,
+        gid: context.gid,
+      });
       try {
         return await defaultOperations.write(ino, data, context, options);
       } finally {
         writeDone.resolve();
       }
     };
-
-    const passthroughSetattr = async (
-      ino: Ino,
-      attr: Partial<StatResult>,
-      _context: RequestContext,
-      options?: SetattrOptions,
-    ): Promise<{ attr: StatResult; timeout: number }> => {
-      const inode = filesystem.getInode(ino);
-      if (!inode) {
-        throw new FuseErrno('ENOENT');
-      }
-
-      const now = getCurrentTimestamp();
-      const applyCurrentTime = () => {
-        inode.ctime = now;
-      };
-
-      if (attr.mode !== undefined) {
-        inode.mode = attr.mode;
-        applyCurrentTime();
-      }
-      if (attr.uid !== undefined) {
-        inode.uid = attr.uid;
-        applyCurrentTime();
-      }
-      if (attr.gid !== undefined) {
-        inode.gid = attr.gid;
-        applyCurrentTime();
-      }
-      if (attr.size !== undefined) {
-        if (attr.size < 0n) {
-          throw new FuseErrno('EINVAL');
-        }
-        if (inode.type !== 'file' || !(inode.data instanceof Buffer)) {
-          throw new FuseErrno('EISDIR');
-        }
-        if (attr.size > BigInt(Number.MAX_SAFE_INTEGER)) {
-          throw new FuseErrno('EFBIG');
-        }
-        const targetSize = Number(attr.size);
-        const newBuffer = Buffer.alloc(targetSize);
-        const bytesToCopy = Math.min(targetSize, inode.data.length);
-        if (bytesToCopy > 0) {
-          inode.data.copy(newBuffer, 0, 0, bytesToCopy);
-        }
-        inode.data = newBuffer;
-        inode.size = BigInt(targetSize);
-        applyCurrentTime();
-      }
-
-      if (options?.atimeNow) {
-        inode.atime = now;
-        applyCurrentTime();
-      } else if (attr.atime !== undefined) {
-        inode.atime = attr.atime;
-        applyCurrentTime();
-      }
-
-      if (options?.mtimeNow) {
-        inode.mtime = now;
-        applyCurrentTime();
-      } else if (attr.mtime !== undefined) {
-        inode.mtime = attr.mtime;
-        applyCurrentTime();
-      }
-
-      if (attr.ctime !== undefined) {
-        inode.ctime = attr.ctime;
-      }
-
-      return { attr: filesystem.inodeToStat(inode), timeout: 1.0 };
-    };
-
-    filesystemOperations.overrideOperationsWith({ write: recordingWrite, setattr: passthroughSetattr });
+    filesystemOperations.overrideOperationsWith({ write: recordingWrite });
 
     const newFileName = 'new-write-file.txt';
     const newFilePath = `${mountPoint}/${newFileName}`;

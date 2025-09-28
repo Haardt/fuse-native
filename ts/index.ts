@@ -622,7 +622,7 @@ export class FuseNative {
                 if (typeof handler !== 'function') {
                     throw new Error('Handler must be a function');
                 }
-
+                console.info(`[fuse-native] Setting operation handler for ${String(operation)}`);
                 const result = this.binding.setOperationHandler(operation, handler);
                 resolve(result);
             } catch (error) {

@@ -223,6 +223,8 @@ private:
     void HandleOpendir(fuse_req_t req, fuse_ino_t ino, struct fuse_file_info* fi);
     void HandleReaddir(fuse_req_t req, fuse_ino_t ino, size_t size, off_t off,
                        struct fuse_file_info* fi);
+    void HandleReaddirplus(fuse_req_t req, fuse_ino_t ino, size_t size, off_t off,
+                           struct fuse_file_info* fi);
     void HandleReleasedir(fuse_req_t req, fuse_ino_t ino, struct fuse_file_info* fi);
     void HandleFsyncdir(fuse_req_t req, fuse_ino_t ino, int datasync, struct fuse_file_info* fi);
     void HandleStatfs(fuse_req_t req, fuse_ino_t ino);
@@ -235,6 +237,9 @@ private:
                              size_t len, int flags);
     void HandleGetlk(fuse_req_t req, fuse_ino_t ino, struct fuse_file_info* fi, struct flock* lock);
     void HandleSetlk(fuse_req_t req, fuse_ino_t ino, struct fuse_file_info* fi, struct flock* lock, int sleep);
+    void HandleBmap(fuse_req_t req, fuse_ino_t ino, size_t blocksize, uint64_t idx);
+    void HandleIoctl(fuse_req_t req, fuse_ino_t ino, int cmd, void* arg, struct fuse_file_info* fi, unsigned flags, const void* in_buf, size_t in_bufsz, size_t out_bufsz);
+    void HandlePoll(fuse_req_t req, fuse_ino_t ino, struct fuse_file_info* fi, struct fuse_pollhandle* ph);
 
    // Handlers for operations without a specific high-level decomposition
    void HandleInit(fuse_req_t req, struct fuse_conn_info* conn);
@@ -298,6 +303,8 @@ private:
     static void OpendirCallback(fuse_req_t req, fuse_ino_t ino, struct fuse_file_info* fi);
     static void ReaddirCallback(fuse_req_t req, fuse_ino_t ino, size_t size, off_t off,
                                 struct fuse_file_info* fi);
+    static void ReaddirplusCallback(fuse_req_t req, fuse_ino_t ino, size_t size, off_t off,
+                                    struct fuse_file_info* fi);
     static void ReleasedirCallback(fuse_req_t req, fuse_ino_t ino, struct fuse_file_info* fi);
     static void FsyncdirCallback(fuse_req_t req, fuse_ino_t ino, int datasync, struct fuse_file_info* fi);
     static void StatfsCallback(fuse_req_t req, fuse_ino_t ino);
@@ -320,6 +327,9 @@ private:
    static void RemovexattrCallback(fuse_req_t req, fuse_ino_t ino, const char* name);
    static void GetlkCallback(fuse_req_t req, fuse_ino_t ino, struct fuse_file_info* fi, struct flock* lock);
    static void SetlkCallback(fuse_req_t req, fuse_ino_t ino, struct fuse_file_info* fi, struct flock* lock, int sleep);
+   static void BmapCallback(fuse_req_t req, fuse_ino_t ino, size_t blocksize, uint64_t idx);
+   static void IoctlCallback(fuse_req_t req, fuse_ino_t ino, int cmd, void* arg, struct fuse_file_info* fi, unsigned flags, const void* in_buf, size_t in_bufsz, size_t out_bufsz);
+   static void PollCallback(fuse_req_t req, fuse_ino_t ino, struct fuse_file_info* fi, struct fuse_pollhandle* ph);
 };
 
 Napi::Value SetOperationHandler(const Napi::CallbackInfo& info);

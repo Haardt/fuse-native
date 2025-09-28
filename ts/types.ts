@@ -529,6 +529,20 @@ export type ReleaseHandler = (
   options?: BaseOperationOptions
 ) => Promise<void>;
 
+export interface CreateResult {
+  ino: Ino;
+  generation: bigint;
+  entry_timeout: Timeout;
+  attr_timeout: Timeout;
+  attr: StatResult;
+  fi: FileInfo;
+  /**
+   * Deprecated: fallback for older handlers; if provided both entryTimeout and
+   * attrTimeout should be set explicitly.
+   */
+  timeout?: Timeout;
+}
+
 /** Create operation handler */
 export type CreateHandler = (
   parent: Ino,
@@ -536,7 +550,7 @@ export type CreateHandler = (
   mode: number,
   context: RequestContext,
   options?: BaseOperationOptions
-) => Promise<{ attr: StatResult; timeout: Timeout, fi: FileInfo }>;
+) => Promise<CreateResult>;
 
 /** Truncate operation handler */
 export type TruncateHandler = (
@@ -555,6 +569,35 @@ export type ReaddirHandler = (
   fi?: FileInfo,
   options?: ReaddirOptions
 ) => Promise<ReaddirResult>;
+
+/** Directory entry for readdirplus */
+export interface DirentplusEntry extends DirentEntry {
+  /** Stat result for the entry */
+  attr: StatResult;
+  /** Timeout for the stat result */
+  attrTimeout: Timeout;
+  /** Timeout for the entry */
+  entryTimeout: Timeout;
+}
+
+/** Readdirplus operation result */
+export interface ReaddirplusResult {
+  /** Array of directory entries */
+  entries: DirentplusEntry[];
+  /** Whether additional entries remain after this batch */
+  hasMore: boolean;
+  /** Suggested offset for subsequent requests */
+  nextOffset?: bigint | undefined;
+}
+
+/** Readdirplus operation handler */
+export type ReaddirplusHandler = (
+  ino: Ino,
+  offset: bigint,
+  context: RequestContext,
+  fi?: FileInfo,
+  options?: ReaddirOptions
+) => Promise<ReaddirplusResult>;
 
 /** Mkdir operation handler */
 export type MkdirHandler = (
@@ -827,6 +870,8 @@ export interface FuseOperationHandlers {
   release?: ReleaseHandler;
   /** Read directory contents */
   readdir?: ReaddirHandler;
+  /** Read directory contents with attributes */
+  readdirplus?: ReaddirplusHandler;
   /** Create a directory */
   mkdir?: MkdirHandler;
   /** Change file mode */

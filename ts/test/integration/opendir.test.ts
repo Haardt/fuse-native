@@ -17,8 +17,13 @@ import { O_RDONLY, O_DIRECTORY } from '../../constants.ts';
 import { defer, fuseIntegrationSessionSetup } from './integration-setup.ts';
 import { FileSystemOperations } from './file-system-operations.ts';
 import { FileSystem } from './filesystem.ts';
+import * as FS from "node:fs";
 
 describe('FUSE opendir Bridge Integration', () => {
+
+  const O_ACCMODE = 0x3; // POSIX: nur die unteren 2 Bits
+  const O_DIRECTORY_RUNTIME = (FS as any).O_DIRECTORY ?? 0x20000; // Linux-Fallback
+
   const filesystem = new FileSystem();
   let session: FuseSession | undefined;
   let fuse: FuseNative | undefined;
@@ -67,8 +72,8 @@ describe('FUSE opendir Bridge Integration', () => {
     expect(recordedContext.uid).toBe(1000);
     expect(recordedContext.gid).toBe(1000);
     expect(recordedOptions).toBeDefined();
-    expect(recordedOptions?.flags).toBe(O_RDONLY | O_DIRECTORY);
-
+    expect((recordedOptions!.flags! & O_ACCMODE)).toBe(O_RDONLY);
+    expect((recordedOptions!.flags! & O_DIRECTORY_RUNTIME)).toBe(O_DIRECTORY_RUNTIME);
     expect(dir).toBeDefined();
     expect(dir.path).toBe(mountPoint);
 

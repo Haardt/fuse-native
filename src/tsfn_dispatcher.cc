@@ -213,6 +213,7 @@ bool TSFNDispatcher::IsReady() const {
 
 bool TSFNDispatcher::RegisterHandler(const std::string& operation_name, Napi::Function callback) {
   if (state_.load(std::memory_order_acquire) != DispatcherState::RUNNING) {
+    FUSE_LOG_TRACE("RegisterHandler: Dispatcher not running for %s", operation_name.c_str());
     return false;
   }
 
@@ -225,14 +226,16 @@ bool TSFNDispatcher::RegisterHandler(const std::string& operation_name, Napi::Fu
     if (it != handlers_.end()) {
       it->second.Release();
       it->second = std::move(tsfn);
+      FUSE_LOG_TRACE("RegisterHandler: Replaced handler for %s. Total handlers: %zu", operation_name.c_str(), handlers_.size());
     } else {
       handlers_.emplace(operation_name, std::move(tsfn));
+      FUSE_LOG_TRACE("RegisterHandler: Added handler for %s. Total handlers: %zu", operation_name.c_str(), handlers_.size());
     }
     return true;
   } catch (const std::exception& ex) {
-    FUSE_LOG_ERROR("RegisterHandler failed for %s: %s", operation_name.c_str(), ex.what());
+    FUSE_LOG_TRACE("RegisterHandler failed for %s: %s", operation_name.c_str(), ex.what());
   } catch (...) {
-    FUSE_LOG_ERROR("RegisterHandler failed for %s: unknown error", operation_name.c_str());
+    FUSE_LOG_TRACE("RegisterHandler failed for %s: unknown error", operation_name.c_str());
   }
   return false;
 }
@@ -241,10 +244,12 @@ bool TSFNDispatcher::UnregisterHandler(const std::string& operation_name) {
   std::lock_guard<std::mutex> lock(handlers_mutex_);
   auto it = handlers_.find(operation_name);
   if (it == handlers_.end()) {
+    FUSE_LOG_TRACE("UnregisterHandler: Handler for %s not found for unregistration", operation_name.c_str());
     return false;
   }
   it->second.Release();
   handlers_.erase(it);
+  FUSE_LOG_TRACE("UnregisterHandler: Removed handler for %s. Total handlers: %zu", operation_name.c_str(), handlers_.size());
   return true;
 }
 
@@ -252,14 +257,17 @@ uint64_t TSFNDispatcher::Dispatch(const std::string& operation_name,
                                   const std::vector<napi_value>& args,
                                   CallbackPriority priority,
                                   std::function<void(napi_value)> completion_callback) {
+  FUSE_LOG_TRACE("Dispatch: Attempting to dispatch %s", operation_name.c_str());
   if (state_.load(std::memory_order_acquire) != DispatcherState::RUNNING ||
       !accepting_.load(std::memory_order_acquire)) {
+    FUSE_LOG_TRACE("Dispatch: Dispatcher not running or not accepting for %s", operation_name.c_str());
     return 0;
   }
 
   {
     std::lock_guard<std::mutex> lock(handlers_mutex_);
     if (handlers_.find(operation_name) == handlers_.end()) {
+      FUSE_LOG_TRACE("Dispatch: Handler for %s not found in handlers_", operation_name.c_str());
       return 0;
     }
   }
@@ -283,6 +291,7 @@ uint64_t TSFNDispatcher::Dispatch(const std::string& operation_name,
     if (max_queue_size_ > 0 && callback_queue_.size() >= max_queue_size_) {
       std::lock_guard<std::mutex> pending_lock(pending_requests_mutex_);
       pending_requests_.erase(request_id);
+      FUSE_LOG_TRACE("Dispatch: Queue full for %s", operation_name.c_str());
       return 0;
     }
     callback_queue_.push(pending);
@@ -293,6 +302,7 @@ uint64_t TSFNDispatcher::Dispatch(const std::string& operation_name,
 
   inflight_.fetch_add(1, std::memory_order_acq_rel);
   queue_cv_.notify_one();
+  FUSE_LOG_TRACE("Dispatch: Enqueued %s with request_id %llu", operation_name.c_str(), (unsigned long long)request_id);
   return request_id;
 }
 
@@ -300,8 +310,10 @@ uint64_t TSFNDispatcher::DispatchCustom(const std::string& operation_name,
                                         std::function<void(Napi::Env, Napi::Function)> callback_fn,
                                         CallbackPriority priority,
                                         std::function<void(int)> error_callback) {
+  FUSE_LOG_TRACE("DispatchCustom: Attempting to dispatch %s", operation_name.c_str());
   if (state_.load(std::memory_order_acquire) != DispatcherState::RUNNING ||
       !accepting_.load(std::memory_order_acquire)) {
+    FUSE_LOG_TRACE("DispatchCustom: Dispatcher not running or not accepting for %s", operation_name.c_str());
     return 0;
   }
 
@@ -322,6 +334,7 @@ uint64_t TSFNDispatcher::DispatchCustom(const std::string& operation_name,
     if (max_queue_size_ > 0 && callback_queue_.size() >= max_queue_size_) {
       std::lock_guard<std::mutex> pending_lock(pending_requests_mutex_);
       pending_requests_.erase(request_id);
+      FUSE_LOG_TRACE("DispatchCustom: Queue full for %s", operation_name.c_str());
       return 0;
     }
     callback_queue_.push(pending);
@@ -332,6 +345,7 @@ uint64_t TSFNDispatcher::DispatchCustom(const std::string& operation_name,
 
   inflight_.fetch_add(1, std::memory_order_acq_rel);
   queue_cv_.notify_one();
+  FUSE_LOG_TRACE("DispatchCustom: Enqueued %s with request_id %llu", operation_name.c_str(), (unsigned long long)request_id);
   return request_id;
 }
 

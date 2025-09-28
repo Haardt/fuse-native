@@ -10,6 +10,7 @@ import type {
   Timeout,
   FileInfo,
   CreateHandler,
+  CreateResult,
 } from '../types.ts';
 
 const DEFAULT_CONTEXT: RequestContext = {
@@ -20,12 +21,6 @@ const DEFAULT_CONTEXT: RequestContext = {
 };
 
 const DEFAULT_OPTIONS: BaseOperationOptions = {};
-
-export type CreateResult = {
-  attr: StatResult;
-  timeout: Timeout;
-  fi: FileInfo;
-};
 
 export function validateCreate(
   parent: unknown,
@@ -73,19 +68,62 @@ export async function createWrapper(
     throw new FuseErrno('EIO', 'create handler returned invalid result');
   }
 
-  const statResult = ensureStatResult((result as any).attr);
-  const fi = (result as any).fi as FileInfo;
+  const statResult = ensureStatResult(result.attr);
+  const fi = result.fi as FileInfo;
   if (!fi || typeof fi !== 'object') {
     throw new FuseErrno('EIO', 'create handler must return fi');
-  }
-  if (typeof fi.fh !== 'number' || !Number.isInteger(fi.fh) || fi.fh < 0) {
-    throw new FuseErrno('EIO', 'fi.fh must be a non-negative integer');
   }
   if (typeof fi.flags !== 'number' || !Number.isInteger(fi.flags) || fi.flags < 0) {
     throw new FuseErrno('EIO', 'fi.flags must be a non-negative integer');
   }
 
-  const timeout = normalizeTimeout((result as any).timeout);
+  const normalizeTimeoutField = (value: unknown, fallback: Timeout): Timeout => {
+    if (typeof value === 'number') {
+      return normalizeTimeout(value);
+    }
+    return fallback;
+  };
 
-  return { attr: statResult, timeout, fi };
+  const entry_timeout = normalizeTimeoutField(
+    (result as any).entryTimeout ?? (result as any).entry_timeout ?? result.timeout,
+    1.0,
+  );
+  const attr_timeout = normalizeTimeoutField(
+    (result as any).attrTimeout ?? (result as any).attr_timeout ?? result.timeout,
+    entry_timeout,
+  );
+
+  let inoValue = (result as any).ino ?? statResult.ino;
+  if (typeof inoValue === 'number') {
+    if (!Number.isInteger(inoValue) || inoValue < 0) {
+      throw new FuseErrno('EIO', 'create result ino must be a non-negative integer');
+    }
+    inoValue = BigInt(inoValue);
+  }
+  if (typeof inoValue !== 'bigint') {
+    throw new FuseErrno('EIO', 'create result must include ino as bigint');
+  }
+
+  let generationValue = (result as any).generation ?? 0n;
+  if (typeof generationValue === 'number') {
+    if (!Number.isInteger(generationValue) || generationValue < 0) {
+      throw new FuseErrno('EIO', 'create result generation must be non-negative');
+    }
+    generationValue = BigInt(generationValue);
+  }
+  if (typeof generationValue !== 'bigint') {
+    throw new FuseErrno('EIO', 'create result must include generation as bigint');
+  }
+
+  const normalized: CreateResult = {
+    ino: inoValue as Ino,
+    generation: generationValue,
+    entry_timeout,
+    attr_timeout,
+    attr: statResult,
+    fi,
+    timeout: typeof result.timeout === 'number' ? normalizeTimeout(result.timeout) : undefined,
+  };
+
+  return normalized;
 }

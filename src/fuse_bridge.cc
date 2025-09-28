@@ -21,6 +21,23 @@
 #include "session_manager.h"
 #include "napi_helpers.h"
 #include "tsfn_dispatcher.h"
+#include <vector>
+#include <unistd.h>   // pread
+#include <errno.h>
+
+#include <dirent.h> // für DT_DIR, DT_REG, DT_LNK, DT_UNKNOWN
+#ifndef DT_DIR
+#define DT_DIR     4
+#endif
+#ifndef DT_REG
+#define DT_REG     8
+#endif
+#ifndef DT_LNK
+#define DT_LNK     10
+#endif
+#ifndef DT_UNKNOWN
+#define DT_UNKNOWN 0
+#endif
 
 namespace fuse_native {
 
@@ -652,62 +669,110 @@ FuseBridge* FuseBridge::GetBridgeFromRequest(fuse_req_t req) {
 }
 
 void FuseBridge::InitializeFuseOperations() {
-    std::memset(&fuse_ops_, 0, sizeof(fuse_ops_));
+  std::memset(&fuse_ops_, 0, sizeof(fuse_ops_));
 
-    // Lifecycle
-    fuse_ops_.init = InitCallback;
-    fuse_ops_.destroy = DestroyCallback;
+  // --- Lifecycle ---
+  fuse_ops_.init    = InitCallback;
+  FUSE_LOG_DEBUG("Registering handler for init");
+  fuse_ops_.destroy = DestroyCallback;
+  FUSE_LOG_DEBUG("Registering handler for destroy");
 
-    // Inode/Entry management
-    fuse_ops_.forget = ForgetCallback;
-    fuse_ops_.forget_multi = ForgetMultiCallback;
-    fuse_ops_.lookup = LookupCallback;
+  // --- Inode / Entry mgmt ---
+  fuse_ops_.forget        = ForgetCallback;
+  FUSE_LOG_DEBUG("Registering handler for forget");
+  fuse_ops_.forget_multi  = ForgetMultiCallback;
+  FUSE_LOG_DEBUG("Registering handler for forget_multi");
+  fuse_ops_.lookup        = LookupCallback;
+  FUSE_LOG_DEBUG("Registering handler for lookup");
 
-    fuse_ops_.getattr = GetattrCallback;
-    fuse_ops_.setattr = SetattrCallback;
-    fuse_ops_.readlink = ReadlinkCallback;
-    fuse_ops_.mknod = MknodCallback;
-    fuse_ops_.mkdir = MkdirCallback;
-    fuse_ops_.unlink = UnlinkCallback;
-    fuse_ops_.rmdir = RmdirCallback;
-    fuse_ops_.symlink = SymlinkCallback;
-    fuse_ops_.rename = RenameCallback;
-    fuse_ops_.link = LinkCallback;
+  fuse_ops_.getattr       = GetattrCallback;
+  FUSE_LOG_DEBUG("Registering handler for getattr");
+  fuse_ops_.setattr       = SetattrCallback;
+  FUSE_LOG_DEBUG("Registering handler for setattr");
+  fuse_ops_.readlink      = ReadlinkCallback;
+  FUSE_LOG_DEBUG("Registering handler for readlink");
+  fuse_ops_.mknod         = MknodCallback;
+  FUSE_LOG_DEBUG("Registering handler for mknod");
+  fuse_ops_.mkdir         = MkdirCallback;
+  FUSE_LOG_DEBUG("Registering handler for mkdir");
+  fuse_ops_.unlink        = UnlinkCallback;
+  FUSE_LOG_DEBUG("Registering handler for unlink");
+  fuse_ops_.rmdir         = RmdirCallback;
+  FUSE_LOG_DEBUG("Registering handler for rmdir");
+  fuse_ops_.symlink       = SymlinkCallback;
+  FUSE_LOG_DEBUG("Registering handler for symlink");
+  fuse_ops_.rename        = RenameCallback;
+  FUSE_LOG_DEBUG("Registering handler for rename");
+  fuse_ops_.link          = LinkCallback;
+  FUSE_LOG_DEBUG("Registering handler for link");
 
-    // File/Directory operations
-    fuse_ops_.open = OpenCallback;
-    fuse_ops_.read = ReadCallback;
-    fuse_ops_.write = WriteCallback;
-    fuse_ops_.write_buf = WriteBufCallback;
-    fuse_ops_.flush = FlushCallback;
-    fuse_ops_.release = ReleaseCallback;
-    fuse_ops_.fsync = FsyncCallback;
-    fuse_ops_.opendir = OpendirCallback;
-    fuse_ops_.readdir = ReaddirCallback;
-    fuse_ops_.readdirplus = nullptr;
-    fuse_ops_.releasedir = ReleasedirCallback;
-    fuse_ops_.fsyncdir = FsyncdirCallback;
-    fuse_ops_.statfs = StatfsCallback;
-    fuse_ops_.access = AccessCallback;
-    fuse_ops_.create = CreateCallback;
-    fuse_ops_.copy_file_range = CopyFileRangeCallback;
+  // --- File / Directory operations ---
+  fuse_ops_.open          = OpenCallback;
+  FUSE_LOG_DEBUG("Registering handler for open");
+  fuse_ops_.read          = ReadCallback;
+  FUSE_LOG_DEBUG("Registering handler for read");
+  fuse_ops_.write         = WriteCallback;
+  FUSE_LOG_DEBUG("Registering handler for write");
 
-    // Explicitly add handlers that might be missing
-    fuse_ops_.getlk = nullptr;
-    fuse_ops_.setlk = nullptr;
-    fuse_ops_.bmap = nullptr;
-    fuse_ops_.ioctl = nullptr;
-    fuse_ops_.poll = nullptr;
+  fuse_ops_.write_buf     = WriteBufCallback;
+  FUSE_LOG_DEBUG("Registering handler for write_buf");
 
-    // Extended attributes
-    fuse_ops_.setxattr = SetxattrCallback;
-    fuse_ops_.getxattr = GetxattrCallback;
-    fuse_ops_.listxattr = ListxattrCallback;
-    fuse_ops_.removexattr = RemovexattrCallback;
+  // WICHTIG: close()-Pfad
+  fuse_ops_.flush         = FlushCallback;
+  FUSE_LOG_DEBUG("Registering handler for flush");
+  fuse_ops_.release       = ReleaseCallback;
+  FUSE_LOG_DEBUG("Registering handler for release");
 
-    // File locking
-    fuse_ops_.getlk = GetlkCallback;
-    fuse_ops_.setlk = SetlkCallback;
+  fuse_ops_.fsync         = FsyncCallback;
+  FUSE_LOG_DEBUG("Registering handler for fsync");
+
+  fuse_ops_.opendir       = OpendirCallback;
+  FUSE_LOG_DEBUG("Registering handler for opendir");
+  fuse_ops_.readdir       = ReaddirCallback;
+  FUSE_LOG_DEBUG("Registering handler for readdir");
+
+  fuse_ops_.readdirplus   = ReaddirplusCallback;
+  FUSE_LOG_DEBUG("Registering handler for readdirplus");
+
+  fuse_ops_.releasedir    = ReleasedirCallback;
+  FUSE_LOG_DEBUG("Registering handler for releasedir");
+  fuse_ops_.fsyncdir      = FsyncdirCallback;
+  FUSE_LOG_DEBUG("Registering handler for fsyncdir");
+
+  fuse_ops_.statfs        = StatfsCallback;
+  FUSE_LOG_DEBUG("Registering handler for statfs");
+  fuse_ops_.access        = AccessCallback;
+  FUSE_LOG_DEBUG("Registering handler for access");
+  fuse_ops_.create        = CreateCallback;
+  FUSE_LOG_DEBUG("Registering handler for create");
+  fuse_ops_.copy_file_range = CopyFileRangeCallback;
+  FUSE_LOG_DEBUG("Registering handler for copy_file_range");
+
+  // --- Extended attributes ---
+  fuse_ops_.setxattr      = SetxattrCallback;
+  FUSE_LOG_DEBUG("Registering handler for setxattr");
+  fuse_ops_.getxattr      = GetxattrCallback;
+  FUSE_LOG_DEBUG("Registering handler for getxattr");
+  fuse_ops_.listxattr     = ListxattrCallback;
+  FUSE_LOG_DEBUG("Registering handler for listxattr");
+  fuse_ops_.removexattr   = RemovexattrCallback;
+  FUSE_LOG_DEBUG("Registering handler for removexattr");
+
+  // --- File locking / misc ---
+  fuse_ops_.getlk         = GetlkCallback;
+  FUSE_LOG_DEBUG("Registering handler for getlk");
+  fuse_ops_.setlk         = SetlkCallback;
+  FUSE_LOG_DEBUG("Registering handler for setlk");
+
+  // Nicht überall vorhanden – setze nur, wenn du Handler hast
+  fuse_ops_.bmap          = BmapCallback;
+  FUSE_LOG_DEBUG("Registering handler for bmap");
+
+  fuse_ops_.ioctl         = IoctlCallback;
+  FUSE_LOG_DEBUG("Registering handler for ioctl");
+
+  fuse_ops_.poll          = PollCallback;
+  FUSE_LOG_DEBUG("Registering handler for poll");
 }
 
 void FuseBridge::ProcessRequest(std::shared_ptr<FuseRequestContext> context,
@@ -812,6 +877,14 @@ void FuseBridge::HandleRmdir(fuse_req_t req, fuse_ino_t parent, const char* name
 }
 
 void FuseBridge::HandleFlush(fuse_req_t req, fuse_ino_t ino, struct fuse_file_info* fi) {
+    if (!HasOperationHandler(FuseOpType::FLUSH)) {
+       FUSE_LOG_TRACE("No flush handler registered. Reply default 0");
+        auto ctx = CreateContext(FuseOpType::FLUSH, req);
+        ctx->ino = ino;
+        ctx->ReplyOk();
+        return;
+    }
+
     auto context = CreateContext(FuseOpType::FLUSH, req);
     context->ino = ino;
     if (fi) {
@@ -827,15 +900,42 @@ void FuseBridge::HandleFlush(fuse_req_t req, fuse_ino_t ino, struct fuse_file_in
                                    : env.Null();
         Napi::Object options = Napi::Object::New(env);
 
-        auto result = handler.Call({ino_value, fi_value, request_ctx, options});
-        ResolvePromiseOrValue(env, context, result, [context](Napi::Env env_inner, Napi::Value) {
-            context->ReplyOk();
-        });
+        Napi::Value result = handler.Call({ino_value, fi_value, request_ctx, options});
+
+        ResolvePromiseOrValue(
+            env, context, result,
+            // success
+            [context](Napi::Env env_inner, Napi::Value value) {
+                if (value.IsNumber()) {
+                    int32_t code = value.As<Napi::Number>().Int32Value();
+                    if (code == 0) {
+                        context->ReplyOk();
+                    } else {
+                        // errno muss positiv sein
+                        context->ReplyError(code > 0 ? code : -code);
+                    }
+                    return;
+                }
+                // Alles andere gilt als Erfolg
+                context->ReplyOk();
+            },
+            // failure
+            [context](Napi::Env env_inner, Napi::Value reason) {
+                ReplyWithErrorValue(env_inner, context, reason);
+            }
+        );
     });
 }
 
 void FuseBridge::HandleRelease(fuse_req_t req, fuse_ino_t ino, struct fuse_file_info* fi) {
-    auto context = CreateContext(FuseOpType::RELEASE, req);
+   auto context = CreateContext(FuseOpType::RELEASE, req);
+
+   if (!HasOperationHandler(FuseOpType::FLUSH)) {
+       FUSE_LOG_TRACE("No release handler registered. Reply default ok.");
+          context->ReplyOk();
+          return;
+      }
+
     context->ino = ino;
     if (fi) {
         context->fi = *fi;
@@ -851,9 +951,29 @@ void FuseBridge::HandleRelease(fuse_req_t req, fuse_ino_t ino, struct fuse_file_
         Napi::Object options = Napi::Object::New(env);
 
         auto result = handler.Call({ino_value, fi_value, request_ctx, options});
-        ResolvePromiseOrValue(env, context, result, [context](Napi::Env env_inner, Napi::Value) {
+        bool replied = false;
+        ResolvePromiseOrValue(env, context, result,
+                              [context, &replied](Napi::Env env_inner, Napi::Value value) {
+                                  replied = true;
+                                  if (value.IsNumber()) {
+                                      int32_t num = value.As<Napi::Number>().Int32Value();
+                                      if (num == 0) {
+                                          context->ReplyOk();
+                                          return;
+                                      }
+                                      context->ReplyError(num < 0 ? -num : num);
+                                      return;
+                                  }
+                                  context->ReplyOk();
+                              },
+                              [context, &replied](Napi::Env env_inner, Napi::Value reason) {
+                                  replied = true;
+                                  ReplyWithErrorValue(env_inner, context, reason);
+                              });
+
+        if (!replied) {
             context->ReplyOk();
-        });
+        }
     });
 }
 
@@ -1769,6 +1889,169 @@ void FuseBridge::HandleReaddir(fuse_req_t req, fuse_ino_t ino, size_t size, off_
     });
 }
 
+void FuseBridge::HandleReaddirplus(fuse_req_t req, fuse_ino_t ino, size_t size, off_t off,
+                                   struct fuse_file_info* fi) {
+  auto context = CreateContext(FuseOpType::READDIRPLUS, req);
+  context->ino = ino;
+  context->size = size;
+  context->offset = static_cast<uint64_t>(off);
+  if (fi) { context->fi = *fi; context->has_fi = true; }
+
+  const bool has_readdirplus = HasOperationHandler(FuseOpType::READDIRPLUS);
+  const bool has_readdir     = HasOperationHandler(FuseOpType::READDIR);
+
+  if (!has_readdirplus && !has_readdir) {
+    context->ReplyError(ENOSYS);
+    return;
+  }
+
+  // Kleine Hilfsfunktion für Minimal-Attr
+  auto make_min_entry = [](uint64_t child_ino, int dirent_type) -> fuse_entry_param {
+    fuse_entry_param e{};
+    std::memset(&e, 0, sizeof(e));
+    e.ino         = static_cast<fuse_ino_t>(child_ino);
+    e.attr.st_ino = static_cast<ino_t>(child_ino);
+    mode_t mode = 0;
+    switch (dirent_type) {
+      case DT_DIR: mode = S_IFDIR | 0555; break;
+      case DT_LNK: mode = S_IFLNK | 0777; break;
+      case DT_REG: mode = S_IFREG | 0444; break;
+      default:     mode = S_IFREG | 0444; break;
+    }
+    e.attr.st_mode  = mode;
+    e.attr_timeout  = 1.0;
+    e.entry_timeout = 1.0;
+    return e;
+  };
+
+  // Buffer-Schreiber
+  auto write_entries_and_reply =
+      [context, make_min_entry](Napi::Env env_inner, Napi::Array entries, size_t max_size) {
+        if (max_size == 0) { context->ReplyBuf(nullptr, 0); return; }
+
+        auto buf = std::make_shared<std::vector<char>>();
+        buf->resize(max_size);
+        size_t buffer_offset = 0;
+
+        for (uint32_t i = 0; i < entries.Length(); ++i) {
+          Napi::Value item = entries.Get(i);
+          if (!item.IsObject()) continue;
+          Napi::Object entry_obj = item.As<Napi::Object>();
+
+          // name
+          if (!entry_obj.Has("name") || !entry_obj.Get("name").IsString()) continue;
+          const std::string name = entry_obj.Get("name").As<Napi::String>().Utf8Value();
+
+          // nextOffset
+          off_t next_offset = 0;
+          Napi::Value next = entry_obj.Get("nextOffset");
+          if (next.IsBigInt()) {
+            bool lossless=false;
+            next_offset = static_cast<off_t>(next.As<Napi::BigInt>().Int64Value(&lossless));
+            if (!lossless || next_offset < 0) { context->ReplyError(EIO); return; }
+          } else if (next.IsNumber()) {
+            next_offset = static_cast<off_t>(next.As<Napi::Number>().Int64Value());
+            if (next_offset < 0) { context->ReplyError(EIO); return; }
+          } else {
+            next_offset = static_cast<off_t>(context->offset + i + 1);
+          }
+
+          // entry_param (versuchen voll, sonst minimal)
+          fuse_entry_param e{};
+          bool have_full = PopulateEntryFromResult(env_inner, entry_obj, &e);
+          if (!have_full) {
+            uint64_t child_ino = 0;
+            if (entry_obj.Has("ino")) {
+              child_ino = NapiHelpers::GetBigUint64(env_inner, entry_obj.Get("ino"));
+            }
+            int dirent_type = DT_UNKNOWN;
+            if (entry_obj.Has("type") && entry_obj.Get("type").IsNumber()) {
+              dirent_type = entry_obj.Get("type").As<Napi::Number>().Int32Value();
+            }
+            e = make_min_entry(child_ino, dirent_type);
+          }
+
+          const size_t need = fuse_add_direntry_plus(
+              context->request, nullptr, 0, name.c_str(), &e, next_offset);
+          if (need > (max_size - buffer_offset)) break;
+
+          fuse_add_direntry_plus(context->request,
+                                 buf->data() + buffer_offset,
+                                 max_size - buffer_offset,
+                                 name.c_str(), &e, next_offset);
+          buffer_offset += need;
+        }
+
+        buf->resize(buffer_offset);
+        context->keepalive = buf;
+        context->ReplyBuf(buf->data(), buf->size());
+      };
+
+  // 1) Direkter READDIRPLUS-Handler vorhanden
+  if (has_readdirplus) {
+    ProcessRequest(context, [context, write_entries_and_reply](Napi::Env env, Napi::Function handler) {
+      Napi::Value ino_value    = NapiHelpers::CreateBigUint64(env, ToUint64(context->ino));
+      Napi::Value offset_value = NapiHelpers::CreateBigUint64(env, context->offset);
+      Napi::Object request_ctx = CreateRequestContextObject(env, *context);
+      Napi::Value fi_value     = context->has_fi ? NapiHelpers::FileInfoToObject(env, context->fi) : env.Null();
+      Napi::Object options     = Napi::Object::New(env);
+      options.Set("size", Napi::Number::New(env, static_cast<double>(context->size)));
+
+      auto result = handler.Call({ino_value, offset_value, request_ctx, fi_value, options});
+      ResolvePromiseOrValue(env, context, result,
+        [context, write_entries_and_reply](Napi::Env env_inner, Napi::Value value) {
+          if (!value.IsObject()) { context->ReplyError(EIO); return; }
+          Napi::Object result_obj = value.As<Napi::Object>();
+          if (!result_obj.Has("entries") || !result_obj.Get("entries").IsArray()) {
+            context->ReplyError(EIO); return;
+          }
+          write_entries_and_reply(env_inner, result_obj.Get("entries").As<Napi::Array>(), context->size);
+        },
+        [context](Napi::Env env_inner, Napi::Value reason) {
+          ReplyWithErrorValue(env_inner, context, reason);
+        }
+      );
+    });
+    return;
+  }
+
+  // 2) Fallback: READDIR
+  auto rd_ctx = CreateContext(FuseOpType::READDIR, req);
+  rd_ctx->ino    = context->ino;
+  rd_ctx->size   = context->size;
+  rd_ctx->offset = context->offset;
+  if (context->has_fi) { rd_ctx->fi = context->fi; rd_ctx->has_fi = true; }
+
+  ProcessRequest(rd_ctx, [rd_ctx, write_entries_and_reply](Napi::Env env, Napi::Function handler) {
+    Napi::Value ino_value    = NapiHelpers::CreateBigUint64(env, ToUint64(rd_ctx->ino));
+    Napi::Value offset_value = NapiHelpers::CreateBigUint64(env, rd_ctx->offset);
+    Napi::Object request_ctx = CreateRequestContextObject(env, *rd_ctx);
+    Napi::Value fi_value     = rd_ctx->has_fi ? NapiHelpers::FileInfoToObject(env, rd_ctx->fi) : env.Null();
+    Napi::Object options     = Napi::Object::New(env);
+    options.Set("size", Napi::Number::New(env, static_cast<double>(rd_ctx->size)));
+
+    auto result = handler.Call({ino_value, offset_value, request_ctx, fi_value, options});
+    ResolvePromiseOrValue(env, rd_ctx, result,
+      [rd_ctx, write_entries_and_reply](Napi::Env env_inner, Napi::Value value) {
+        // Akzeptiere {entries:[...]} oder direkt Array
+        Napi::Array entries;
+        if (value.IsArray()) {
+          entries = value.As<Napi::Array>();
+        } else if (value.IsObject() && value.As<Napi::Object>().Has("entries") &&
+                   value.As<Napi::Object>().Get("entries").IsArray()) {
+          entries = value.As<Napi::Object>().Get("entries").As<Napi::Array>();
+        } else {
+          rd_ctx->ReplyError(EIO); return;
+        }
+        write_entries_and_reply(env_inner, entries, rd_ctx->size);
+      },
+      [rd_ctx](Napi::Env env_inner, Napi::Value reason) {
+        ReplyWithErrorValue(env_inner, rd_ctx, reason);
+      }
+    );
+  });
+}
+
 void FuseBridge::HandleStatfs(fuse_req_t req, fuse_ino_t ino) {
     auto context = CreateContext(FuseOpType::STATFS, req);
     context->ino = ino;
@@ -1840,21 +2123,76 @@ void FuseBridge::HandleCreate(fuse_req_t req, fuse_ino_t parent, const char* nam
                 return;
             }
 
-            double timeout = 1.0;
-            if (result_obj.Has("timeout") && result_obj.Get("timeout").IsNumber()) {
-                timeout = result_obj.Get("timeout").As<Napi::Number>().DoubleValue();
+            auto read_timeout = [](Napi::Value value, double* target) -> bool {
+                if (!value.IsNumber()) {
+                    return false;
+                }
+                double timeout_val = value.As<Napi::Number>().DoubleValue();
+                if (!std::isfinite(timeout_val) || timeout_val < 0.0) {
+                    return false;
+                }
+                if (target) {
+                    *target = timeout_val;
+                }
+                return true;
+            };
+
+            double attr_timeout = 1.0;
+            double entry_timeout = 1.0;
+
+            if (result_obj.Has("attrTimeout")) {
+                read_timeout(result_obj.Get("attrTimeout"), &attr_timeout);
+            }
+            if (result_obj.Has("attr_timeout")) {
+                read_timeout(result_obj.Get("attr_timeout"), &attr_timeout);
+            }
+            if (result_obj.Has("entryTimeout")) {
+                read_timeout(result_obj.Get("entryTimeout"), &entry_timeout);
+            }
+            if (result_obj.Has("entry_timeout")) {
+                read_timeout(result_obj.Get("entry_timeout"), &entry_timeout);
+            }
+            if (result_obj.Has("timeout")) {
+                double shared_timeout = entry_timeout;
+                if (read_timeout(result_obj.Get("timeout"), &shared_timeout)) {
+                    attr_timeout = shared_timeout;
+                    entry_timeout = shared_timeout;
+                }
             }
 
             struct fuse_entry_param entry{};
             std::memset(&entry, 0, sizeof(entry));
             entry.attr = attr;
-            entry.attr_timeout = timeout;
-            entry.entry_timeout = timeout;
-            entry.ino = attr.st_ino != 0 ? static_cast<fuse_ino_t>(attr.st_ino) : 0;
+            entry.attr_timeout = attr_timeout;
+            entry.entry_timeout = entry_timeout;
+
+            fuse_ino_t derived_ino = attr.st_ino != 0 ? static_cast<fuse_ino_t>(attr.st_ino) : 0;
+            if (result_obj.Has("ino")) {
+                fuse_ino_t ino_value = static_cast<fuse_ino_t>(
+                    NapiHelpers::GetBigUint64(env_inner, result_obj.Get("ino")));
+                if (ino_value != 0) {
+                    derived_ino = ino_value;
+                }
+            }
+            entry.ino = derived_ino;
+            entry.attr.st_ino = derived_ino;
+
+            uint64_t generation = 0;
+            if (result_obj.Has("generation")) {
+                generation = NapiHelpers::GetBigUint64(env_inner, result_obj.Get("generation"));
+            }
+            entry.generation = generation;
+
+            FUSE_LOG_TRACE("create reply ino=%llu fh=%llu entry_to=%.3f attr_to=%.3f",
+              (unsigned long long)entry.ino,
+              (unsigned long long)fi_result.fh,
+              entry.entry_timeout, entry.attr_timeout);
+
             context->ReplyCreate(entry, fi_result);
         });
     });
 }
+
 void FuseBridge::HandleCopyFileRange(fuse_req_t req, fuse_ino_t ino_in, off_t off_in,
                                      struct fuse_file_info* fi_in, fuse_ino_t ino_out,
                                      off_t off_out, struct fuse_file_info* fi_out,
@@ -1993,6 +2331,121 @@ void FuseBridge::HandleSetlk(fuse_req_t req, fuse_ino_t ino, struct fuse_file_in
         });
     });
 }
+
+void FuseBridge::HandleBmap(fuse_req_t req, fuse_ino_t ino, size_t blocksize, uint64_t idx) {
+    auto context = CreateContext(FuseOpType::BMAP, req);
+    context->ino = ino;
+    context->size = blocksize;
+    context->offset = idx;
+
+    ProcessRequest(context, [context](Napi::Env env, Napi::Function handler) {
+        Napi::Value ino_value = NapiHelpers::CreateBigUint64(env, ToUint64(context->ino));
+        Napi::Number blocksize_value = Napi::Number::New(env, context->size);
+        Napi::Value idx_value = NapiHelpers::CreateBigUint64(env, context->offset);
+        Napi::Object request_ctx = CreateRequestContextObject(env, *context);
+        Napi::Object options = Napi::Object::New(env);
+
+        auto result = handler.Call({ino_value, blocksize_value, idx_value, request_ctx, options});
+        ResolvePromiseOrValue(env, context, result, [context](Napi::Env env_inner, Napi::Value value) {
+            if (value.IsObject()) {
+                Napi::Object obj = value.As<Napi::Object>();
+                if (obj.Has("block")) {
+                    uint64_t block = NapiHelpers::GetBigUint64(env_inner, obj.Get("block"));
+                    fuse_reply_bmap(context->request, block);
+                    return;
+                }
+            }
+            context->ReplyError(EIO);
+        });
+    });
+}
+
+void FuseBridge::HandleIoctl(fuse_req_t req, fuse_ino_t ino, int cmd, void* arg, struct fuse_file_info* fi, unsigned flags, const void* in_buf, size_t in_bufsz, size_t out_bufsz) {
+    auto context = CreateContext(FuseOpType::IOCTL, req);
+    context->ino = ino;
+    context->flags = cmd;
+    if (fi) {
+        context->fi = *fi;
+        context->has_fi = true;
+    }
+    if (in_buf && in_bufsz > 0) {
+        context->data.assign(reinterpret_cast<const uint8_t*>(in_buf),
+                             reinterpret_cast<const uint8_t*>(in_buf) + in_bufsz);
+    }
+
+    ProcessRequest(context, [context, out_bufsz](Napi::Env env, Napi::Function handler) {
+        Napi::Value ino_value = NapiHelpers::CreateBigUint64(env, ToUint64(context->ino));
+        Napi::Number cmd_value = Napi::Number::New(env, context->flags);
+        Napi::Value fi_value = context->has_fi ? NapiHelpers::FileInfoToObject(env, context->fi) : env.Null();
+        Napi::Value in_buf_value = env.Null();
+        if (!context->data.empty()) {
+            Napi::ArrayBuffer buffer = Napi::ArrayBuffer::New(env, context->data.size());
+            std::memcpy(buffer.Data(), context->data.data(), context->data.size());
+            in_buf_value = buffer;
+        }
+
+        Napi::Object request_ctx = CreateRequestContextObject(env, *context);
+        Napi::Object options = Napi::Object::New(env);
+        options.Set("out_bufsz", Napi::Number::New(env, out_bufsz));
+
+        auto result = handler.Call({ino_value, cmd_value, fi_value, in_buf_value, request_ctx, options});
+        ResolvePromiseOrValue(env, context, result, [context, out_bufsz](Napi::Env env_inner, Napi::Value value) {
+            if (value.IsObject()) {
+                Napi::Object obj = value.As<Napi::Object>();
+                if (obj.Has("result")) {
+                    Napi::Value res_val = obj.Get("result");
+                    if (res_val.IsBuffer()) {
+                        Napi::Buffer<uint8_t> buf = res_val.As<Napi::Buffer<uint8_t>>();
+                        if (buf.Length() > out_bufsz) {
+                            context->ReplyError(ERANGE);
+                            return;
+                        }
+                        fuse_reply_ioctl(context->request, 0, buf.Data(), buf.Length());
+                        return;
+                    }
+                }
+            }
+            context->ReplyError(EIO);
+        });
+    });
+}
+
+void FuseBridge::HandlePoll(fuse_req_t req, fuse_ino_t ino, struct fuse_file_info* fi, struct fuse_pollhandle* ph) {
+    auto context = CreateContext(FuseOpType::POLL, req);
+    context->ino = ino;
+    if (fi) {
+        context->fi = *fi;
+        context->has_fi = true;
+    }
+
+    ProcessRequest(context, [context, ph](Napi::Env env, Napi::Function handler) {
+        Napi::Value ino_value = NapiHelpers::CreateBigUint64(env, ToUint64(context->ino));
+        Napi::Value fi_value = context->has_fi ? NapiHelpers::FileInfoToObject(env, context->fi) : env.Null();
+        Napi::Object ph_obj = Napi::Object::New(env);
+        if (ph) {
+            ph_obj.Set("kh", NapiHelpers::CreateBigUint64(env, reinterpret_cast<uint64_t>(ph)));
+        }
+        Napi::Object request_ctx = CreateRequestContextObject(env, *context);
+        Napi::Object options = Napi::Object::New(env);
+
+        auto result = handler.Call({ino_value, fi_value, ph_obj, request_ctx, options});
+        ResolvePromiseOrValue(env, context, result, [context, ph](Napi::Env env_inner, Napi::Value value) {
+            if (value.IsObject()) {
+                Napi::Object obj = value.As<Napi::Object>();
+                if (obj.Has("revents")) {
+                    unsigned revents = obj.Get("revents").As<Napi::Number>().Uint32Value();
+                    fuse_reply_poll(context->request, revents);
+                    if (ph) {
+                        fuse_pollhandle_destroy(ph);
+                    }
+                    return;
+                }
+            }
+            context->ReplyError(EIO);
+        });
+    });
+}
+
 void FuseBridge::HandleInit(fuse_req_t req, struct fuse_conn_info* conn) {
     auto context = CreateContext(FuseOpType::INIT, req);
     conn->want |= FUSE_CAP_ASYNC_READ | FUSE_CAP_WRITEBACK_CACHE;
@@ -2039,15 +2492,6 @@ void FuseBridge::HandleForgetMulti(fuse_req_t req, size_t count, struct fuse_for
 
 void FuseBridge::HandleReadBuf(fuse_req_t req, fuse_ino_t, size_t, off_t, struct fuse_file_info*, struct fuse_bufvec**) {
     auto context = CreateContext(FuseOpType::READ_BUF, req);
-    context->ReplyUnsupported();
-}
-
-void FuseBridge::HandleWriteBuf(fuse_req_t req,
-                                fuse_ino_t ino,
-                                struct fuse_bufvec* buf,
-                                off_t off,
-                                struct fuse_file_info* fi) {
-    auto context = CreateContext(FuseOpType::WRITE_BUF, req);
     context->ReplyUnsupported();
 }
 
@@ -2149,6 +2593,43 @@ void FuseBridge::HandleRemovexattr(fuse_req_t req, fuse_ino_t ino, const char* n
             context->ReplyOk();
         });
     });
+}
+
+void FuseBridge::ReaddirplusCallback(fuse_req_t req, fuse_ino_t ino, size_t size, off_t off,
+                                     struct fuse_file_info* fi) {
+    auto* bridge = GetBridgeFromRequest(req);
+    if (!bridge) {
+        fuse_reply_err(req, ENODEV);
+        return;
+    }
+    bridge->HandleReaddirplus(req, ino, size, off, fi);
+}
+
+void FuseBridge::BmapCallback(fuse_req_t req, fuse_ino_t ino, size_t blocksize, uint64_t idx) {
+    auto* bridge = GetBridgeFromRequest(req);
+    if (!bridge) {
+        fuse_reply_err(req, ENODEV);
+        return;
+    }
+    bridge->HandleBmap(req, ino, blocksize, idx);
+}
+
+void FuseBridge::IoctlCallback(fuse_req_t req, fuse_ino_t ino, int cmd, void* arg, struct fuse_file_info* fi, unsigned flags, const void* in_buf, size_t in_bufsz, size_t out_bufsz) {
+    auto* bridge = GetBridgeFromRequest(req);
+    if (!bridge) {
+        fuse_reply_err(req, ENODEV);
+        return;
+    }
+    bridge->HandleIoctl(req, ino, cmd, arg, fi, flags, in_buf, in_bufsz, out_bufsz);
+}
+
+void FuseBridge::PollCallback(fuse_req_t req, fuse_ino_t ino, struct fuse_file_info* fi, struct fuse_pollhandle* ph) {
+    auto* bridge = GetBridgeFromRequest(req);
+    if (!bridge) {
+        fuse_reply_err(req, ENODEV);
+        return;
+    }
+    bridge->HandlePoll(req, ino, fi, ph);
 }
 
 void FuseBridge::LookupCallback(fuse_req_t req, fuse_ino_t parent, const char* name) {
@@ -2427,6 +2908,117 @@ void FuseBridge::ForgetMultiCallback(fuse_req_t req, size_t count, struct fuse_f
     }
     bridge->HandleForgetMulti(req, count, forgets);
 }
+
+void FuseBridge::HandleWriteBuf(fuse_req_t req,
+                                fuse_ino_t ino,
+                                struct fuse_bufvec* bufv,
+                                off_t off,
+                                struct fuse_file_info* fi) {
+    auto context = CreateContext(FuseOpType::WRITE_BUF, req);
+    context->ino = ino;
+    context->offset = off;
+    if (fi) {
+        context->fi = *fi;
+        context->has_fi = true;
+    }
+
+    // --- fuse_bufvec -> linearer Speicher ---
+    std::vector<uint8_t> linear;
+    size_t total_size = 0;
+    for (unsigned i = 0; i < bufv->count; ++i) {
+        total_size += static_cast<size_t>(bufv->buf[i].size);
+    }
+    linear.resize(total_size);
+
+    size_t cursor = 0;
+    for (unsigned i = 0; i < bufv->count; ++i) {
+        const fuse_buf& b = bufv->buf[i];
+        const size_t sz = static_cast<size_t>(b.size);
+        if (sz == 0) continue;
+
+        if (b.flags & FUSE_BUF_IS_FD) {
+            size_t done = 0;
+            while (done < sz) {
+                ssize_t r = pread(b.fd, linear.data() + cursor + done,
+                                  sz - done, static_cast<off_t>(b.pos) + done);
+                if (r <= 0) {
+                    context->ReplyError(EIO);
+                    return;
+                }
+                done += static_cast<size_t>(r);
+            }
+        } else {
+            if (b.mem == nullptr) {
+                context->ReplyError(EIO);
+                return;
+            }
+            std::memcpy(linear.data() + cursor, b.mem, sz);
+        }
+        cursor += sz;
+    }
+
+    // --- Handler-Auswahl ---
+    const bool has_write_buf = HasOperationHandler(FuseOpType::WRITE_BUF);
+    const bool has_write     = HasOperationHandler(FuseOpType::WRITE);
+
+    if (!has_write_buf && !has_write) {
+        context->ReplyError(ENOSYS);
+        return;
+    }
+
+    // Falls write_buf nicht registriert, auf write zurückfallen.
+    if (!has_write_buf && has_write) {
+        context->op_type = FuseOpType::WRITE;  // JS-Router soll den WRITE-Handler nehmen
+    }
+
+    ProcessRequest(context, [context, linear = std::move(linear)](Napi::Env env, Napi::Function handler) {
+        Napi::Value ino_value = NapiHelpers::CreateBigUint64(env, ToUint64(context->ino));
+
+        Napi::ArrayBuffer data = Napi::ArrayBuffer::New(env, linear.size());
+        if (!linear.empty()) {
+            std::memcpy(data.Data(), linear.data(), linear.size());
+        }
+
+        Napi::Object request_ctx = CreateRequestContextObject(env, *context);
+
+        Napi::Object options = Napi::Object::New(env);
+        options.Set("offset", NapiHelpers::CreateBigUint64(env, static_cast<uint64_t>(context->offset)));
+        if (context->has_fi) {
+            options.Set("fi", NapiHelpers::FileInfoToObject(env, context->fi));
+        }
+
+        Napi::Value result = handler.Call({ino_value, data, request_ctx, options});
+
+        ResolvePromiseOrValue(
+            env,
+            context,
+            result,
+            [context](Napi::Env env_inner, Napi::Value value) {
+                // Erwartet: Anzahl geschriebener Bytes (Number) oder {bytes:number}
+                if (value.IsNumber()) {
+                    int64_t n = value.As<Napi::Number>().Int64Value();
+                    if (n < 0) { context->ReplyError(static_cast<int>(-n)); return; }
+                    context->ReplyWrite(static_cast<size_t>(n));
+                    return;
+                }
+                if (value.IsObject()) {
+                    Napi::Object obj = value.As<Napi::Object>();
+                    if (obj.Has("bytes") && obj.Get("bytes").IsNumber()) {
+                        int64_t n = obj.Get("bytes").As<Napi::Number>().Int64Value();
+                        if (n < 0) { context->ReplyError(static_cast<int>(-n)); return; }
+                        context->ReplyWrite(static_cast<size_t>(n));
+                        return;
+                    }
+                }
+                context->ReplyError(EIO);
+            },
+            [context](Napi::Env env_inner, Napi::Value reason) {
+                ReplyWithErrorValue(env_inner, context, reason);
+            }
+        );
+    });
+}
+
 
 void FuseBridge::WriteBufCallback(fuse_req_t req, fuse_ino_t ino, struct fuse_bufvec* buf, off_t off, struct fuse_file_info* fi) {
     auto* bridge = GetBridgeFromRequest(req);

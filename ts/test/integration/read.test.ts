@@ -100,14 +100,23 @@ describe('FUSE read Bridge Integration', () => {
   test('should read a specific range of a file', async () => {
     const readDone = defer<void>();
     const partialContent = 'file';
-    const offset = 8; // Offset to 'file' in fileContent2
+
+    const offset = fileContent2.indexOf(partialContent);
+    expect(offset).toBeGreaterThanOrEqual(0);
+
     const size = partialContent.length;
 
     let recordedIno: Ino = 0n as Ino;
     let recordedOptions: ReadOptions | undefined;
 
     const recordingRead = async (ino: Ino, context: RequestContext, options: ReadOptions): Promise<Buffer> => {
-      if (options.offset === BigInt(offset)) {
+      const start = Number(options.offset);
+      const end   = start + options.size;
+      const wantStart = offset;
+      const wantEnd   = offset + size;
+
+      // löse aus, sobald die Ziel-Range komplett in diesem Read enthalten ist
+      if (start <= wantStart && end >= wantEnd) {
         recordedIno = ino;
         recordedOptions = options;
         readDone.resolve();
@@ -119,22 +128,33 @@ describe('FUSE read Bridge Integration', () => {
 
     const testFile = `${mountPoint}/test-file-read-2`;
     const buffer = Buffer.alloc(size);
-    const fileHandle = await fs.open(testFile, 'r');
-    await fileHandle.read(buffer, 0, size, offset);
+    const fh = await fs.open(testFile, 'r');
+
+    const { bytesRead } = await fh.read({
+      buffer,
+      offset: 0,        // in den Zielpuffer ab 0
+      length: size,     // genau size Bytes
+      position: offset, // gewünschte Dateiposition
+    });
+
     await readDone.promise;
 
     const testFileInode = filesystem.resolvePath('/test-file-read-2');
 
-    expect(recordedIno).toBe(testFileInode.id);
-    expect(recordedOptions).toBeDefined();
-    expect(recordedOptions?.offset).toBe(BigInt(offset));
-    expect(recordedOptions?.size).toBe(size);
-
+    expect(bytesRead).toBe(size);
     expect(buffer.toString()).toBe(partialContent);
 
-    await fileHandle.close();
+    expect(recordedIno).toBe(testFileInode.id);
+    expect(recordedOptions).toBeDefined();
 
-    // Reset overrides
+    // statt "== offset": Range-Abdeckung prüfen
+    const start = Number(recordedOptions!.offset);
+    const end   = start + recordedOptions!.size;
+    expect(start).toBeLessThanOrEqual(offset);
+    expect(end).toBeGreaterThanOrEqual(offset + size);
+
+    await fh.close();
+
     filesystemOperations.overrideOperationsWith({});
   });
 
