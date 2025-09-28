@@ -389,4 +389,42 @@ export class FileSystem {
       this.inodes.set(childInode.id, childInode);
     }
   }
+
+  public addFile(path: string, content: string | Buffer, mode: number = 0o644, uid: number = 1000, gid: number = 1000): SimpleInode {
+    const parts = path.split('/').filter(p => p.length > 0);
+    if (parts.length === 0) {
+      throw new Error('Cannot add file at root');
+    }
+
+    let current = this.root;
+    for (let i = 0; i < parts.length - 1; i++) {
+      const part = parts[i];
+      if (current.type !== 'directory' || !(current.data instanceof Map)) {
+        throw new Error(`ENOTDIR: ${path}`);
+      }
+      let child = current.data.get(part);
+      if (!child) {
+        child = this.createInodeInternal('directory', this.computeMode('directory'));
+        (current.data as Map<string, SimpleInode>).set(part, child);
+        this.inodes.set(child.id, child);
+      }
+      current = child;
+    }
+
+    const name = parts[parts.length - 1];
+    if (current.type !== 'directory' || !(current.data instanceof Map)) {
+      throw new Error(`ENOTDIR: ${path}`);
+    }
+
+    const newInode = this.createInodeInternal('file', this.computeMode('file', mode));
+    const bufferContent = typeof content === 'string' ? Buffer.from(content) : content;
+    newInode.data = bufferContent;
+    newInode.size = BigInt(bufferContent.length);
+    newInode.uid = createUid(uid);
+    newInode.gid = createGid(gid);
+
+    (current.data as Map<string, SimpleInode>).set(name, newInode);
+    this.inodes.set(newInode.id, newInode);
+    return newInode;
+  }
 }

@@ -362,6 +362,24 @@ Napi::Object NapiHelpers::StatvfsToObject(Napi::Env env, const struct statvfs& s
     return obj;
 }
 
+bool NapiHelpers::ObjectToStatvfs(Napi::Object obj, struct statvfs* st) {
+    if (!st) return false;
+
+    if (obj.Has("bsize")) st->f_bsize = obj.Get("bsize").As<Napi::Number>().Uint32Value();
+    if (obj.Has("frsize")) st->f_frsize = obj.Get("frsize").As<Napi::Number>().Uint32Value();
+    if (obj.Has("blocks")) st->f_blocks = GetBigUint64(obj.Env(), obj.Get("blocks"));
+    if (obj.Has("bfree")) st->f_bfree = GetBigUint64(obj.Env(), obj.Get("bfree"));
+    if (obj.Has("bavail")) st->f_bavail = GetBigUint64(obj.Env(), obj.Get("bavail"));
+    if (obj.Has("files")) st->f_files = GetBigUint64(obj.Env(), obj.Get("files"));
+    if (obj.Has("ffree")) st->f_ffree = GetBigUint64(obj.Env(), obj.Get("ffree"));
+    if (obj.Has("favail")) st->f_favail = GetBigUint64(obj.Env(), obj.Get("favail"));
+    if (obj.Has("fsid")) st->f_fsid = GetBigUint64(obj.Env(), obj.Get("fsid"));
+    if (obj.Has("flag")) st->f_flag = obj.Get("flag").As<Napi::Number>().Uint32Value();
+    if (obj.Has("namemax")) st->f_namemax = obj.Get("namemax").As<Napi::Number>().Uint32Value();
+
+    return true;
+}
+
 /**
  * Buffer and ArrayBuffer utilities
  */

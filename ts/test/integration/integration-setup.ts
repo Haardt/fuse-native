@@ -37,15 +37,16 @@ export const fuseIntegrationSessionSetup = async (
     fs.mkdirSync(mountPoint);
     const fuseNative = new FuseNative(binding)
 
-    const merged = {...operations,  debug: true,
-      foreground: true,      // wichtig für Tests
-      singleThreaded: true,  // deterministischer
-      autoUnmount: false,    // zwingend aus
+    const options: FuseSessionOptions = {
+      ...sessionOptions,
+      debug: true,
+      foreground: true,
+      singleThreaded: true,
+      autoUnmount: false,
       allowOther: false,
-      installSignalHandlers: false,
     };
 
-    const session = await fuseNative.createSession(mountPoint, merged, sessionOptions);
+    const session = await fuseNative.createSession(mountPoint, operations, options);
     return {fuseNative, session, binding, mountPoint};
   }
 ;

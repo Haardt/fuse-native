@@ -62,6 +62,7 @@ public:
     
     // Statvfs structure conversions
     static Napi::Object StatvfsToObject(Napi::Env env, const struct statvfs& stvfs);
+    static bool ObjectToStatvfs(Napi::Object obj, struct statvfs* st);
     
     // File info conversions
     static Napi::Object FileInfoToObject(Napi::Env env, const struct fuse_file_info& fi);

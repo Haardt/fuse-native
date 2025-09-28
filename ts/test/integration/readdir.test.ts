@@ -40,24 +40,30 @@ describe('FUSE Readdir Bridge Integration', () => {
     test('should stream seeded directory entries through readdir', async () => {
       const readdirDone = defer<void>();
 
-      let recordedIno: Ino = 0n as Ino;
-      let recordedOffset: bigint = -1n;
-      let recordedContext: RequestContext = {} as RequestContext;
-      let recordedFi: FileInfo | undefined;
-      let recordedOptionsSize = 0;
-      let recordedResult: ReaddirResult | undefined;
+      const recordedCalls: {
+        ino: Ino;
+        offset: bigint;
+        context: RequestContext;
+        fi?: FileInfo;
+        optionsSize: number;
+        result: ReaddirResult | undefined;
+      }[] = [];
 
       const defaultOperations = new FileSystemOperations(filesystem, {});
 
       const recordingReaddir: ReaddirHandler = async (ino, offset, context, fi, options) => {
-        recordedIno = ino;
-        recordedOffset = offset;
-        recordedContext = context;
-        recordedFi = fi;
-        recordedOptionsSize = options?.size ?? 0;
         const result = await defaultOperations.readdir(ino, offset, context, fi, options);
-        recordedResult = result;
-        readdirDone.resolve();
+        recordedCalls.push({
+          ino,
+          offset,
+          context,
+          fi,
+          optionsSize: options?.size ?? 0,
+          result,
+        });
+        if (!result.hasMore) {
+          readdirDone.resolve();
+        }
         return result;
       };
 
@@ -69,26 +75,40 @@ describe('FUSE Readdir Bridge Integration', () => {
 
         const rootInode = filesystem.getRoot();
 
+        // fs.readdir typically filters out '.' and '..'
         expect(new Set(names)).toEqual(new Set(['test-file', 'notes']));
-        expect(recordedIno).toBe(rootInode.id);
-        expect(recordedOffset).toBe(2n);
-        expect(recordedContext.uid).toBe(1000);
-        expect(recordedContext.gid).toBe(1000);
-        expect(recordedFi?.fh).toBeDefined();
-        expect(typeof recordedFi?.fh).toBe('bigint');
-        expect(recordedOptionsSize).toBe(4096);
 
-        expect(recordedResult).toBeDefined();
-        const entries = recordedResult!.entries;
-        expect(entries.length).toBe(0);
-        expect(recordedResult!.hasMore).toBe(false);
+        // Assertions for the recorded calls
+        expect(recordedCalls.length).toBeGreaterThanOrEqual(1);
 
-        for (let i = 0; i < entries.length; i += 1) {
-          expect(typeof entries[i].nextOffset).toBe('bigint');
-          if (i > 0) {
-            expect(entries[i].nextOffset).toBeGreaterThan(entries[i - 1].nextOffset);
-          }
+        // First call to readdir
+        const firstCall = recordedCalls[0];
+        expect(firstCall.ino).toBe(rootInode.id);
+        expect(firstCall.offset).toBe(0n); // First call should start at 0
+        expect(firstCall.context.uid).toBe(1000);
+        expect(firstCall.context.gid).toBe(1000);
+        expect(firstCall.fi?.fh).toBeDefined();
+        expect(typeof firstCall.fi?.fh).toBe('bigint');
+        expect(firstCall.optionsSize).toBe(4096); // Assuming default buffer size
+
+        // The first call should contain '.' and '..' and potentially other entries
+        expect(firstCall.result).toBeDefined();
+        expect(firstCall.result!.entries.length).toBeGreaterThanOrEqual(2); // At least '.' and '..'
+        expect(firstCall.result!.entries[0].name).toBe('.');
+        expect(firstCall.result!.entries[1].name).toBe('..');
+
+        // Verify subsequent calls and offsets
+        for (let i = 1; i < recordedCalls.length; i++) {
+          const prevCall = recordedCalls[i - 1];
+          const currentCall = recordedCalls[i];
+          expect(currentCall.ino).toBe(rootInode.id);
+          expect(currentCall.offset).toBe(prevCall.result!.nextOffset);
         }
+
+        // The last call should have hasMore: false
+        const lastCall = recordedCalls[recordedCalls.length - 1];
+        expect(lastCall.result!.hasMore).toBe(false);
+
       } finally {
         console.log('[TEST] finally: unmount+shutdown+destroy');
         filesystemOperations.overrideOperationsWith({});

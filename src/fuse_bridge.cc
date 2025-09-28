@@ -467,6 +467,13 @@ void FuseRequestContext::ReplyOpen(const struct fuse_file_info& result_fi) {
     fuse_reply_open(request, const_cast<struct fuse_file_info*>(&result_fi));
 }
 
+void FuseRequestContext::ReplyOpendir(const struct fuse_file_info& result_fi) {
+    if (!TryMarkReplied() || !request) {
+        return;
+    }
+    fuse_reply_open(request, const_cast<struct fuse_file_info*>(&result_fi));
+}
+
 void FuseRequestContext::ReplyCreate(const struct fuse_entry_param& entry,
                                      const struct fuse_file_info& result_fi) {
     if (!TryMarkReplied() || !request) {
@@ -1571,17 +1578,17 @@ void FuseBridge::HandleOpendir(fuse_req_t req, fuse_ino_t ino, struct fuse_file_
 
     ProcessRequest(context, [context](Napi::Env env, Napi::Function handler) {
         Napi::Value ino_value = NapiHelpers::CreateBigUint64(env, ToUint64(context->ino));
-        Napi::Number flags_value = Napi::Number::New(env, context->has_fi ? context->fi.flags : 0);
         Napi::Object request_ctx = CreateRequestContextObject(env, *context);
         Napi::Object options = Napi::Object::New(env);
+        options.Set("flags", Napi::Number::New(env, context->has_fi ? context->fi.flags : 0));
 
-        auto result = handler.Call({ino_value, flags_value, request_ctx, options});
+        auto result = handler.Call({ino_value, request_ctx, options});
         ResolvePromiseOrValue(env, context, result, [context](Napi::Env env_inner, Napi::Value value) {
             if (value.IsObject()) {
                 auto fi_object = value.As<Napi::Object>();
                 struct fuse_file_info fi_result{};
                 if (NapiHelpers::ObjectToFileInfo(fi_object, &fi_result)) {
-                    context->ReplyOpen(fi_result);
+                    context->ReplyOpendir(fi_result);
                     return;
                 }
             }
@@ -1591,6 +1598,7 @@ void FuseBridge::HandleOpendir(fuse_req_t req, fuse_ino_t ino, struct fuse_file_
 }
 void FuseBridge::HandleRead(fuse_req_t req, fuse_ino_t ino, size_t size, off_t off,
                     struct fuse_file_info* fi) {
+    FUSE_LOG_DEBUG("HandleRead - ino=%llu, size=%zu, off=%lld", (unsigned long long)ino, size, (long long)off);
     auto context = CreateContext(FuseOpType::READ, req);
     context->ino = ino;
     context->size = size;
@@ -1772,19 +1780,15 @@ void FuseBridge::HandleStatfs(fuse_req_t req, fuse_ino_t ino) {
 
         auto result = handler.Call({ino_value, request_ctx, options});
         ResolvePromiseOrValue(env, context, result, [context](Napi::Env env_inner, Napi::Value val) {
-            // For now, just reply with a basic statvfs structure
+            if (!val.IsObject()) {
+                context->ReplyError(EIO);
+                return;
+            }
             struct statvfs st = {};
-            st.f_bsize = 4096;
-            st.f_frsize = 4096;
-            st.f_blocks = 1000000;
-            st.f_bfree = 500000;
-            st.f_bavail = 500000;
-            st.f_files = 100000;
-            st.f_ffree = 50000;
-            st.f_favail = 50000;
-            st.f_fsid = 0;
-            st.f_flag = 0;
-            st.f_namemax = 255;
+            if (!NapiHelpers::ObjectToStatvfs(val.As<Napi::Object>(), &st)) {
+                context->ReplyError(EIO);
+                return;
+            }
             context->ReplyStatfs(st);
         });
     });

@@ -108,6 +108,7 @@ struct FuseRequestContext : public std::enable_shared_from_this<FuseRequestConte
     void ReplyBuf(const void* data_ptr, size_t length);
     void ReplyWrite(size_t bytes_written);
     void ReplyOpen(const struct fuse_file_info& result_fi);
+    void ReplyOpendir(const struct fuse_file_info& result_fi);
     void ReplyCreate(const struct fuse_entry_param& entry,
                      const struct fuse_file_info& result_fi);
     void ReplyStatfs(const struct statvfs& stats);

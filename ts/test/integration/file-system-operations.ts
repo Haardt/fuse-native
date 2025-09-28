@@ -85,6 +85,7 @@ export type OperationOverrides = Partial<FuseOperationHandlers>;
 export class FileSystemOperations implements FuseOperationHandlers {
   _fs: FileSystem;
   _overrides: OperationOverrides;
+  _nextFd = 1n;
 
   constructor(fs: FileSystem, overrides: OperationOverrides = {}) {
     this._fs = fs;
@@ -131,28 +132,50 @@ export class FileSystemOperations implements FuseOperationHandlers {
       throw new FuseErrno('ENOTDIR');
     }
 
-    // Einträge sortiert (für stabile Tests)
-    const items = Array.from(dir.data.entries()).sort(([a],[b]) => a.localeCompare(b));
+    const entriesToSend: DirentEntry[] = [];
 
-    const start = offset < 0n ? 0 : Number(offset);
+    // Always include '.' and '..'
+    entriesToSend.push({
+      name: '.',
+      ino: dir.id,
+      type: DirentType.Directory,
+      nextOffset: 1n, // Offset for the next entry
+    });
+    entriesToSend.push({
+      name: '..',
+      ino: dir.id, // For simplicity, '..' of root is root itself in this test FS
+      type: DirentType.Directory,
+      nextOffset: 2n, // Offset for the next entry
+    });
+
+    // Add actual directory contents
+    const sortedChildren = Array.from(dir.data.entries()).sort(([a],[b]) => a.localeCompare(b));
+    let currentOffset = 3n; // Start offset after '.' and '..'
+    for (const [name, child] of sortedChildren) {
+      entriesToSend.push({
+        name,
+        ino: child.id,
+        type: child.type === 'directory' ? DirentType.Directory
+          : child.type === 'file'     ? DirentType.RegularFile
+            : DirentType.Unknown,
+        nextOffset: currentOffset++,
+      });
+    }
+
+    const start = Number(offset); // Convert bigint offset to number for array slicing
     const bufSize = options?.size ?? 0;
-    // Heuristik: ~80 Bytes je Dirent+Name
-    const budget = bufSize > 0 ? Math.max(16, Math.min(512, Math.floor(bufSize / 80))) : 128;
+    const budget = bufSize > 0 ? Math.max(1, Math.min(entriesToSend.length, Math.floor(bufSize / 80))) : entriesToSend.length; // Adjust budget calculation
 
-    const slice = items.slice(start, start + budget);
-    const entries = slice.map(([name, child], idx) => ({
-      name,
-      ino: child.id,
-      type: child.type === 'directory' ? DirentType.Directory
-        : child.type === 'file'     ? DirentType.RegularFile
-          : DirentType.Unknown,
-      nextOffset: BigInt(start + idx + 1), // nächster Start-Index
+    const slice = entriesToSend.slice(start, start + budget);
+    const resultEntries = slice.map((entry, idx) => ({
+      ...entry,
+      nextOffset: BigInt(start + idx + 1), // Update nextOffset based on current slice
     }));
 
-    const lastOffset = entries.length ? entries[entries.length - 1].nextOffset : BigInt(start);
-    const hasMore = start + entries.length < items.length;
+    const lastOffset = resultEntries.length > 0 ? resultEntries[resultEntries.length - 1].nextOffset : offset;
+    const hasMore = (start + resultEntries.length) < entriesToSend.length;
 
-    return { entries, hasMore, nextOffset: lastOffset };
+    return { entries: resultEntries, hasMore, nextOffset: lastOffset };
   };
 
   lookup: LookupHandler = async (parent, name, context, options) => {
@@ -193,14 +216,26 @@ export class FileSystemOperations implements FuseOperationHandlers {
     if (this._overrides.open) {
       return this._overrides.open(ino, context, options);
     }
-    throw new FuseErrno('ENOSYS');
+    const fd = createFd(this._nextFd++);
+    return { fh: fd, flags: options?.flags ?? createFlags(0), direct_io: true };
   };
 
   read: ReadHandler = async (ino, context, options) => {
     if (this._overrides.read) {
       return this._overrides.read(ino, context, options);
     }
-    throw new FuseErrno('ENOSYS');
+    const inode = this._fs.getInode(ino);
+    if (!inode) {
+      throw new FuseErrno('ENOENT');
+    }
+    if (inode.type !== 'file' || !(inode.data instanceof Buffer)) {
+      throw new FuseErrno('EISDIR'); // Or EBADF, depending on context
+    }
+
+    const start = Number(options.offset);
+    const end = start + options.size;
+    const data = inode.data.slice(start, end);
+    return data;
   };
 
   write: WriteHandler = async (ino, data, context, options) => {
@@ -214,7 +249,7 @@ export class FileSystemOperations implements FuseOperationHandlers {
     if (this._overrides.release) {
       return this._overrides.release(ino, fi, context, options);
     }
-    throw new FuseErrno('ENOSYS');
+    // Default release implementation - no-op
   };
 
   mkdir: MkdirHandler = async (parent, name, mode, context, options) => {
@@ -412,8 +447,8 @@ export class FileSystemOperations implements FuseOperationHandlers {
     if (this._overrides.opendir) {
       return this._overrides.opendir(ino, context, options);
     }
-    const fd = createFd(((ino & 0x7fffffffn) | 1n))
-    return { fh: fd, flags: createFlags(0) };
+    const fd = createFd(this._nextFd++);
+    return { fh: fd, flags: createFlags(0), direct_io: true };
   };
 
   releasedir = async (ino: Ino, fi: FileInfo, context: RequestContext, options?: BaseOperationOptions) => {
