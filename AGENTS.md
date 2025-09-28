@@ -1,86 +1,181 @@
-# AGENTS.md (English, Compact Version)
+# AGENTS.md
 
-0. IMPORTANT: DON'T START THE PRGRAMM. IT WILL CRASH OR YOU CAN START IT ASNYCHRONOUSLY.
-1. LET THE USER TEST THE PROGRAMM. BUILD IT, EDIT IT > OK
+# Single-Operation Implementation Plan
 
-## Mission
+> Replace `OP_NAME` with the concrete operation (e.g., `GETATTR`, `READDIR`) as you execute the steps.
 
-Ziel: Das Ziel ist es, die TypeScript-API von fuse-native so zu erweitern, dass sie die vollen Datenstrukturen der zugrundeliegenden libfuse-Bibliothek widerspiegelt.
-Dies erhöht die Mächtigkeit und Vorhersagbarkeit der API. Jede FUSE-Operation soll nach diesem Plan einzeln bearbeitet werden.
+## Phase 1 — Analysis
 
-Grundlegendes Konzept: Der Arbeitsablauf ist immer derselbe und folgt einem klaren Muster, um Konsistenz und Korrektheit zu gewährleisten:
+1. ### Ground truth (libfuse)
 
-1. Analyse: Verstehe die vollständige Datenstruktur der Operation.
-2. Implementierung: Setze die Änderungen im Code um (von der Typdefinition bis zum C++-Binding).
-3. Verifizierung: Stelle durch einen Integrationstest sicher, dass alles korrekt funktioniert.
+  * Open:
 
-Detaillierter Arbeitsplan (pro FUSE-Operation)
+    * `fuse-docs/doc/libfuse-operations.txt`
+    * `fuse-docs/include/fuse_kernel.h`
+  * Find **OP_NAME** (e.g., `FUSE_GETATTR`, `FUSE_READDIR`).
+  * Identify:
 
-Führe die folgenden Schritte für jede einzelne FUSE-Operation (z.B. getattr, readdir, mknod, etc.) durch.
+    * **Request structures** (what the kernel sends to userspace)
+    * **Reply structures** (what we must return), e.g.:
 
-Phase 1: Analyse und Recherche
+      * `struct fuse_attr_out`, `struct fuse_entry_out`, buffers for `readdir`, etc.
+    * Note each field name and C type (including 64-bit vs 32-bit, signedness, enums/flags, and time fields).
 
-1. FUSE-Dokumentation prüfen (`fuse-docs`):
-  * Ziel: Identifiziere die exakten Input- und Output-Strukturen der libfuse-Operation.
-  * Aktion:
-    * Öffne fuse-docs/doc/libfuse-operations.txt und fuse-docs/include/fuse_kernel.h.
-    * Suche die Zieldoperation (z.B., FUSE_GETATTR).
-    * Analysiere die zugehörigen C-Strukturen (z.B. fuse_attr_out, fuse_entry_out). Notiere alle Felder und deren C-Typen. Dies ist die "Wahrheit", an der wir uns
-      orientieren.
+2. ### C++ bridge (current binding)
 
-2. C++ Binding prüfen (`src/`):
-  * Ziel: Verstehe, wie die Daten aktuell zwischen TypeScript und C++ übergeben werden.
-  * Aktion:
-    * Öffne src/fuse_bridge.cc.
-    * Finde die C++-Funktion, die die Operation behandelt (z.B. HandleGetattr, HandleLookup).
-    * Analysiere die Hilfsfunktion, die das Ergebnis vom JavaScript-Handler entgegennimmt und in eine C-Struktur umwandelt (z.B. PopulateEntryFromResult).
-    * Prüfe, welche Felder aus dem JavaScript-Objekt bereits gelesen werden und welche fehlen.
+  * Open `src/fuse_bridge.cc`.
+  * Locate:
 
-3. TypeScript-Typen und Handler prüfen (`ts/`):
-  * Ziel: Identifiziere die Lücke zwischen der aktuellen TypeScript-Definition und der libfuse-Struktur.
-  * Aktion:
-    * Öffne ts/types.ts.
-    * Suche die aktuelle Handler-Typdefinition für die Operation (z.B. GetattrHandler).
-    * Vergleiche die Parameter und insbesondere den Rückgabewert mit deinen Notizen aus der fuse-docs-Analyse.
+    * The **HandleOP_NAME** method (e.g., `HandleGetattr`, `HandleReaddir`).
+    * The **Callback** that connects to libfuse (e.g., `GetattrCallback`).
+    * Any helper that **parses the JS result** into native structs
+      (e.g., `PopulateEntryFromResult`, bespoke parsing inside the handler).
+  * Compare what we currently parse/set vs. the ground-truth fields you listed.
 
-Phase 2: Implementierung
+3. ### TypeScript types & handler surface
 
-1. TypeScript-Typen anpassen (`ts/types.ts`):
-  * Ziel: Definiere die vollständige Datenstruktur in TypeScript.
-  * Aktion:
-    * Erstelle bei Bedarf einen neuen, aussagekräftigen ...Result- oder ...Param-Typ (z.B. EntryResult, AttrResult), der alle Felder aus der libfuse-Struktur
-      enthält. Achte auf korrekte Typen (bigint für 64-bit Integer, etc.).
-    * Aktualisiere die Signatur des Handler-Typs, sodass er die neue, reichhaltigere Struktur zurückgibt.
+  * Open `ts/types.ts` (or the file exporting handler types).
+  * Find the **handler type** for OP_NAME (e.g., `GetattrHandler`, `ReaddirHandler`).
+  * Compare the **current return type** (and params) with the ground truth. Identify missing/underspecified fields.
 
-2. C++ Binding anpassen (`src/fuse_bridge.cc`):
-  * Ziel: Bringe dem C++-Code bei, die neue TypeScript-Struktur zu verstehen.
-  * Aktion:
-    * Modifiziere die entsprechende Populate...From...-Funktion.
-    * Füge die Logik hinzu, um die neuen Felder aus dem JavaScript-Objekt zu lesen (z.B. generation, entry_timeout).
-    * Stelle sicher, dass die Daten korrekt in die C-Struktur für libfuse geschrieben werden.
+---
 
-3. Default-Implementierung anpassen (`ts/test/integration/file-system-operations.ts`):
-  * Ziel: Passe die Standard-Logik für Tests an die neue Typdefinition an.
-  * Aktion:
-    * Öffne ts/test/integration/file-system-operations.ts.
-    * Suche den Handler für die Operation (z.B. lookup: LookupHandler = ...).
-    * Ändere die Implementierung so, dass sie ein Objekt zurückgibt, das dem neuen, erweiterten ...Result-Typ entspricht.
-    * Hole die dafür nötigen Daten aus der _fs-Klasse. Falls dem SimpleInode in filesystem.ts dafür Eigenschaften fehlen (wie generation), füge sie dort ebenfalls
-      hinzu.
+## Phase 2 — Implementation
 
-Phase 3: Verifizierung
+1. ### TS type surface (`ts/types.ts`)
 
-1. Integrationstest erstellen/anpassen (`ts/test/integration/`):
-  * Ziel: Schreibe einen Test, der die korrekte End-zu-End-Funktionalität der neuen Datenstruktur beweist.
-  * Aktion:
-    * Erstelle eine neue [operation].test.ts-Datei oder passe eine existierende an.
-    * Folge dem etablierten Test-Muster:
-      1. Override Handler: Überschreibe den Handler mit einer test...Handler-Implementierung.
-      2. Return Rich Data: Gib in diesem Test-Handler ein hartcodiertes Objekt zurück, das die neue, vollständige Datenstruktur verwendet.
-      3. Trigger Operation: Führe eine Dateisystem-Operation aus, die den FUSE-Handler auslöst (z.B. fs.stat(), fs.readdir()).
-      4. Assert:
-        * Überprüfe, ob die an den Handler übergebenen Parameter korrekt sind.
-        * Überprüfe, ob das Ergebnis des fs-Aufrufs die reichhaltigen Daten widerspiegelt, die vom Test-Handler zurückgegeben wurden.
+  * Define or extend a **rich result type** that mirrors the libfuse reply:
+
+    * Example names: `GetattrResult`, `EntryResult`, `ReaddirResult`, etc.
+    * Include **all** libfuse reply fields. Use:
+
+      * `bigint` for any 64-bit integers (ino, size, blocks, offsets, FHs, time in ns if applicable).
+      * `number` for 32-bit flags/mode/uid/gid/errno.
+      * Nested objects if that improves clarity (e.g., `{ attr: StatResult, timeout: number }`).
+  * Update the `OP_NAME` handler signature to **return the new result**.
+
+2. ### Bridge parsing (`src/fuse_bridge.cc`)
+
+  * If a helper exists (e.g., `PopulateEntryFromResult`), **extend it** to read every new field you added to the TS result.
+  * If parsing is inline in `HandleOP_NAME`, **add robust extraction** for each field:
+
+    * When reading from JS:
+
+      * Use BigInt helpers for 64-bit: `NapiHelpers::GetBigUint64`, `CreateBigIntU64`, etc.
+      * Validate optional fields (existence + type).
+      * Enforce **lossless** conversions for BigInt ↔ 64-bit C++.
+    * Map all fields into the correct libfuse struct(s), or build the response buffer (e.g., `readdir` uses `fuse_add_direntry`).
+  * Ensure you **reply** with the correct libfuse API:
+
+    * Examples:
+
+      * `fuse_reply_attr`, `fuse_reply_entry`, `fuse_reply_statfs`, `fuse_reply_buf`, `fuse_reply_write`, etc.
+  * Keep ownership in mind: if you pass a buffer to FUSE, ensure the **buffer lifetime** survives the reply (use a `shared_ptr` “keepalive” as done elsewhere).
+
+3. ### Default ops used in tests (`ts/test/integration/file-system-operations.ts`)
+
+  * Update the **default handler implementation** for OP_NAME to **populate every field** now defined in your rich TS result.
+  * If your result needs data not present in the simple filesystem model, extend `ts/test/integration/filesystem.ts` (e.g., add `generation`, extra timestamps, etc.).
+
+---
+
+## Phase 3 — Verification
+
+1. ### Integration test (`ts/test/integration/op_name.test.ts`)
+
+  * Pattern:
+
+    1. **Override only OP_NAME** with a test handler that returns a **fully populated** result object (use clear, non-default values to catch mapping errors).
+    2. **Trigger** the op from Node’s fs to go through the bridge:
+
+      * `getattr` → `fs.stat()` or `lstat()`
+      * `readdir` → `fs.readdir()`
+      * `mknod`/`mkdir`/etc. → corresponding fs call
+    3. **Assert**:
+
+      * The JS handler **received** the correct params (ino, offsets, `fi`, `context`).
+      * The kernel call’s **observable effect** matches your returned data (e.g., names/offsets in `readdir`, stat fields for `getattr`).
+      * For paginated/streamed ops (e.g., `readdir`), assert `nextOffset`, `hasMore`, and **monotonic offsets**.
+
+2. ### Negative/edge checks (lightweight)
+
+  * Missing optional fields → defaults behave correctly.
+  * Type mismatch → handler returns `ENOSYS` or `EIO` as expected.
+  * Large 64-bit values round-trip losslessly.
+
+---
+
+## Logging (optional but recommended while implementing one op)
+
+You can turn logging on/off at runtime or compile time. Use it to trace **only the op you’re working on**.
+
+### Runtime control
+
+Set the env var `FUSE_LOG` (case-insensitive) to one of:
+`OFF | ERROR | WARN | INFO | DEBUG | TRACE`
+
+Examples:
+
+```bash
+# quiet
+FUSE_LOG=OFF npm test
+
+# detailed while developing one op
+FUSE_LOG=DEBUG npm run test -- ts/test/integration/op_name.test.ts
+
+# maximum
+FUSE_LOG=TRACE node your-app.js
+```
+
+> If logging was compiled out (`FUSE_LOG_ENABLED=0`), the env var has no effect.
+
+### Build-time flags
+
+Add to `binding.gyp` → `cflags_cc`:
+
+```json
+"-DFUSE_LOG_ENABLED=1",
+"-DFUSE_LOG_DEFAULT_LEVEL=FUSE_LOG_LEVEL_INFO",
+"-DFUSE_LOG_TAG=\"fuse-native\""
+```
+
+* `FUSE_LOG_ENABLED=0` removes logging entirely (zero overhead).
+* Change `FUSE_LOG_DEFAULT_LEVEL` if you want a higher default without env vars.
+
+### Where to log
+
+* In `src/fuse_bridge.cc`, log at the **start** and **end** of `HandleOP_NAME`, and when parsing/validating the JS result.
+* Use concise, structured messages—include `ino`, sizes, offsets, flags, and whether BigInt conversions were lossless.
+
+Examples:
+
+```cpp
+FUSE_LOG_DEBUG("readdir: ino=%llu size=%zu off=%lld", (unsigned long long)ino, size, (long long)off);
+FUSE_LOG_TRACE("readdir: added entry name=%s nextOffset=%lld need=%zu", name.c_str(), (long long)next_offset, need);
+FUSE_LOG_ERROR("getattr: invalid result: missing 'attr'");
+```
+
+---
+
+## Acceptance Checklist (per OP_NAME)
+
+* [ ] All libfuse reply fields are represented in the TS result type.
+* [ ] C++ bridge parses **every** field with correct types and lossless BigInt handling.
+* [ ] The correct libfuse reply function is used; buffer lifetimes are safe.
+* [ ] Default test implementation returns a **fully populated** result matching the new type.
+* [ ] Integration test triggers the op and asserts both **input params** and **observable outputs**.
+* [ ] Logging at `DEBUG` shows a clean, traceable flow; can be silenced with `FUSE_LOG=OFF`.
+
+---
+
+### Tips
+
+* Prefer **explicit** BigInt handling (`Uint64Value`, `Int64Value`) with **lossless** checks.
+* Time fields: decide on **ns-since-epoch BigInt** in TS → convert via `NapiHelpers::NsBigIntToTimespec`.
+* For `readdir`, ensure offsets are **strictly increasing** and `nextOffset` semantics match libfuse expectations.
+* Keep changes **surgical**: one operation per PR keeps diffs reviewable and tests precise.
+
+That’s it. Apply this playbook **one operation at a time** until the TypeScript API fully mirrors libfuse.
 
 ## Goals
 
@@ -98,7 +193,8 @@ These rules help keep the project modular, predictable, and easier to maintain. 
 ```
 /src     # C++ N-API Bridge
 /ts      # Public TS API, helpers, types
-/ts/test    # Unit & Mock-E2E tests
+/ts/test/integration    # The integration tests
+/ts/test/    # Unit tests
 /docs    # API reference & HowTos
 /fuse-docs    # fuse3 source code and docs
 /examples# memfs, passthrough, kvfs
