@@ -10,6 +10,7 @@
 #include "fuse_bridge.h"
 #include "napi_helpers.h"
 #include "errno_mapping.h"
+#include "logging.h"
 #include <unordered_map>
 #include <memory>
 #include <thread>
@@ -73,18 +74,14 @@ bool SessionManager::Initialize() {
 
     try {
         // Create FUSE bridge
-        fprintf(stderr, "FUSE: creating bridge...\n");
-        fflush(stderr);
+        FUSE_LOG_INFO("SessionManager::Initialize - creating bridge");
         bridge_ = std::make_unique<FuseBridge>(this);
-        fprintf(stderr, "FUSE: bridge created, initializing...\n");
-        fflush(stderr);
+        FUSE_LOG_INFO("SessionManager::Initialize - bridge created, initializing");
         if (!bridge_->Initialize(Napi::Env(env_))) {
-            fprintf(stderr, "FUSE: bridge initialization failed\n");
-            fflush(stderr);
+            FUSE_LOG_ERROR("SessionManager::Initialize - bridge initialization failed");
             return false;
         }
-        fprintf(stderr, "FUSE: bridge initialization succeeded\n");
-        fflush(stderr);
+        FUSE_LOG_INFO("SessionManager::Initialize - bridge initialization succeeded");
 
         // Create FUSE session arguments using proper FUSE argument parsing
         std::vector<std::string> fuse_args;
@@ -127,8 +124,7 @@ bool SessionManager::Initialize() {
         // Parse command line options
         if (fuse_parse_cmdline(&args, &opts) != 0) {
             fuse_opt_free_args(&args);
-            fprintf(stderr, "FUSE: failed to parse command line arguments\n");
-            fflush(stderr);
+            FUSE_LOG_ERROR("SessionManager::Initialize - failed to parse command line arguments");
             return false;
         }
 
@@ -136,8 +132,7 @@ bool SessionManager::Initialize() {
         opts.mountpoint = strdup(mountpoint_.c_str());
         if (!opts.mountpoint) {
             fuse_opt_free_args(&args);
-            fprintf(stderr, "FUSE: failed to allocate mountpoint string\n");
-            fflush(stderr);
+            FUSE_LOG_ERROR("SessionManager::Initialize - failed to allocate mountpoint string");
             return false;
         }
 
@@ -150,12 +145,10 @@ bool SessionManager::Initialize() {
         free(opts.mountpoint);
 
         if (!fuse_session_) {
-            fprintf(stderr, "FUSE: session_new failed\n");
-            fflush(stderr);
+            FUSE_LOG_ERROR("SessionManager::Initialize - fuse_session_new failed");
             return false;
         }
-        fprintf(stderr, "FUSE: session_new succeeded\n");
-        fflush(stderr);
+        FUSE_LOG_INFO("SessionManager::Initialize - fuse_session_new succeeded");
 
         state_ = SessionState::INITIALIZED;
         return true;
@@ -168,40 +161,33 @@ bool SessionManager::Initialize() {
 
 bool SessionManager::Mount() {
     std::lock_guard<std::mutex> lock(state_mutex_);
-    fprintf(stderr, "FUSE: Mount1 %s\n", mountpoint_.c_str());
-    fflush(stderr);
+    FUSE_LOG_INFO("SessionManager::Mount - attempt 1 %s", mountpoint_.c_str());
 
     if (state_ != SessionState::INITIALIZED) {
-        fprintf(stderr, "FUSE: state is %d, need to initialize\n", static_cast<int>(state_));
-        fflush(stderr);
+        FUSE_LOG_DEBUG("SessionManager::Mount - state=%d, initializing", static_cast<int>(state_));
         if (state_ == SessionState::CREATED && !Initialize()) {
-            fprintf(stderr, "FUSE: Initialize() failed\n");
-            fflush(stderr);
+            FUSE_LOG_ERROR("SessionManager::Mount - Initialize() failed");
             return false;
         } else if (state_ != SessionState::INITIALIZED) {
-            fprintf(stderr, "FUSE: state is still not INITIALIZED after Initialize()\n");
-            fflush(stderr);
+            FUSE_LOG_ERROR("SessionManager::Mount - still not INITIALIZED after Initialize()");
             return false;
         }
     }
-    fprintf(stderr, "FUSE: Mount2 %s\n", mountpoint_.c_str());
-    fflush(stderr);
+    FUSE_LOG_INFO("SessionManager::Mount - attempt 2 %s", mountpoint_.c_str());
 
     // Mount the filesystem
     if (fuse_session_mount(fuse_session_, mountpoint_.c_str()) != 0) {
-        fprintf(stderr, "FUSE: session_mount failed for %s\n", mountpoint_.c_str());
-        fflush(stderr);
+        FUSE_LOG_ERROR("SessionManager::Mount - fuse_session_mount failed for %s", mountpoint_.c_str());
         return false;
     }
     if (!options_.install_signal_handlers) {
-      fprintf(stderr, "FUSE: skipping fuse_set_signal_handlers\n");
+      FUSE_LOG_INFO("SessionManager::Mount - skipping fuse_set_signal_handlers");
     } else {
       if (fuse_set_signal_handlers(fuse_session_) != 0) {
-        fprintf(stderr, "FUSE: fuse_set_signal_handlers failed (continuing)\n");
+        FUSE_LOG_WARN("SessionManager::Mount - fuse_set_signal_handlers failed (continuing)");
       }
     }
-    fprintf(stderr, "FUSE: session_mount succeeded for %s\n", mountpoint_.c_str());
-    fflush(stderr);
+    FUSE_LOG_INFO("SessionManager::Mount - fuse_session_mount succeeded for %s", mountpoint_.c_str());
 
     state_ = SessionState::MOUNTED;
 
@@ -270,10 +256,10 @@ void SessionManager::Destroy() {
 
 void SessionManager::RunFuseLoop() {
     if (!fuse_session_) {
-        fprintf(stderr, "FUSE: RunFuseLoop - no fuse_session_\n");
+        FUSE_LOG_ERROR("SessionManager::RunFuseLoop - no fuse_session_");
         return;
     }
-    fprintf(stderr, "** FUSE: RunFuseLoop - using libfuse-managed buffers\n");
+    FUSE_LOG_INFO("SessionManager::RunFuseLoop - using libfuse-managed buffers");
     // libfuse allokiert pro receive selbst, wenn mem == nullptr
     struct fuse_buf fbuf = {};
     fbuf.mem = nullptr;
@@ -281,7 +267,7 @@ void SessionManager::RunFuseLoop() {
     // Main FUSE loop
     int loop_count = 0;
     int fd = fuse_session_fd(fuse_session_);
-    fprintf(stderr, "FUSE: RunFuseLoop start fd=%d\n", fuse_session_fd(fuse_session_));
+    FUSE_LOG_INFO("SessionManager::RunFuseLoop - start fd=%d", fuse_session_fd(fuse_session_));
     while (mount_thread_running_.load(std::memory_order_acquire) &&
            !fuse_session_exited(fuse_session_)) {
 
@@ -289,7 +275,7 @@ void SessionManager::RunFuseLoop() {
       int pr = poll(&pfd, 1, 250);            // 250 ms
       if (pr < 0) {
         if (errno == EINTR) continue;
-        fprintf(stderr, "FUSE: poll error errno=%d (%s)\n", errno, strerror(errno));
+        FUSE_LOG_ERROR("SessionManager::RunFuseLoop - poll error errno=%d (%s)", errno, strerror(errno));
         break;
       }
       if (pr == 0) continue;                  // Timeout → Flags erneut prüfen
@@ -302,11 +288,11 @@ void SessionManager::RunFuseLoop() {
         int res = fuse_session_receive_buf(fuse_session_, &fbuf);
         if (res <= 0) {
 
-          fprintf(stderr,
-            "FUSE: receive_buf res=%d errno=%d exited=%d running=%d\n",
-            res, errno,
-            (int)fuse_session_exited(fuse_session_),
-            (int)mount_thread_running_.load(std::memory_order_acquire));
+          FUSE_LOG_WARN("SessionManager::RunFuseLoop - receive_buf res=%d errno=%d exited=%d running=%d",
+                        res,
+                        errno,
+                        (int)fuse_session_exited(fuse_session_),
+                        (int)mount_thread_running_.load(std::memory_order_acquire));
 
           if (res == -EINTR || res == 0) {
             if (!mount_thread_running_.load(std::memory_order_acquire) ||
@@ -318,7 +304,7 @@ void SessionManager::RunFuseLoop() {
         }
 
         if (pfd.revents & ~(POLLIN)) {
-          fprintf(stderr, "FUSE: poll revents=0x%x (unexpected)\n", pfd.revents);
+          FUSE_LOG_WARN("SessionManager::RunFuseLoop - poll revents=0x%x (unexpected)", pfd.revents);
         }
 
         fuse_session_process_buf(fuse_session_, &fbuf);
@@ -330,14 +316,13 @@ void SessionManager::RunFuseLoop() {
         ++loop_count;
       }
     }
-    fprintf(stderr,
-      "FUSE: loop end reason: exited=%d running=%d state=%d\n",
-      (int)fuse_session_exited(fuse_session_),
-      (int)mount_thread_running_.load(std::memory_order_acquire),
-      (int)GetState());
+    FUSE_LOG_INFO("SessionManager::RunFuseLoop - loop end reason exited=%d running=%d state=%d",
+                  (int)fuse_session_exited(fuse_session_),
+                  (int)mount_thread_running_.load(std::memory_order_acquire),
+                  (int)GetState());
 
 
-    fprintf(stderr, "FUSE: RunFuseLoop - exiting loop after %d iterations\n", loop_count);
+    FUSE_LOG_INFO("SessionManager::RunFuseLoop - exiting loop after %d iterations", loop_count);
 }
 
 /**
@@ -399,16 +384,13 @@ Napi::Value CreateSession(const Napi::CallbackInfo& info) {
         auto session_manager = std::make_unique<SessionManager>(env, mountpoint, options);
         uint64_t session_id = session_manager->GetSessionId();
 
-        fprintf(stderr, "FUSE: CreateSession - calling Initialize() on session manager\n");
-        fflush(stderr);
+        FUSE_LOG_INFO("CreateSession - calling Initialize() on session manager");
         if (!session_manager->Initialize()) {
-            fprintf(stderr, "FUSE: CreateSession - Initialize() failed\n");
-            fflush(stderr);
+            FUSE_LOG_ERROR("CreateSession - Initialize() failed");
             NapiHelpers::ThrowError(env, "Failed to initialize session");
             return env.Undefined();
         }
-        fprintf(stderr, "FUSE: CreateSession - Initialize() succeeded\n");
-        fflush(stderr);
+        FUSE_LOG_INFO("CreateSession - Initialize() succeeded");
 
         // Store in registry
         {

@@ -1,7 +1,8 @@
 #include "tsfn_dispatcher.h"
 
+#include "logging.h"
+
 #include <algorithm>
-#include <cstdio>
 #include <exception>
 #include <functional>
 #include <utility>
@@ -59,9 +60,9 @@ bool TSFNDispatcher::Initialize() {
     next_request_id_.store(1, std::memory_order_release);
     return true;
   } catch (const std::exception& ex) {
-    fprintf(stderr, "TSFNDispatcher::Initialize failed: %s\n", ex.what());
+    FUSE_LOG_ERROR("TSFNDispatcher::Initialize failed: %s", ex.what());
   } catch (...) {
-    fprintf(stderr, "TSFNDispatcher::Initialize failed: unknown error\n");
+    FUSE_LOG_ERROR("TSFNDispatcher::Initialize failed: unknown error");
   }
 
   state_.store(DispatcherState::UNINITIALIZED, std::memory_order_release);
@@ -78,13 +79,13 @@ bool TSFNDispatcher::Shutdown(uint32_t timeout_ms) {
   DispatcherState current = state_.load(std::memory_order_acquire);
   if (current == DispatcherState::SHUTDOWN) {
     DrainWorkerThreads();
-    fprintf(stderr, "TSFNDispatcher::Shutdown - already SHUTDOWN\n");
+    FUSE_LOG_DEBUG("TSFNDispatcher::Shutdown - already SHUTDOWN");
     return true;
   }
   if (current == DispatcherState::UNINITIALIZED) {
     state_.store(DispatcherState::SHUTDOWN, std::memory_order_release);
     DrainWorkerThreads();
-    fprintf(stderr, "TSFNDispatcher::Shutdown - from UNINITIALIZED -> SHUTDOWN\n");
+    FUSE_LOG_DEBUG("TSFNDispatcher::Shutdown - from UNINITIALIZED -> SHUTDOWN");
     return true;
   }
 
@@ -147,8 +148,8 @@ bool TSFNDispatcher::Shutdown(uint32_t timeout_ms) {
       pending_requests_.clear();
     }
 
-    fprintf(stderr, "TSFNDispatcher::Shutdown - canceled queued=%zu pending=%zu\n",
-            canceled_queue, canceled_pending);
+    FUSE_LOG_DEBUG("TSFNDispatcher::Shutdown - canceled queued=%zu pending=%zu",
+                   canceled_queue, canceled_pending);
   };
 
   cancel_all_callbacks();
@@ -165,8 +166,9 @@ bool TSFNDispatcher::Shutdown(uint32_t timeout_ms) {
       // Letztes Aufräumen erzwingen (falls ein Rennen noch etwas reingelegt hat)
       cancel_all_callbacks();
       // Kein weiteres blockierendes Warten – wir fahren den Shutdown fort.
-      fprintf(stderr, "TSFNDispatcher::Shutdown - inflight did not reach 0 within %u ms (left=%ld)\n",
-              wait_ms, (long)inflight_.load(std::memory_order_acquire));
+      FUSE_LOG_WARN("TSFNDispatcher::Shutdown - inflight did not reach 0 within %u ms (left=%ld)",
+                    wait_ms,
+                    static_cast<long>(inflight_.load(std::memory_order_acquire)));
     }
   }
 
@@ -198,8 +200,8 @@ bool TSFNDispatcher::Shutdown(uint32_t timeout_ms) {
   }
 
   state_.store(DispatcherState::SHUTDOWN, std::memory_order_release);
-  fprintf(stderr, "TSFNDispatcher::Shutdown - finished (inflight=%ld)\n",
-          (long)inflight_.load(std::memory_order_acquire));
+  FUSE_LOG_INFO("TSFNDispatcher::Shutdown - finished (inflight=%ld)",
+                static_cast<long>(inflight_.load(std::memory_order_acquire)));
   return true;
 }
 
@@ -228,9 +230,9 @@ bool TSFNDispatcher::RegisterHandler(const std::string& operation_name, Napi::Fu
     }
     return true;
   } catch (const std::exception& ex) {
-    fprintf(stderr, "RegisterHandler failed for %s: %s\n", operation_name.c_str(), ex.what());
+    FUSE_LOG_ERROR("RegisterHandler failed for %s: %s", operation_name.c_str(), ex.what());
   } catch (...) {
-    fprintf(stderr, "RegisterHandler failed for %s: unknown error\n", operation_name.c_str());
+    FUSE_LOG_ERROR("RegisterHandler failed for %s: unknown error", operation_name.c_str());
   }
   return false;
 }
@@ -420,7 +422,7 @@ void TSFNDispatcher::WorkerThreadMain() {
 
 void TSFNDispatcher::ProcessCallback(std::shared_ptr<PendingCallback> callback) {
   if (!callback || !callback->context) {
-    fprintf(stderr, "ProcessCallback received invalid context\n");
+    FUSE_LOG_ERROR("ProcessCallback received invalid context");
     DecInflight();
     return;
   }

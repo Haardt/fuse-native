@@ -10,6 +10,8 @@ FUSE Native follows POSIX errno conventions with a consistent error handling app
 - **Errors**: Return negative errno codes (e.g., `-2` for `ENOENT`)
 - **JavaScript**: Throw `FuseErrno` instances with proper errno, code, and message
 
+> Tip: Enable native logging with `FUSE_LOG=DEBUG` while reproducing failures. The C++ bridge now emits structured lines (see `src/logging.h`) that include errno values, file and line numbers, and a component tag. Compile-time defines such as `-DFUSE_LOG_ENABLED=0` or `-DFUSE_LOG_DEFAULT_LEVEL=FUSE_LOG_LEVEL_WARN` let you tune the overhead in production builds.
+
 ## Core Error Types
 
 ### FuseErrno Class

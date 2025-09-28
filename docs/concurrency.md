@@ -10,6 +10,8 @@ The FUSE native binding uses a sophisticated concurrency model to ensure thread 
 2. **Write Queues** - Per-FD write operation ordering
 3. **Shutdown Manager** - Graceful shutdown with state transitions
 
+Enable `FUSE_LOG=TRACE` during diagnosis to follow dispatcher state changes, queue activity, and shutdown transitions; the new native logger annotates every C++ log line with the originating file and operation.
+
 ## TSFN Dispatcher
 
 ### Purpose

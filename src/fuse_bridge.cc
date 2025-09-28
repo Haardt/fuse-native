@@ -5,6 +5,8 @@
 
 #include "fuse_bridge.h"
 
+#include "logging.h"
+
 #include <algorithm>
 #include <array>
 #include <cctype>
@@ -137,24 +139,24 @@ inline uint64_t ToUint64(fuse_ino_t value) {
 }
 
 Napi::Object CreateRequestContextObject(Napi::Env env, const FuseRequestContext& context) {
-    fprintf(stderr, "FUSE: CreateRequestContextObject - creating object\n");
+    FUSE_LOG_TRACE("CreateRequestContextObject - creating object");
     Napi::Object ctx = Napi::Object::New(env);
     if (!context.has_caller_ctx) {
-        fprintf(stderr, "FUSE: CreateRequestContextObject - no caller context, setting defaults\n");
+        FUSE_LOG_TRACE("CreateRequestContextObject - no caller context, setting defaults");
         ctx.Set("uid", Napi::Number::New(env, 0));
         ctx.Set("gid", Napi::Number::New(env, 0));
         ctx.Set("pid", Napi::Number::New(env, 0));
         ctx.Set("umask", Napi::Number::New(env, 0));
-        fprintf(stderr, "FUSE: CreateRequestContextObject - returning default context\n");
+        FUSE_LOG_TRACE("CreateRequestContextObject - returning default context");
         return ctx;
     }
 
-    fprintf(stderr, "FUSE: CreateRequestContextObject - has caller context, setting values\n");
+    FUSE_LOG_TRACE("CreateRequestContextObject - has caller context, setting values");
     ctx.Set("uid", Napi::Number::New(env, static_cast<double>(context.caller_ctx.uid)));
     ctx.Set("gid", Napi::Number::New(env, static_cast<double>(context.caller_ctx.gid)));
     ctx.Set("pid", Napi::Number::New(env, static_cast<double>(context.caller_ctx.pid)));
     ctx.Set("umask", Napi::Number::New(env, static_cast<double>(context.caller_ctx.umask)));
-    fprintf(stderr, "FUSE: CreateRequestContextObject - returning context with caller info\n");
+    FUSE_LOG_TRACE("CreateRequestContextObject - returning context with caller info");
     return ctx;
 }
 
@@ -369,17 +371,17 @@ FuseRequestContext::FuseRequestContext(FuseOpType op, fuse_req_t req, FuseBridge
       has_lock(false),
       sleep(0),
       replied(false) {
-    fprintf(stderr, "FUSE: FuseRequestContext - creating context for op_type %d\n", static_cast<int>(op));
+    FUSE_LOG_TRACE("FuseRequestContext - creating context for op_type %d", static_cast<int>(op));
     std::memset(&attr, 0, sizeof(attr));
     std::memset(&fi, 0, sizeof(fi));
     std::memset(&fi_out, 0, sizeof(fi_out));
     std::memset(&lock, 0, sizeof(lock));
     std::memset(&caller_ctx, 0, sizeof(caller_ctx));
     if (req) {
-        fprintf(stderr, "FUSE: FuseRequestContext - capturing caller context\n");
+        FUSE_LOG_TRACE("FuseRequestContext - capturing caller context");
         CaptureCallerContext();
     } else {
-        fprintf(stderr, "FUSE: FuseRequestContext - no request provided\n");
+        FUSE_LOG_DEBUG("FuseRequestContext - no request provided");
     }
 }
 
@@ -544,17 +546,17 @@ FuseBridge::~FuseBridge() {
 }
 
 bool FuseBridge::Initialize(Napi::Env env) {
-    fprintf(stderr, "FUSE: FuseBridge::Initialize - starting\n");
+    FUSE_LOG_INFO("FuseBridge::Initialize - starting");
     if (initialized_) {
-        fprintf(stderr, "FUSE: FuseBridge::Initialize - already initialized\n");
+        FUSE_LOG_WARN("FuseBridge::Initialize - already initialized");
         return true;
     }
 
     env_ = env;
-    fprintf(stderr, "FUSE: FuseBridge::Initialize - calling InitializeFuseOperations\n");
+    FUSE_LOG_DEBUG("FuseBridge::Initialize - calling InitializeFuseOperations");
     InitializeFuseOperations();
     initialized_ = true;
-    fprintf(stderr, "FUSE: FuseBridge::Initialize - completed successfully\n");
+    FUSE_LOG_INFO("FuseBridge::Initialize - completed successfully");
     return true;
 }
 
@@ -589,8 +591,7 @@ bool FuseBridge::RegisterOperationHandler(Napi::Env env, FuseOpType op_type, Nap
         return false;
     }
 
-    fprintf(stderr, "FUSE: Registering handler for %s\n", operation_name.c_str());
-    fflush(stderr);
+    FUSE_LOG_DEBUG("Registering handler for %s", operation_name.c_str());
 
     {
         std::lock_guard<std::mutex> lock(handler_mutex_);
@@ -627,8 +628,7 @@ bool FuseBridge::HasOperationHandler(FuseOpType op_type) {
 
     std::lock_guard<std::mutex> lock(handler_mutex_);
     bool found = handler_registry_.find(op_type) != handler_registry_.end();
-    fprintf(stderr, "FUSE: Checking for handler for %s, found: %d\n", FuseOpTypeToString(op_type), found);
-    fflush(stderr);
+    FUSE_LOG_TRACE("Checking for handler for %s, found: %d", FuseOpTypeToString(op_type), found ? 1 : 0);
     return found;
 }
 
@@ -705,12 +705,15 @@ void FuseBridge::InitializeFuseOperations() {
 
 void FuseBridge::ProcessRequest(std::shared_ptr<FuseRequestContext> context,
                                 std::function<void(Napi::Env, Napi::Function)> js_invoker) {
-  if (!context) { fprintf(stderr, "FUSE: ProcessRequest - context is null\n"); return; }
+  if (!context) {
+    FUSE_LOG_ERROR("ProcessRequest - context is null");
+    return;
+  }
 
   const char* op_name_str = FuseOpTypeToString(context->op_type);
 
   if (!HasOperationHandler(context->op_type)) {
-    fprintf(stderr, "FUSE: ProcessRequest - no handler for %s\n", op_name_str);
+    FUSE_LOG_WARN("ProcessRequest - no handler for %s", op_name_str);
     context->ReplyError(ENOSYS);
     return;
   }
@@ -744,7 +747,7 @@ void FuseBridge::ProcessRequest(std::shared_ptr<FuseRequestContext> context,
     },
     shared_context->priority,
     [shared_context](int error_code) {
-        fprintf(stderr, "FUSE: Dispatch error cb: %d\n", error_code);
+        FUSE_LOG_WARN("ProcessRequest dispatch error callback: %d", error_code);
         if (shared_context && !shared_context->replied.load()) {
             shared_context->ReplyError(error_code == 0 ? EIO : error_code);
         }
@@ -759,9 +762,9 @@ void FuseBridge::ProcessRequest(std::shared_ptr<FuseRequestContext> context,
 }
 
 std::shared_ptr<FuseRequestContext> FuseBridge::CreateContext(FuseOpType op_type, fuse_req_t req) {
-    fprintf(stderr, "FUSE: CreateContext - creating context for op_type %d\n", static_cast<int>(op_type));
+    FUSE_LOG_TRACE("CreateContext - creating context for op_type %d", static_cast<int>(op_type));
     auto context = std::make_shared<FuseRequestContext>(op_type, req, this);
-    fprintf(stderr, "FUSE: CreateContext - context created successfully\n");
+    FUSE_LOG_TRACE("CreateContext - context created successfully");
     return context;
 }
 
@@ -2485,35 +2488,35 @@ void FuseBridge::SetlkCallback(fuse_req_t req, fuse_ino_t ino, struct fuse_file_
 }
 
 void FuseBridge::LogMissingOperationHandlers() {
-    fprintf(stderr, "FUSE: === REGISTERED OPERATION HANDLERS ===\n");
+    FUSE_LOG_INFO("=== REGISTERED OPERATION HANDLERS ===");
 
     bool has_any_handlers = false;
     for (const auto& mapping : kOperationMappings) {
         if (HasOperationHandler(mapping.type)) {
-            fprintf(stderr, "FUSE: ✓ %s\n", mapping.name);
+            FUSE_LOG_INFO("Handler registered: %s", mapping.name);
             has_any_handlers = true;
         }
     }
 
     if (!has_any_handlers) {
-        fprintf(stderr, "FUSE: No operation handlers registered!\n");
+        FUSE_LOG_WARN("No operation handlers registered");
         return;
     }
 
-    fprintf(stderr, "FUSE: === MISSING OPERATION HANDLERS ===\n");
+    FUSE_LOG_INFO("=== MISSING OPERATION HANDLERS ===");
     bool has_missing = false;
     for (const auto& mapping : kOperationMappings) {
         if (!HasOperationHandler(mapping.type)) {
-            fprintf(stderr, "FUSE: ✗ %s (not registered)\n", mapping.name);
+            FUSE_LOG_WARN("Handler missing: %s", mapping.name);
             has_missing = true;
         }
     }
 
     if (!has_missing) {
-        fprintf(stderr, "FUSE: All operation handlers are registered!\n");
+        FUSE_LOG_INFO("All operation handlers are registered");
     }
 
-    fprintf(stderr, "FUSE: === END OPERATION HANDLERS LOG ===\n\n");
+    FUSE_LOG_INFO("=== END OPERATION HANDLERS LOG ===");
 }
 
 Napi::Value SetOperationHandler(const Napi::CallbackInfo& info) {

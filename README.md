@@ -565,12 +565,13 @@ const session = createSession('/tmp/debug-fs', operations, {
 
 ### Logging
 
-The library uses structured logging. Configure your log level:
+Native components now emit structured log lines via the macros in `src/logging.h`. Adjust verbosity at runtime with `FUSE_LOG`:
 
 ```bash
-export DEBUG=fuse-native:*
-node your-app.js
+FUSE_LOG=DEBUG node your-app.js
 ```
+
+Available levels are `OFF`, `ERROR`, `WARN`, `INFO`, `DEBUG`, and `TRACE`. For compile-time control pass defines such as `-DFUSE_LOG_ENABLED=0`, `-DFUSE_LOG_DEFAULT_LEVEL=FUSE_LOG_LEVEL_WARN`, or `-DFUSE_LOG_TAG="fuse-bridge"` when building the native module. A minimal C++ usage demo lives in `examples/logging_example.cc`.
 
 ## 🤝 Contributing
 

@@ -21,6 +21,7 @@ FUSE Native is designed for high-performance file system operations with minimal
 - **BigInt for 64-bit values**: No precision loss for large offsets/sizes
 - **Nanosecond timestamps**: Full precision time handling
 - **Thread-safe operations**: N-API ThreadSafeFunction for C++→JS callbacks
+- **Conditional logging**: Compile-time gated macros (`FUSE_LOG_ENABLED`, `FUSE_LOG_DEFAULT_LEVEL`) keep logging overhead at zero when disabled
 
 ## Zero-Copy Operations
 

@@ -8,6 +8,7 @@
         "src/napi_helpers.cc",
         "src/errno_mapping.cc",
         "src/timespec_codec.cc",
+        "src/logging.cc",
         "src/fuse_bridge.cc",
         "src/session_manager.cc",
         "src/buffer_bridge.cc",

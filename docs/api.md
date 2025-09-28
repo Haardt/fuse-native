@@ -10,7 +10,8 @@ This document provides a comprehensive API reference for the FUSE Native binding
 4. [Operation Handlers](#operation-handlers)
 5. [Session Management](#session-management)
 6. [Error Handling](#error-handling)
-7. [Examples](#examples)
+7. [Native Logging](#native-logging)
+8. [Examples](#examples)
 
 ## Core API
 
@@ -807,6 +808,19 @@ $ df -i /tmp/my-mount
 Filesystem      Inodes   IUsed   IFree IUse% Mounted on
 my-fuse-fs     10000000 5000000 4000000   56% /tmp/my-mount
 ```
+
+## Native Logging
+
+The native bridge emits structured log lines through the macros declared in `src/logging.h`. The logger is enabled by default and writes to `stderr` with timestamps, levels, and the compile-time tag.
+
+- **Runtime level**: Set the `FUSE_LOG` environment variable (`OFF`, `ERROR`, `WARN`, `INFO`, `DEBUG`, `TRACE`) to raise or lower verbosity without rebuilding.
+- **Compile-time switches**:
+  - `FUSE_LOG_ENABLED=0` removes all logging calls during compilation.
+  - `FUSE_LOG_DEFAULT_LEVEL=FUSE_LOG_LEVEL_WARN` keeps only warnings and errors in the binary.
+  - `FUSE_LOG_TAG="custom-tag"` overrides the component tag in log lines.
+- **Usage**: Call macros like `FUSE_LOG_INFO("Mounted %s", mountpoint)` or `FUSE_LOG_TRACE(...)` from any translation unit after including `logging.h`.
+
+See `examples/logging_example.cc` for a minimal `main` that demonstrates the output formatting and runtime controls.
 
 ## Examples
 

@@ -60,6 +60,7 @@ set(SOURCE_FILES
     src/napi_bigint.cc
     src/timespec_codec.cc
     src/errno_mapping.cc
+    src/logging.cc
     src/session_manager.cc
     src/buffer_bridge.cc
     src/copy_file_range.cc
