@@ -72,50 +72,137 @@ bool TSFNDispatcher::Initialize() {
   return false;
 }
 
-bool TSFNDispatcher::Shutdown(uint32_t /*timeout_ms*/) {
+bool TSFNDispatcher::Shutdown(uint32_t timeout_ms) {
   std::unique_lock<std::mutex> lifecycle_lock(lifecycle_mutex_);
 
   DispatcherState current = state_.load(std::memory_order_acquire);
-  if (current == DispatcherState::SHUTDOWN) { DrainWorkerThreads(); return true; }
+  if (current == DispatcherState::SHUTDOWN) {
+    DrainWorkerThreads();
+    fprintf(stderr, "TSFNDispatcher::Shutdown - already SHUTDOWN\n");
+    return true;
+  }
   if (current == DispatcherState::UNINITIALIZED) {
     state_.store(DispatcherState::SHUTDOWN, std::memory_order_release);
     DrainWorkerThreads();
+    fprintf(stderr, "TSFNDispatcher::Shutdown - from UNINITIALIZED -> SHUTDOWN\n");
     return true;
   }
 
+  // 0) Wechsel in SHUTTING_DOWN & Stopps signalisieren
   state_.store(DispatcherState::SHUTTING_DOWN, std::memory_order_release);
   accepting_.store(false, std::memory_order_release);
   workers_running_.store(false, std::memory_order_release);
   queue_cv_.notify_all();
 
-  { std::unique_lock<std::mutex> inflight_lock(inflight_mtx_);
-    inflight_cv_.wait(inflight_lock, [&]{ return inflight_.load(std::memory_order_acquire) == 0; });
+  // 1) Alle per-Operation-TSFNs stoppen (keine neuen JS-Calls mehr)
+  {
+    std::lock_guard<std::mutex> handlers_lock(handlers_mutex_);
+    for (auto& entry : handlers_) {
+      // Abort: bricht anstehende NonBlockingCall-Übertragungen ab
+      entry.second.Abort();
+    }
   }
 
+  // 2) Worker-Threads sicher beenden (keine weitere Queue-Verarbeitung)
   DrainWorkerThreads();
 
-  { std::lock_guard<std::mutex> handlers_lock(handlers_mutex_);
-    for (auto& entry : handlers_) { entry.second.Abort(); entry.second.Release(); }
+  // 3) Queued & Pending Callbacks aktiv abbrechen und inflight abbauen
+  auto cancel_all_callbacks = [this]() {
+    size_t canceled_queue = 0;
+    size_t canceled_pending = 0;
+
+    {
+      std::lock_guard<std::mutex> ql(queue_mutex_);
+      while (!callback_queue_.empty()) {
+        auto cb = callback_queue_.top();
+        callback_queue_.pop();
+        if (cb) {
+          cb->completed.store(true, std::memory_order_release);
+          if (cb->context && cb->context->error_callback) {
+            // -EIO: generischer Abbruch
+            cb->context->error_callback(-5 /*EIO*/);
+          }
+          DecInflight();
+          ++canceled_queue;
+        }
+      }
+      // Queue-Stats aufräumen
+      std::lock_guard<std::mutex> stats_lock(stats_mutex_);
+      stats_.queue_size = 0;
+    }
+
+    {
+      std::lock_guard<std::mutex> pl(pending_requests_mutex_);
+      for (auto &kv : pending_requests_) {
+        auto &cb = kv.second;
+        if (cb) {
+          cb->completed.store(true, std::memory_order_release);
+          if (cb->context && cb->context->error_callback) {
+            cb->context->error_callback(-5 /*EIO*/);
+          }
+          DecInflight();
+          ++canceled_pending;
+        }
+      }
+      pending_requests_.clear();
+    }
+
+    fprintf(stderr, "TSFNDispatcher::Shutdown - canceled queued=%zu pending=%zu\n",
+            canceled_queue, canceled_pending);
+  };
+
+  cancel_all_callbacks();
+
+  // 4) Bounded wait auf inflight==0 (falls noch etwas übrig)
+  const uint32_t wait_ms = (timeout_ms ? timeout_ms : 1000);
+  const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(wait_ms);
+  {
+    std::unique_lock<std::mutex> inflight_lock(inflight_mtx_);
+    bool done = inflight_cv_.wait_until(inflight_lock, deadline, [&]{
+      return inflight_.load(std::memory_order_acquire) == 0;
+    });
+    if (!done) {
+      // Letztes Aufräumen erzwingen (falls ein Rennen noch etwas reingelegt hat)
+      cancel_all_callbacks();
+      // Kein weiteres blockierendes Warten – wir fahren den Shutdown fort.
+      fprintf(stderr, "TSFNDispatcher::Shutdown - inflight did not reach 0 within %u ms (left=%ld)\n",
+              wait_ms, (long)inflight_.load(std::memory_order_acquire));
+    }
+  }
+
+  // 5) Handler endgültig freigeben
+  {
+    std::lock_guard<std::mutex> handlers_lock(handlers_mutex_);
+    for (auto& entry : handlers_) {
+      entry.second.Release();
+    }
     handlers_.clear();
   }
 
+  // 6) Globalen TSFN (falls genutzt) stoppen/freigeben
   if (tsfn_) {
+    // abort zur Sicherheit (idempotent nach oben)
     tsfn_.Abort();
     tsfn_.Release();
     tsfn_ = Napi::ThreadSafeFunction();
   }
 
-  { std::lock_guard<std::mutex> queue_lock(queue_mutex_);
+  // 7) Restbestände leeren (defensiv)
+  {
+    std::lock_guard<std::mutex> queue_lock(queue_mutex_);
     while (!callback_queue_.empty()) callback_queue_.pop();
   }
-  { std::lock_guard<std::mutex> pending_lock(pending_requests_mutex_);
+  {
+    std::lock_guard<std::mutex> pending_lock(pending_requests_mutex_);
     pending_requests_.clear();
   }
 
   state_.store(DispatcherState::SHUTDOWN, std::memory_order_release);
-  fprintf(stderr, "TSFNDispatcher::Shutdown - finished\n");
+  fprintf(stderr, "TSFNDispatcher::Shutdown - finished (inflight=%ld)\n",
+          (long)inflight_.load(std::memory_order_acquire));
   return true;
 }
+
 
 bool TSFNDispatcher::IsReady() const {
   return state_.load(std::memory_order_acquire) == DispatcherState::RUNNING &&

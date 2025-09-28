@@ -12,7 +12,7 @@
 // =============================================================================
 
 /** Branded type for file descriptors */
-export type Fd = number & { readonly __brand: 'Fd' };
+export type Fd = bigint & { readonly __brand: 'Fd' };
 
 /** Branded type for inode numbers */
 export type Ino = bigint & { readonly __brand: 'Ino' };
@@ -33,7 +33,7 @@ export type Gid = number & { readonly __brand: 'Gid' };
 export type Dev = bigint & { readonly __brand: 'Dev' };
 
 // Helper functions to create branded types
-export const createFd = (value: number): Fd => value as Fd;
+export const createFd = (value: bigint): Fd => value as Fd;
 export const createIno = (value: bigint): Ino => value as Ino;
 export const createMode = (value: number): Mode => value as Mode;
 export const createFlags = (value: number): Flags => value as Flags;

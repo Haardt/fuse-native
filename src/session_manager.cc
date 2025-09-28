@@ -1,7 +1,7 @@
 /**
  * @file session_manager.cc
  * @brief FUSE session manager implementation for lifecycle management
- * 
+ *
  * This file implements the FUSE session manager that handles the lifecycle
  * of FUSE sessions, including creation, mounting, unmounting, and cleanup.
  */
@@ -66,11 +66,11 @@ bool SessionManager::IsReady() const {
 
 bool SessionManager::Initialize() {
     std::lock_guard<std::mutex> lock(state_mutex_);
-    
+
     if (state_ != SessionState::CREATED) {
         return false;
     }
-    
+
     try {
         // Create FUSE bridge
         fprintf(stderr, "FUSE: creating bridge...\n");
@@ -85,7 +85,7 @@ bool SessionManager::Initialize() {
         }
         fprintf(stderr, "FUSE: bridge initialization succeeded\n");
         fflush(stderr);
-        
+
         // Create FUSE session arguments using proper FUSE argument parsing
         std::vector<std::string> fuse_args;
         fuse_args.push_back("fuse-native");
@@ -156,10 +156,10 @@ bool SessionManager::Initialize() {
         }
         fprintf(stderr, "FUSE: session_new succeeded\n");
         fflush(stderr);
-        
+
         state_ = SessionState::INITIALIZED;
         return true;
-        
+
     } catch (const std::exception& e) {
         // Log error
         return false;
@@ -193,17 +193,24 @@ bool SessionManager::Mount() {
         fflush(stderr);
         return false;
     }
+    if (!options_.install_signal_handlers) {
+      fprintf(stderr, "FUSE: skipping fuse_set_signal_handlers\n");
+    } else {
+      if (fuse_set_signal_handlers(fuse_session_) != 0) {
+        fprintf(stderr, "FUSE: fuse_set_signal_handlers failed (continuing)\n");
+      }
+    }
     fprintf(stderr, "FUSE: session_mount succeeded for %s\n", mountpoint_.c_str());
     fflush(stderr);
-    
+
     state_ = SessionState::MOUNTED;
-    
+
     // Start the FUSE loop in a separate thread
     mount_thread_running_ = true;
     mount_thread_ = std::thread([this]() {
         this->RunFuseLoop();
     });
-    
+
     return true;
 }
 
@@ -214,16 +221,16 @@ bool SessionManager::Unmount() {
 
     if (state_ == SessionState::MOUNTED) {
       if (fuse_session_) {
-        // Reihenfolge je nach FUSE-Variante:
-        fuse_session_unmount(fuse_session_);  // unmount -> löst Mount
-        mount_thread_running_ = false;
+        // Robuster: erst Loop beenden, dann unmounten
+        mount_thread_running_.store(false, std::memory_order_release);
         fuse_session_exit(fuse_session_);     // signalisiert der Loop zu enden
-      }
+        fuse_session_unmount(fuse_session_);  // unmount
+     }
       state_ = SessionState::INITIALIZED;
     }
 
     // eigenes Flag für benutzerdefinierte Loops
-    mount_thread_running_ = false;
+    mount_thread_running_.store(false, std::memory_order_release);
   }
 
   // Phase 2: Worker-Thread joinen (ohne state_mutex_)
@@ -243,21 +250,21 @@ void SessionManager::Destroy() {
     if (GetState() == SessionState::MOUNTED) {
         Unmount();
     }
-    
+
     std::lock_guard<std::mutex> lock(state_mutex_);
-    
+    fuse_remove_signal_handlers(fuse_session_);
     // Clean up FUSE session
     if (fuse_session_) {
         fuse_session_destroy(fuse_session_);
         fuse_session_ = nullptr;
     }
-    
+
     // Clean up bridge
     if (bridge_) {
         bridge_->Shutdown();
         bridge_.reset();
     }
-    
+
     state_ = SessionState::DESTROYED;
 }
 
@@ -266,32 +273,15 @@ void SessionManager::RunFuseLoop() {
         fprintf(stderr, "FUSE: RunFuseLoop - no fuse_session_\n");
         return;
     }
-
-    size_t buf_size = options_.max_read;
-    if (buf_size < 4096) buf_size = 128 * 1024;
-
-    fprintf(stderr, "FUSE: RunFuseLoop - starting FUSE loop thread\n");
-    fprintf(stderr, "FUSE: RunFuseLoop - max_read: %u\n", buf_size);
-
-    struct fuse_buf fbuf = {
-        .size = buf_size,
-        .flags = static_cast<enum fuse_buf_flags>(0),
-        .mem = nullptr,
-        .fd = -1,
-        .pos = 0,
-    };
-
-    // Allocate buffer for FUSE operations
-    fbuf.mem = malloc(fbuf.size);
-    if (!fbuf.mem) {
-        fprintf(stderr, "FUSE: RunFuseLoop - failed to allocate buffer\n");
-        return;
-    }
-    fprintf(stderr, "FUSE: RunFuseLoop - allocated buffer of size %zu\n", fbuf.size);
+    fprintf(stderr, "** FUSE: RunFuseLoop - using libfuse-managed buffers\n");
+    // libfuse allokiert pro receive selbst, wenn mem == nullptr
+    struct fuse_buf fbuf = {};
+    fbuf.mem = nullptr;
 
     // Main FUSE loop
     int loop_count = 0;
     int fd = fuse_session_fd(fuse_session_);
+    fprintf(stderr, "FUSE: RunFuseLoop start fd=%d\n", fuse_session_fd(fuse_session_));
     while (mount_thread_running_.load(std::memory_order_acquire) &&
            !fuse_session_exited(fuse_session_)) {
 
@@ -299,13 +289,25 @@ void SessionManager::RunFuseLoop() {
       int pr = poll(&pfd, 1, 250);            // 250 ms
       if (pr < 0) {
         if (errno == EINTR) continue;
+        fprintf(stderr, "FUSE: poll error errno=%d (%s)\n", errno, strerror(errno));
         break;
       }
       if (pr == 0) continue;                  // Timeout → Flags erneut prüfen
 
       if (pfd.revents & POLLIN) {
+        // Libfuse allocate the buffer
+        fbuf.mem = nullptr;
+        fbuf.size = 0;
+        fbuf.flags = static_cast<enum fuse_buf_flags>(0);
         int res = fuse_session_receive_buf(fuse_session_, &fbuf);
         if (res <= 0) {
+
+          fprintf(stderr,
+            "FUSE: receive_buf res=%d errno=%d exited=%d running=%d\n",
+            res, errno,
+            (int)fuse_session_exited(fuse_session_),
+            (int)mount_thread_running_.load(std::memory_order_acquire));
+
           if (res == -EINTR || res == 0) {
             if (!mount_thread_running_.load(std::memory_order_acquire) ||
                 fuse_session_exited(fuse_session_)) break;
@@ -314,17 +316,28 @@ void SessionManager::RunFuseLoop() {
           // andere Fehler → raus
           break;
         }
+
+        if (pfd.revents & ~(POLLIN)) {
+          fprintf(stderr, "FUSE: poll revents=0x%x (unexpected)\n", pfd.revents);
+        }
+
         fuse_session_process_buf(fuse_session_, &fbuf);
+        // libfuse hat allokiert → wir geben frei
+        if (fbuf.mem) {
+          free(fbuf.mem);
+          fbuf.mem = nullptr;
+        }
+        ++loop_count;
       }
     }
+    fprintf(stderr,
+      "FUSE: loop end reason: exited=%d running=%d state=%d\n",
+      (int)fuse_session_exited(fuse_session_),
+      (int)mount_thread_running_.load(std::memory_order_acquire),
+      (int)GetState());
+
 
     fprintf(stderr, "FUSE: RunFuseLoop - exiting loop after %d iterations\n", loop_count);
-
-    // Clean up buffer
-    if (fbuf.mem) {
-        free(fbuf.mem);
-        fprintf(stderr, "FUSE: RunFuseLoop - freed buffer\n");
-    }
 }
 
 /**
@@ -336,48 +349,51 @@ void SessionManager::RunFuseLoop() {
  */
 Napi::Value CreateSession(const Napi::CallbackInfo& info) {
     Napi::Env env = info.Env();
-    
+
     if (info.Length() < 1) {
         NapiHelpers::ThrowError(env, "Expected session options");
         return env.Undefined();
     }
-    
+
     if (!info[0].IsObject()) {
         NapiHelpers::ThrowTypeError(env, "Session options must be an object");
         return env.Undefined();
     }
-    
+
     Napi::Object options_obj = info[0].As<Napi::Object>();
-    
+
     // Extract mountpoint
     if (!options_obj.Has("mountpoint")) {
         NapiHelpers::ThrowError(env, "Missing mountpoint in session options");
         return env.Undefined();
     }
-    
+
     std::string mountpoint = NapiHelpers::GetString(options_obj.Get("mountpoint"));
-    
+
     // Parse session options
     SessionOptions options;
-    options.debug = options_obj.Has("debug") && 
+    options.debug = options_obj.Has("debug") &&
                    options_obj.Get("debug").As<Napi::Boolean>().Value();
-    options.foreground = options_obj.Has("foreground") && 
+    options.foreground = options_obj.Has("foreground") &&
                         options_obj.Get("foreground").As<Napi::Boolean>().Value();
-    options.single_threaded = options_obj.Has("singleThreaded") && 
+    options.single_threaded = options_obj.Has("singleThreaded") &&
                              options_obj.Get("singleThreaded").As<Napi::Boolean>().Value();
-    options.allow_other = options_obj.Has("allowOther") && 
+    options.allow_other = options_obj.Has("allowOther") &&
                          options_obj.Get("allowOther").As<Napi::Boolean>().Value();
-    options.allow_root = options_obj.Has("allowRoot") && 
+    options.allow_root = options_obj.Has("allowRoot") &&
                         options_obj.Get("allowRoot").As<Napi::Boolean>().Value();
-    options.auto_unmount = options_obj.Has("autoUnmount") && 
+    options.auto_unmount = options_obj.Has("autoUnmount") &&
                           options_obj.Get("autoUnmount").As<Napi::Boolean>().Value();
-    
+    options.install_signal_handlers =
+          options_obj.Has("installSignalHandlers") &&
+          options_obj.Get("installSignalHandlers").As<Napi::Boolean>().Value();
+
     if (options_obj.Has("maxRead")) {
         options.max_read = options_obj.Get("maxRead").As<Napi::Number>().Uint32Value();
     } else {
        options.max_read = 128 * 1024;
     }
-    
+
     try {
         // Create session manager
         auto session_manager = std::make_unique<SessionManager>(env, mountpoint, options);
@@ -418,25 +434,25 @@ Napi::Value CreateSession(const Napi::CallbackInfo& info) {
  */
 Napi::Value DestroySession(const Napi::CallbackInfo& info) {
     Napi::Env env = info.Env();
-    
+
     if (info.Length() < 1) {
         NapiHelpers::ThrowError(env, "Expected session handle");
         return env.Undefined();
     }
-    
+
     if (!info[0].IsObject()) {
         NapiHelpers::ThrowTypeError(env, "Session handle must be an object");
         return env.Undefined();
     }
-    
+
     Napi::Object handle = info[0].As<Napi::Object>();
     if (!handle.Has("id")) {
         NapiHelpers::ThrowError(env, "Invalid session handle");
         return env.Undefined();
     }
-    
+
     uint64_t session_id = static_cast<uint64_t>(handle.Get("id").As<Napi::Number>().DoubleValue());
-    
+
     {
         std::lock_guard<std::mutex> lock(sessions_mutex);
         auto it = active_sessions.find(session_id);
@@ -446,7 +462,7 @@ Napi::Value DestroySession(const Napi::CallbackInfo& info) {
             return Napi::Boolean::New(env, true);
         }
     }
-    
+
     return Napi::Boolean::New(env, false);
 }
 
@@ -573,14 +589,14 @@ Napi::Value Mount(const Napi::CallbackInfo& info) {
  */
 Napi::Value IsReady(const Napi::CallbackInfo& info) {
     Napi::Env env = info.Env();
-    
+
     if (info.Length() < 1) {
         return Napi::Boolean::New(env, false);
     }
-    
+
     Napi::Object handle = info[0].As<Napi::Object>();
     uint64_t session_id = static_cast<uint64_t>(handle.Get("id").As<Napi::Number>().DoubleValue());
-    
+
     {
         std::lock_guard<std::mutex> lock(sessions_mutex);
         auto it = active_sessions.find(session_id);
@@ -588,7 +604,7 @@ Napi::Value IsReady(const Napi::CallbackInfo& info) {
             return Napi::Boolean::New(env, it->second->IsReady());
         }
     }
-    
+
     return Napi::Boolean::New(env, false);
 }
 

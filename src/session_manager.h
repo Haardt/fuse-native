@@ -1,7 +1,7 @@
 /**
  * @file session_manager.h
  * @brief FUSE session manager header for lifecycle management
- * 
+ *
  * This header defines the FUSE session manager that handles the lifecycle
  * of FUSE sessions, including creation, mounting, unmounting, and cleanup.
  */
@@ -48,6 +48,7 @@ struct SessionOptions {
     uint32_t max_read = 131072;      // Maximum read size (128KB)
     uint32_t max_write = 131072;     // Maximum write size (128KB)
     double timeout = 1.0;            // Default timeout
+    bool install_signal_handlers = true;
 };
 
 /**
@@ -63,67 +64,67 @@ public:
     explicit SessionManager(napi_env env,
                             const std::string& mountpoint,
                             const SessionOptions& options = {});
-    
+
     /**
      * Destructor - ensures proper cleanup
      */
     ~SessionManager();
-    
+
     // Disable copy constructor and assignment
     SessionManager(const SessionManager&) = delete;
     SessionManager& operator=(const SessionManager&) = delete;
-    
+
     // Enable move constructor and assignment
     SessionManager(SessionManager&& other) noexcept = default;
     SessionManager& operator=(SessionManager&& other) noexcept = default;
-    
+
     /**
      * Get unique session ID
      * @return Session ID
      */
     uint64_t GetSessionId() const;
-    
+
     /**
      * Get mountpoint path
      * @return Mountpoint directory path
      */
     std::string GetMountpoint() const;
-    
+
     /**
      * Get current session state
      * @return Current state
      */
     SessionState GetState() const;
-    
+
     /**
      * Check if session is ready to handle operations
      * @return true if session is mounted and ready
      */
     bool IsReady() const;
-    
+
     /**
      * Initialize the FUSE session
      * @return true if initialization succeeded
      */
     bool Initialize();
-    
+
     /**
      * Mount the filesystem
      * @return true if mount succeeded
      */
     bool Mount();
-    
+
     /**
      * Unmount the filesystem
      * @return true if unmount succeeded
      */
     bool Unmount();
-    
+
     /**
      * Destroy session and cleanup all resources
      */
     void Destroy();
-    
+
     /**
      * Get FUSE bridge instance
      * @return Pointer to FuseBridge, or nullptr if not initialized
@@ -145,11 +146,11 @@ private:
     struct fuse_session* fuse_session_;
     struct fuse_chan* fuse_channel_;
     std::unique_ptr<FuseBridge> bridge_;
-    
+
     // Mount thread management
     std::thread mount_thread_;
     std::atomic<bool> mount_thread_running_{false};
-    
+
     /**
      * Main FUSE loop (runs in separate thread)
      */

@@ -93,10 +93,12 @@ describe('FUSE Readdir Bridge Integration', () => {
           }
         }
       } finally {
+        console.log('[TEST] finally: unmount+shutdown+destroy');
         filesystemOperations.overrideOperationsWith({});
         await session?.unmount();
         await fuse?.shutdownDispatcher(750);
         await session?.destroy();
+        console.log('[TEST] finally done');
       }
     });
   });

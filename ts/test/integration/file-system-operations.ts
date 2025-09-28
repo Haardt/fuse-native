@@ -54,7 +54,7 @@ import type {
   StatResult,
   DirentEntry,
   ReaddirResult,
-  Timeout,
+  Timeout, StatvfsResult,
 } from "../../index.ts";
 
 import type { SimpleInode } from "./filesystem.ts";
@@ -124,46 +124,35 @@ export class FileSystemOperations implements FuseOperationHandlers {
 
   readdir: ReaddirHandler = async (ino, offset, context, fi, options) => {
     if (this._overrides.readdir) {
-      return this._overrides.readdir(ino, offset, context, fi, options)
+      return this._overrides.readdir(ino, offset, context, fi, options);
     }
-    const inode = this._fs.getInode(ino);
-    if (!inode || inode.type !== 'directory' || !(inode.data instanceof Map)) {
+    const dir = this._fs.getInode(ino);
+    if (!dir || dir.type !== 'directory' || !(dir.data instanceof Map)) {
       throw new FuseErrno('ENOTDIR');
     }
 
-    const entries: DirentEntry[] = [];
-    let sequenceOffset = 0n;
-    const startOffset = offset > 0n ? offset : 0n;
-    for (const [name, childInode] of inode.data) {
-      let type: DirentType;
-      switch (childInode.type) {
-        case 'directory':
-          type = DirentType.Directory;
-          break;
-        case 'file':
-          type = DirentType.RegularFile;
-          break;
-        default:
-          type = DirentType.Unknown;
-      }
-      sequenceOffset += 1n;
-      const entryOffset = sequenceOffset;
-      if (entryOffset <= startOffset) {
-        continue;
-      }
-      entries.push({
-        name,
-        ino: childInode.id,
-        type,
-        nextOffset: entryOffset,
-      });
-    }
+    // Einträge sortiert (für stabile Tests)
+    const items = Array.from(dir.data.entries()).sort(([a],[b]) => a.localeCompare(b));
 
-    return {
-      entries,
-      hasMore: false,
-      nextOffset: entries.length > 0 ? entries[entries.length - 1].nextOffset : undefined,
-    };
+    const start = offset < 0n ? 0 : Number(offset);
+    const bufSize = options?.size ?? 0;
+    // Heuristik: ~80 Bytes je Dirent+Name
+    const budget = bufSize > 0 ? Math.max(16, Math.min(512, Math.floor(bufSize / 80))) : 128;
+
+    const slice = items.slice(start, start + budget);
+    const entries = slice.map(([name, child], idx) => ({
+      name,
+      ino: child.id,
+      type: child.type === 'directory' ? DirentType.Directory
+        : child.type === 'file'     ? DirentType.RegularFile
+          : DirentType.Unknown,
+      nextOffset: BigInt(start + idx + 1), // nächster Start-Index
+    }));
+
+    const lastOffset = entries.length ? entries[entries.length - 1].nextOffset : BigInt(start);
+    const hasMore = start + entries.length < items.length;
+
+    return { entries, hasMore, nextOffset: lastOffset };
   };
 
   lookup: LookupHandler = async (parent, name, context, options) => {
@@ -298,46 +287,58 @@ export class FileSystemOperations implements FuseOperationHandlers {
     throw new FuseErrno('ENOSYS');
   };
 
-  statfs: StatfsHandler = async (ino, context, options) => {
+  statfs: StatfsHandler = async (ino, context, options):Promise<StatvfsResult> => {
     if (this._overrides.statfs) {
       return this._overrides.statfs(ino, context, options);
     }
-    throw new FuseErrno('ENOSYS');
+    return {
+      blocks: 1024n * 1024n,   // 1M Blöcke
+      bfree:  1024n * 512n,    // 50% frei
+      bavail: 1024n * 512n,
+      files:  1024n * 1024n,
+      ffree:  1024n * 512n,
+      bsize:  4096,
+      namemax: 255,
+      frsize: 4096,
+      flag: 0,
+      favail: 0n,
+      fsid: 1n,
+    };
   };
 
   getxattr: GetxattrHandler = async (ino, name, context, options) => {
     if (this._overrides.getxattr) {
       return this._overrides.getxattr(ino, name, context, options);
     }
-    throw new FuseErrno('ENOSYS');
+    throw new FuseErrno('ENODATA');
   };
 
   setxattr: SetxattrHandler = async (ino, name, value, flags, context, options) => {
     if (this._overrides.setxattr) {
       return this._overrides.setxattr(ino, name, value, flags, context, options);
     }
-    throw new FuseErrno('ENOSYS');
+    throw new FuseErrno('ENODATA');
   };
 
   listxattr: ListxattrHandler = async (ino, context, options) => {
     if (this._overrides.listxattr) {
       return this._overrides.listxattr(ino, context, options);
     }
-    throw new FuseErrno('ENOSYS');
+    return { names: [], size:0n };
   };
 
   removexattr: RemovexattrHandler = async (ino, name, context, options) => {
     if (this._overrides.removexattr) {
       return this._overrides.removexattr(ino, name, context, options);
     }
-    throw new FuseErrno('ENOSYS');
+    throw new FuseErrno('ENODATA');
   };
 
   access: AccessHandler = async (ino, context, options) => {
     if (this._overrides.access) {
       return this._overrides.access(ino, context, options);
     }
-    throw new FuseErrno('ENOSYS');
+    return
   };
 
   copy_file_range: CopyFileRangeHandler = async (inoIn, offIn, fiIn, inoOut, offOut, fiOut, len, flags, context, options) => {
@@ -407,12 +408,12 @@ export class FileSystemOperations implements FuseOperationHandlers {
     throw new FuseErrno('ENOSYS');
   };
 
-  opendir = async (ino: Ino, context: RequestContext, options?: OpenOptions) => {
+  opendir = async (ino: Ino, context: RequestContext, options?: OpenOptions): Promise<FileInfo> => {
     if (this._overrides.opendir) {
       return this._overrides.opendir(ino, context, options);
     }
-    // Default opendir implementation - just return a dummy FileInfo
-    return { fh: createFd(1), flags: createFlags(0) };
+    const fd = createFd(((ino & 0x7fffffffn) | 1n))
+    return { fh: fd, flags: createFlags(0) };
   };
 
   releasedir = async (ino: Ino, fi: FileInfo, context: RequestContext, options?: BaseOperationOptions) => {
