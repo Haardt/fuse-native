@@ -67,8 +67,11 @@ describe('FUSE open Bridge Integration', () => {
     expect(recordedContext.uid).toBe(1000);
     expect(recordedContext.gid).toBe(1000);
     expect(recordedOptions).toBeDefined();
+    if (!recordedOptions || recordedOptions.flags === undefined) {
+      throw new Error('Expected open options to include flags');
+    }
     // Check for read-only access mode, ignoring other flags like O_NOFOLLOW
-    expect(recordedOptions?.flags & 3).toBe(O_RDONLY);
+    expect(recordedOptions.flags & 3).toBe(O_RDONLY);
 
     expect(fileHandle).toBeDefined();
     expect(fileHandle.fd).toBeGreaterThan(0);

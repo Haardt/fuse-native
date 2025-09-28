@@ -188,6 +188,34 @@ export class FileSystem {
     return current;
   }
 
+  public getPath(ino: Ino): string | null {
+    if (ino === this.root.id) {
+      return '/';
+    }
+
+    const findPath = (dir: SimpleInode, currentPath: string): string | null => {
+      if (!(dir.data instanceof Map)) {
+        return null;
+      }
+
+      for (const [name, child] of dir.data.entries()) {
+        const newPath = currentPath === '/' ? `/${name}` : `${currentPath}/${name}`;
+        if (child.id === ino) {
+          return newPath;
+        }
+        if (child.type === 'directory') {
+          const foundPath = findPath(child, newPath);
+          if (foundPath) {
+            return foundPath;
+          }
+        }
+      }
+      return null;
+    };
+
+    return findPath(this.root, '/');
+  }
+
   /**
    * Convert inode to StatResult
    */
@@ -420,6 +448,43 @@ export class FileSystem {
     const bufferContent = typeof content === 'string' ? Buffer.from(content) : content;
     newInode.data = bufferContent;
     newInode.size = BigInt(bufferContent.length);
+    newInode.uid = createUid(uid);
+    newInode.gid = createGid(gid);
+
+    (current.data as Map<string, SimpleInode>).set(name, newInode);
+    this.inodes.set(newInode.id, newInode);
+    return newInode;
+  }
+
+  public createFile(path: string, mode: number, uid: number, gid: number): SimpleInode {
+    const parts = path.split('/').filter(p => p.length > 0);
+    if (parts.length === 0) {
+      throw new Error('Cannot create file at root');
+    }
+
+    let current = this.root;
+    for (let i = 0; i < parts.length - 1; i++) {
+      const part = parts[i];
+      if (current.type !== 'directory' || !(current.data instanceof Map)) {
+        throw new Error(`ENOTDIR: ${path}`);
+      }
+      let child = current.data.get(part);
+      if (!child) {
+        child = this.createInodeInternal('directory', this.computeMode('directory'));
+        (current.data as Map<string, SimpleInode>).set(part, child);
+        this.inodes.set(child.id, child);
+      }
+      current = child;
+    }
+
+    const name = parts[parts.length - 1];
+    if (current.type !== 'directory' || !(current.data instanceof Map)) {
+      throw new Error(`ENOTDIR: ${path}`);
+    }
+
+    const newInode = this.createInodeInternal('file', this.computeMode('file', mode));
+    newInode.data = Buffer.alloc(0);
+    newInode.size = 0n;
     newInode.uid = createUid(uid);
     newInode.gid = createGid(gid);
 

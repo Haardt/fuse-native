@@ -54,7 +54,7 @@ import type {
   StatResult,
   DirentEntry,
   ReaddirResult,
-  Timeout, StatvfsResult,
+  Timeout, StatvfsResult, FlushHandler,
 } from "../../index.ts";
 
 import type { SimpleInode } from "./filesystem.ts";
@@ -209,7 +209,20 @@ export class FileSystemOperations implements FuseOperationHandlers {
     if (this._overrides.create) {
       return this._overrides.create(parent, name, mode, context, options);
     }
-    throw new FuseErrno('ENOSYS');
+    const parentInode = this._fs.getInode(parent);
+    if (!parentInode || parentInode.type !== 'directory') {
+      throw new FuseErrno('ENOTDIR');
+    }
+    const parentPath = this._fs.getPath(parent);
+    if (parentPath === null) {
+      throw new FuseErrno('ENOENT');
+    }
+    const path = parentPath === '/' ? `/${name}` : `${parentPath}/${name}`;
+    const newInode = this._fs.createFile(path, mode, context.uid, context.gid);
+    const fd = createFd(this._nextFd++);
+    const fi: FileInfo = { fh: fd, flags: createFlags(0) };
+    const attr = this._fs.inodeToStat(newInode);
+    return { attr, timeout: 1.0, fi };
   };
 
   open: OpenHandler = async (ino, context, options) => {
@@ -242,12 +255,41 @@ export class FileSystemOperations implements FuseOperationHandlers {
     if (this._overrides.write) {
       return this._overrides.write(ino, data, context, options);
     }
-    throw new FuseErrno('ENOSYS');
+    const inode = this._fs.getInode(ino);
+    if (!inode) {
+      throw new FuseErrno('ENOENT');
+    }
+    if (inode.type !== 'file' || !(inode.data instanceof Buffer)) {
+      throw new FuseErrno('EISDIR');
+    }
+
+    const offset = Number(options.offset);
+    const newData = Buffer.from(data);
+    const newDataLength = newData.length;
+
+    if (offset + newDataLength > inode.data.length) {
+      const newBuffer = Buffer.alloc(offset + newDataLength);
+      inode.data.copy(newBuffer);
+      inode.data = newBuffer;
+    }
+
+    newData.copy(inode.data, offset);
+    inode.size = BigInt(inode.data.length);
+
+    return newDataLength;
   };
 
   release: ReleaseHandler = async (ino, fi, context, options) => {
+    console.log('release', ino, fi, context, options);
     if (this._overrides.release) {
       return this._overrides.release(ino, fi, context, options);
+    }
+    // Default release implementation - no-op
+  };
+
+  flush: FlushHandler = async (ino, fi, context, options) => {
+    if (this._overrides.flush) {
+      return this._overrides.flush(ino, fi, context, options);
     }
     // Default release implementation - no-op
   };
@@ -387,7 +429,78 @@ export class FileSystemOperations implements FuseOperationHandlers {
     if (this._overrides.setattr) {
       return this._overrides.setattr(ino, attr, context, options);
     }
-    throw new FuseErrno('ENOSYS');
+    const inode = this._fs.getInode(ino);
+    if (!inode) {
+      throw new FuseErrno('ENOENT');
+    }
+
+    const now = getCurrentTimestamp();
+    const touchCtime = () => {
+      inode.ctime = now;
+    };
+
+    if (attr.mode !== undefined) {
+      inode.mode = attr.mode;
+      touchCtime();
+    }
+
+    if (attr.uid !== undefined) {
+      inode.uid = attr.uid;
+      touchCtime();
+    }
+
+    if (attr.gid !== undefined) {
+      inode.gid = attr.gid;
+      touchCtime();
+    }
+
+    if (attr.size !== undefined) {
+      if (attr.size < 0n) {
+        throw new FuseErrno('EINVAL');
+      }
+      if (inode.type !== 'file' || !(inode.data instanceof Buffer)) {
+        throw new FuseErrno('EISDIR');
+      }
+
+      const newLength = Number(attr.size);
+      if (!Number.isSafeInteger(newLength)) {
+        throw new FuseErrno('EFBIG');
+      }
+
+      if (newLength !== inode.data.length) {
+        const resized = Buffer.alloc(newLength);
+        const copyLength = Math.min(newLength, inode.data.length);
+        if (copyLength > 0) {
+          inode.data.copy(resized, 0, 0, copyLength);
+        }
+        inode.data = resized;
+      }
+      inode.size = BigInt(newLength);
+      touchCtime();
+    }
+
+    if (options?.atimeNow) {
+      inode.atime = now;
+      touchCtime();
+    } else if (attr.atime !== undefined) {
+      inode.atime = attr.atime;
+      touchCtime();
+    }
+
+    if (options?.mtimeNow) {
+      inode.mtime = now;
+      touchCtime();
+    } else if (attr.mtime !== undefined) {
+      inode.mtime = attr.mtime;
+      touchCtime();
+    }
+
+    if (attr.ctime !== undefined) {
+      inode.ctime = attr.ctime;
+    }
+
+    const stat = this._fs.inodeToStat(inode);
+    return { attr: stat, timeout: 1.0 };
   };
 
   // utimens is not in FuseOperationHandlers, so we don't implement it

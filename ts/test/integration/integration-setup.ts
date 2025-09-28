@@ -40,7 +40,6 @@ export const fuseIntegrationSessionSetup = async (
     const options: FuseSessionOptions = {
       ...sessionOptions,
       debug: true,
-      foreground: true,
       singleThreaded: true,
       autoUnmount: false,
       allowOther: false,

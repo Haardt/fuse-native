@@ -17,11 +17,12 @@ import { O_RDONLY } from '../../constants.ts';
 import { defer, fuseIntegrationSessionSetup } from './integration-setup.ts';
 import { FileSystemOperations } from './file-system-operations.ts';
 import { FileSystem, DEFAULT_FILESYSTEM_SEED } from './filesystem.ts';
+import type { SeedingFilesystem } from './filesystem.ts';
 
 describe('FUSE read Bridge Integration', () => {
   const fileContent1 = 'Hello, FUSE read!';
   const fileContent2 = 'Another file for partial read.';
-  const customFilesystemSeed = {
+  const customFilesystemSeed: SeedingFilesystem = {
     ...DEFAULT_FILESYSTEM_SEED,
     '/test-file-read-1': {
       type: 'file',
