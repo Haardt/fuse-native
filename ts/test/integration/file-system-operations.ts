@@ -503,14 +503,102 @@ export class FileSystemOperations implements FuseOperationHandlers {
     if (this._overrides.unlink) {
       return this._overrides.unlink(parent, name, context, options);
     }
-    throw new FuseErrno('ENOSYS');
+    logFuseOp('unlink', 'default', {
+      parent: parent.toString(),
+      name,
+      uid: context.uid,
+      gid: context.gid,
+    });
+    const parentInode = this._fs.getInode(parent);
+    if (!parentInode || parentInode.type !== 'directory' || !(parentInode.data instanceof Map)) {
+      throw new FuseErrno('ENOTDIR');
+    }
+
+    const childInode = parentInode.data.get(name);
+    if (!childInode) {
+      throw new FuseErrno('ENOENT');
+    }
+
+    if (childInode.type !== 'file') {
+      throw new FuseErrno('EISDIR');
+    }
+
+    // Remove from parent directory
+    parentInode.data.delete(name);
+
+    // Remove from filesystem inodes
+    this._fs['inodes'].delete(childInode.id);
+
+    // Update parent timestamps
+    const parentNow = getCurrentTimestamp();
+    parentInode.mtime = parentNow;
+    parentInode.ctime = parentNow;
+
+    logFuseOp('unlink', 'success', {
+      removedIno: childInode.id.toString(),
+      parentIno: parent.toString(),
+      name
+    });
   };
 
   rename: RenameHandler = async (parent, name, newparent, newname, flags, context, options) => {
     if (this._overrides.rename) {
       return this._overrides.rename(parent, name, newparent, newname, flags, context, options);
     }
-    throw new FuseErrno('ENOSYS');
+    logFuseOp('rename', 'default', {
+      parent: parent.toString(),
+      name,
+      newparent: newparent.toString(),
+      newname,
+      flags,
+      uid: context.uid,
+      gid: context.gid,
+    });
+    const parentInode = this._fs.getInode(parent);
+    if (!parentInode || parentInode.type !== 'directory' || !(parentInode.data instanceof Map)) {
+      throw new FuseErrno('ENOTDIR');
+    }
+
+    const newParentInode = this._fs.getInode(newparent);
+    if (!newParentInode || newParentInode.type !== 'directory' || !(newParentInode.data instanceof Map)) {
+      throw new FuseErrno('ENOTDIR');
+    }
+
+    const childInode = parentInode.data.get(name);
+    if (!childInode) {
+      throw new FuseErrno('ENOENT');
+    }
+
+    // Check if destination already exists
+    if (newParentInode.data.has(newname)) {
+      throw new FuseErrno('EEXIST');
+    }
+
+    // Remove from old parent
+    parentInode.data.delete(name);
+
+    // Add to new parent with new name
+    newParentInode.data.set(newname, childInode);
+
+    // Update timestamps on both parents
+    const now = getCurrentTimestamp();
+    parentInode.mtime = now;
+    parentInode.ctime = now;
+    newParentInode.mtime = now;
+    newParentInode.ctime = now;
+
+    // Update .. pointer if this is a directory
+    if (childInode.type === 'directory' && childInode.data instanceof Map) {
+      childInode.data.set('..', newParentInode);
+    }
+
+    logFuseOp('rename', 'success', {
+      movedIno: childInode.id.toString(),
+      oldParent: parent.toString(),
+      oldName: name,
+      newParent: newparent.toString(),
+      newName: newname
+    });
   };
 
   chmod: ChmodHandler = async (ino, mode, context, options) => {
