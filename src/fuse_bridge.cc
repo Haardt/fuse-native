@@ -673,106 +673,66 @@ void FuseBridge::InitializeFuseOperations() {
 
   // --- Lifecycle ---
   fuse_ops_.init    = InitCallback;
-  FUSE_LOG_DEBUG("Registering handler for init");
   fuse_ops_.destroy = DestroyCallback;
-  FUSE_LOG_DEBUG("Registering handler for destroy");
 
   // --- Inode / Entry mgmt ---
   fuse_ops_.forget        = ForgetCallback;
-  FUSE_LOG_DEBUG("Registering handler for forget");
   fuse_ops_.forget_multi  = ForgetMultiCallback;
-  FUSE_LOG_DEBUG("Registering handler for forget_multi");
   fuse_ops_.lookup        = LookupCallback;
-  FUSE_LOG_DEBUG("Registering handler for lookup");
 
   fuse_ops_.getattr       = GetattrCallback;
-  FUSE_LOG_DEBUG("Registering handler for getattr");
   fuse_ops_.setattr       = SetattrCallback;
-  FUSE_LOG_DEBUG("Registering handler for setattr");
   fuse_ops_.readlink      = ReadlinkCallback;
-  FUSE_LOG_DEBUG("Registering handler for readlink");
   fuse_ops_.mknod         = MknodCallback;
-  FUSE_LOG_DEBUG("Registering handler for mknod");
   fuse_ops_.mkdir         = MkdirCallback;
-  FUSE_LOG_DEBUG("Registering handler for mkdir");
   fuse_ops_.unlink        = UnlinkCallback;
-  FUSE_LOG_DEBUG("Registering handler for unlink");
   fuse_ops_.rmdir         = RmdirCallback;
-  FUSE_LOG_DEBUG("Registering handler for rmdir");
   fuse_ops_.symlink       = SymlinkCallback;
-  FUSE_LOG_DEBUG("Registering handler for symlink");
   fuse_ops_.rename        = RenameCallback;
-  FUSE_LOG_DEBUG("Registering handler for rename");
   fuse_ops_.link          = LinkCallback;
-  FUSE_LOG_DEBUG("Registering handler for link");
 
   // --- File / Directory operations ---
   fuse_ops_.open          = OpenCallback;
-  FUSE_LOG_DEBUG("Registering handler for open");
   fuse_ops_.read          = ReadCallback;
-  FUSE_LOG_DEBUG("Registering handler for read");
   fuse_ops_.write         = WriteCallback;
-  FUSE_LOG_DEBUG("Registering handler for write");
 
   fuse_ops_.write_buf     = WriteBufCallback;
-  FUSE_LOG_DEBUG("Registering handler for write_buf");
 
   // WICHTIG: close()-Pfad
   fuse_ops_.flush         = FlushCallback;
-  FUSE_LOG_DEBUG("Registering handler for flush");
   fuse_ops_.release       = ReleaseCallback;
-  FUSE_LOG_DEBUG("Registering handler for release");
 
   fuse_ops_.fsync         = FsyncCallback;
-  FUSE_LOG_DEBUG("Registering handler for fsync");
 
   fuse_ops_.opendir       = OpendirCallback;
-  FUSE_LOG_DEBUG("Registering handler for opendir");
   fuse_ops_.readdir       = ReaddirCallback;
-  FUSE_LOG_DEBUG("Registering handler for readdir");
 
   fuse_ops_.readdirplus   = ReaddirplusCallback;
-  FUSE_LOG_DEBUG("Registering handler for readdirplus");
 
   fuse_ops_.releasedir    = ReleasedirCallback;
-  FUSE_LOG_DEBUG("Registering handler for releasedir");
   fuse_ops_.fsyncdir      = FsyncdirCallback;
-  FUSE_LOG_DEBUG("Registering handler for fsyncdir");
 
   fuse_ops_.statfs        = StatfsCallback;
-  FUSE_LOG_DEBUG("Registering handler for statfs");
   fuse_ops_.access        = AccessCallback;
-  FUSE_LOG_DEBUG("Registering handler for access");
   fuse_ops_.create        = CreateCallback;
-  FUSE_LOG_DEBUG("Registering handler for create");
   fuse_ops_.copy_file_range = CopyFileRangeCallback;
-  FUSE_LOG_DEBUG("Registering handler for copy_file_range");
 
   // --- Extended attributes ---
   fuse_ops_.setxattr      = SetxattrCallback;
-  FUSE_LOG_DEBUG("Registering handler for setxattr");
   fuse_ops_.getxattr      = GetxattrCallback;
-  FUSE_LOG_DEBUG("Registering handler for getxattr");
   fuse_ops_.listxattr     = ListxattrCallback;
-  FUSE_LOG_DEBUG("Registering handler for listxattr");
   fuse_ops_.removexattr   = RemovexattrCallback;
-  FUSE_LOG_DEBUG("Registering handler for removexattr");
 
   // --- File locking / misc ---
   fuse_ops_.getlk         = GetlkCallback;
-  FUSE_LOG_DEBUG("Registering handler for getlk");
   fuse_ops_.setlk         = SetlkCallback;
-  FUSE_LOG_DEBUG("Registering handler for setlk");
 
   // Nicht überall vorhanden – setze nur, wenn du Handler hast
   fuse_ops_.bmap          = BmapCallback;
-  FUSE_LOG_DEBUG("Registering handler for bmap");
 
   fuse_ops_.ioctl         = IoctlCallback;
-  FUSE_LOG_DEBUG("Registering handler for ioctl");
 
   fuse_ops_.poll          = PollCallback;
-  FUSE_LOG_DEBUG("Registering handler for poll");
 }
 
 void FuseBridge::ProcessRequest(std::shared_ptr<FuseRequestContext> context,

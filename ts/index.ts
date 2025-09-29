@@ -609,7 +609,10 @@ export class FuseNative {
                     'setlk',
                     'getlk',
                 ] as const;
-
+                if (operation.startsWith('_')) {
+                  resolve(false);
+                  return;
+                }
                 if (!supportedOperations.includes(operation as any)) {
                     // Silently skip unsupported ops instead of throwing to avoid aborting session setup
                     // This allows examples to pass richer handler sets than the current native surface.
@@ -622,7 +625,7 @@ export class FuseNative {
                 if (typeof handler !== 'function') {
                     throw new Error('Handler must be a function');
                 }
-                console.info(`[fuse-native] Setting operation handler for ${String(operation)}`);
+//                console.info(`[fuse-native] Setting operation handler for ${String(operation)}`);
                 const result = this.binding.setOperationHandler(operation, handler);
                 resolve(result);
             } catch (error) {
