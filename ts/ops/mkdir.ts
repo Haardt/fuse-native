@@ -6,6 +6,7 @@ import type {
   Ino,
   Mode,
   MkdirHandler,
+  MkdirResult,
   RequestContext,
   StatResult,
   Timeout,
@@ -19,11 +20,6 @@ const DEFAULT_CONTEXT: RequestContext = {
 };
 
 const DEFAULT_OPTIONS: BaseOperationOptions = {};
-
-export type MkdirResult = {
-  attr: StatResult;
-  timeout: Timeout;
-};
 
 export function validateMkdir(
   parent: unknown,
@@ -71,7 +67,14 @@ export async function mkdirWrapper(
   }
 
   const statResult = ensureStatResult(result.attr);
-  const timeout = normalizeTimeout(result.timeout);
+  const attrTimeout = normalizeTimeout(result.attr_timeout);
+  const entryTimeout = normalizeTimeout(result.entry_timeout);
 
-  return { attr: statResult, timeout };
+  return {
+    ino: result.ino,
+    generation: result.generation,
+    entry_timeout: entryTimeout,
+    attr_timeout: attrTimeout,
+    attr: statResult
+  };
 }

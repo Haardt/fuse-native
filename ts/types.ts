@@ -599,6 +599,15 @@ export type ReaddirplusHandler = (
   options?: ReaddirOptions
 ) => Promise<ReaddirplusResult>;
 
+/** Mkdir operation result */
+export type MkdirResult = {
+  ino: Ino;
+  generation: bigint;
+  entry_timeout: Timeout;
+  attr_timeout: Timeout;
+  attr: StatResult;
+};
+
 /** Mkdir operation handler */
 export type MkdirHandler = (
   parent: Ino,
@@ -606,7 +615,7 @@ export type MkdirHandler = (
   mode: Mode,
   context: RequestContext,
   options?: BaseOperationOptions
-) => Promise<{ attr: StatResult; timeout: Timeout }>;
+) => Promise<MkdirResult>;
 
 /** Link operation handler */
 export type LinkHandler = (

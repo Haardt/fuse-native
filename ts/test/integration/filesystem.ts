@@ -145,6 +145,12 @@ export class FileSystem {
     this.root = this.createInodeInternal('directory', S_IFDIR | 0o755);
     this.inodes.set(this.root.id, this.root);
 
+    // Add . and .. entries to root (both point to root itself)
+    if (this.root.data instanceof Map) {
+      this.root.data.set('.', this.root);
+      this.root.data.set('..', this.root);
+    }
+
     // Seed the filesystem
     this.seedFilesystem(seeding);
   }

@@ -45,7 +45,6 @@ export type { WriteBufResult } from './write_buf.ts';
 export { validateReadBuf, readBufWrapper, validateFuseBufvec } from './read_buf.ts';
 export type { ReadBufResult } from './read_buf.ts';
 export { validateMkdir, mkdirWrapper } from './mkdir.ts';
-export type { MkdirResult } from './mkdir.ts';
 export { validateReaddir, readdirWrapper } from './readdir.ts';
 export { validateUnlink, unlinkWrapper } from './unlink.ts';
 export { validateRmdir, rmdirWrapper } from './rmdir.ts';

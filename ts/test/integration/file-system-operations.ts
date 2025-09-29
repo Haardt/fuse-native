@@ -19,6 +19,7 @@ import type {
   WriteHandler,
   ReleaseHandler,
   MkdirHandler,
+  MkdirResult,
   RmdirHandler,
   UnlinkHandler,
   RenameHandler,
@@ -117,6 +118,7 @@ export class FileSystemOperations implements FuseOperationHandlers {
   _fs: FileSystem;
   _overrides: OperationOverrides;
   _nextFd = 1n;
+  _nextIno = 2n; // Start from 2, as 1 is typically root
 
   constructor(fs: FileSystem, overrides: OperationOverrides = {}) {
     this._fs = fs;
@@ -382,11 +384,72 @@ export class FileSystemOperations implements FuseOperationHandlers {
     return;
   };
 
-  mkdir: MkdirHandler = async (parent, name, mode, context, options) => {
+  mkdir: MkdirHandler = async (parent, name, mode, context, options): Promise<MkdirResult> => {
     if (this._overrides.mkdir) {
       return this._overrides.mkdir(parent, name, mode, context, options);
     }
-    throw new FuseErrno('ENOSYS');
+    logFuseOp('mkdir', 'default', {
+      parent: parent.toString(),
+      name,
+      mode,
+      uid: context.uid,
+      gid: context.gid,
+    });
+    const parentInode = this._fs.getInode(parent);
+    if (!parentInode || parentInode.type !== 'directory' || !(parentInode.data instanceof Map)) {
+      logFuseOp('mkdir', 'error', { error: 'ENOTDIR', parent: parent.toString() });
+      throw new FuseErrno('ENOTDIR');
+    }
+
+    // Check if directory already exists
+    if (parentInode.data.has(name)) {
+      logFuseOp('mkdir', 'error', { error: 'EEXIST', name });
+      throw new FuseErrno('EEXIST');
+    }
+
+    // Create new directory inode
+    const now = getCurrentTimestamp();
+    const newInode: SimpleInode = {
+      id: createIno(this._nextIno++),
+      type: 'directory',
+      mode: createMode(mode),
+      uid: createUid(context.uid),
+      gid: createGid(context.gid),
+      size: 0n,
+      atime: now,
+      mtime: now,
+      ctime: now,
+      nlink: 2, // . and ..
+      generation: 0n,
+      data: new Map(),
+    };
+
+    // Add . and .. entries
+    (newInode.data as Map<string, SimpleInode>).set('.', newInode);
+    (newInode.data as Map<string, SimpleInode>).set('..', parentInode);
+
+    // Add to parent directory
+    (parentInode.data as Map<string, SimpleInode>).set(name, newInode);
+    this._fs['inodes'].set(newInode.id, newInode);
+
+    // Update parent timestamps
+    const parentNow = getCurrentTimestamp();
+    parentInode.mtime = parentNow;
+    parentInode.ctime = parentNow;
+
+    const attr = this._fs.inodeToStat(newInode);
+    logFuseOp('mkdir', 'success', {
+      newIno: newInode.id.toString(),
+      parentIno: parent.toString(),
+      name
+    });
+    return {
+      ino: newInode.id,
+      generation: newInode.generation,
+      entry_timeout: 1.0,
+      attr_timeout: 1.0,
+      attr
+    };
   };
 
   rmdir: RmdirHandler = async (parent, name, context, options) => {
