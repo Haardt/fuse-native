@@ -456,7 +456,47 @@ export class FileSystemOperations implements FuseOperationHandlers {
     if (this._overrides.rmdir) {
       return this._overrides.rmdir(parent, name, context, options);
     }
-    throw new FuseErrno('ENOSYS');
+    logFuseOp('rmdir', 'default', {
+      parent: parent.toString(),
+      name,
+      uid: context.uid,
+      gid: context.gid,
+    });
+    const parentInode = this._fs.getInode(parent);
+    if (!parentInode || parentInode.type !== 'directory' || !(parentInode.data instanceof Map)) {
+      throw new FuseErrno('ENOTDIR');
+    }
+
+    const childInode = parentInode.data.get(name);
+    if (!childInode) {
+      throw new FuseErrno('ENOENT');
+    }
+
+    if (childInode.type !== 'directory') {
+      throw new FuseErrno('ENOTDIR');
+    }
+
+    // Check if directory is empty (only . and .. should exist)
+    if (childInode.data instanceof Map && childInode.data.size > 2) {
+      throw new FuseErrno('ENOTEMPTY');
+    }
+
+    // Remove from parent directory
+    parentInode.data.delete(name);
+
+    // Remove from filesystem inodes
+    this._fs['inodes'].delete(childInode.id);
+
+    // Update parent timestamps
+    const parentNow = getCurrentTimestamp();
+    parentInode.mtime = parentNow;
+    parentInode.ctime = parentNow;
+
+    logFuseOp('rmdir', 'success', {
+      removedIno: childInode.id.toString(),
+      parentIno: parent.toString(),
+      name
+    });
   };
 
   unlink: UnlinkHandler = async (parent, name, context, options) => {
