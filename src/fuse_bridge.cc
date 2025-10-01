@@ -1019,9 +1019,8 @@ void FuseBridge::HandleAccess(fuse_req_t req, fuse_ino_t ino, int mask) {
         Napi::Number mask_value = Napi::Number::New(env, context->access_mask);
         Napi::Object request_ctx = CreateRequestContextObject(env, *context);
         Napi::Object options = Napi::Object::New(env);
-        options.Set("mask", mask_value);
 
-        auto result = handler.Call({ino_value, request_ctx, options});
+        auto result = handler.Call({ino_value, mask_value, request_ctx, options});
         ResolvePromiseOrValue(env, context, result, [context](Napi::Env env_inner, Napi::Value) {
             context->ReplyOk();
         });

@@ -403,8 +403,7 @@ export interface WriteOptions extends BaseOperationOptions {
 
 /** Options for access operations */
 export interface AccessOptions extends BaseOperationOptions {
-  /** Access mask to test */
-  mask: number;
+  /** Additional access options (for future extensions) */
 }
 
 /** Options for attribute operations */
@@ -518,8 +517,9 @@ export type OpenHandler = (
 /** Release operation handler */
 export type AccessHandler = (
   ino: Ino,
+  mask: number,
   context: RequestContext,
-  options: AccessOptions
+  options?: BaseOperationOptions
 ) => Promise<void>;
 
 export type ReleaseHandler = (

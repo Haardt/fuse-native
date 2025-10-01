@@ -690,11 +690,78 @@ export class FileSystemOperations implements FuseOperationHandlers {
     throw new FuseErrno('ENODATA');
   };
 
-  access: AccessHandler = async (ino, context, options) => {
+  access: AccessHandler = async (ino, mask, context, options) => {
     if (this._overrides.access) {
-      return this._overrides.access(ino, context, options);
+      return this._overrides.access(ino, mask, context, options);
     }
-    return
+
+    logFuseOp('access', 'default', { ino: ino.toString(), mask });
+
+    const inode = this._fs.getInode(ino);
+    if (!inode) {
+      logFuseOp('access', 'enoent', { ino: ino.toString() });
+      throw new FuseErrno('ENOENT');
+    }
+
+    // Extract permission bits from file mode
+    const mode = Number(inode.mode);
+    const filePerms = mode & 0o777; // Extract permission bits
+    const isOwner = Number(inode.uid) === Number(context.uid);
+    const isGroup = Number(inode.gid) === Number(context.gid);
+
+    // Determine effective permissions based on ownership
+    let effectivePerms = 0;
+    if (isOwner) {
+      effectivePerms = (filePerms >> 6) & 0o7; // Owner permissions
+    } else if (isGroup) {
+      effectivePerms = (filePerms >> 3) & 0o7; // Group permissions
+    } else {
+      effectivePerms = filePerms & 0o7; // Others permissions
+    }
+
+    logFuseOp('access', 'permission-check', {
+      ino: ino.toString(),
+      mode: mode.toString(8),
+      filePerms: filePerms.toString(8),
+      isOwner,
+      isGroup,
+      effectivePerms: effectivePerms.toString(8),
+      requestedMask: mask
+    });
+
+    // Check requested permissions
+    const requestedPerms = mask;
+
+    // F_OK (0) - just check existence, already done above
+    if (requestedPerms === 0) {
+      return;
+    }
+
+    // R_OK (4) - read permission
+    if (requestedPerms & 4) {
+      if ((effectivePerms & 4) === 0) {
+        logFuseOp('access', 'deny-read', { effectivePerms: effectivePerms.toString(8) });
+        throw new FuseErrno('EACCES');
+      }
+    }
+
+    // W_OK (2) - write permission
+    if (requestedPerms & 2) {
+      if ((effectivePerms & 2) === 0) {
+        logFuseOp('access', 'deny-write', { effectivePerms: effectivePerms.toString(8) });
+        throw new FuseErrno('EACCES');
+      }
+    }
+
+    // X_OK (1) - execute permission
+    if (requestedPerms & 1) {
+      if ((effectivePerms & 1) === 0) {
+        logFuseOp('access', 'deny-execute', { effectivePerms: effectivePerms.toString(8) });
+        throw new FuseErrno('EACCES');
+      }
+    }
+
+    return;
   };
 
   copy_file_range: CopyFileRangeHandler = async (inoIn, offIn, fiIn, inoOut, offOut, fiOut, len, flags, context, options) => {
