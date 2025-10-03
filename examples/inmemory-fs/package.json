@@ -6,7 +6,7 @@
   "type": "module",
   "scripts": {
     "build": "tsc",
-    "start": "node dist/example.js /tmp/inmemory-fs-modular",
+    "start": "node dist/index.js /tmp/inmemory-fs-modular",
     "start:custom": "node dist/example.js",
     "dev": "tsc --watch",
     "clean": "rm -rf dist"
