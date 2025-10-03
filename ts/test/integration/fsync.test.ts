@@ -66,9 +66,10 @@ describe('FUSE fsync Bridge Integration', () => {
     await fileHandle.sync();
     await fsyncDone.promise;
 
-    const rootInode = filesystem.getRoot();
+    // Get the inode of the file we created, not the root inode
+    const fileInode = filesystem.resolvePath(`/${fileName}`);
 
-    expect(recordedIno).toBe(5n); // File gets inode 5n (root=1n, test-file=2n, notes=3n, readme.md=4n, created file=5n)
+    expect(recordedIno).toBe(fileInode.id); // Should be the file's inode, not root
     expect(typeof recordedDatasync).toBe('boolean');
     expect(typeof recordedFh).toBe('bigint');
     expect(recordedContext.uid).toBe(1000);

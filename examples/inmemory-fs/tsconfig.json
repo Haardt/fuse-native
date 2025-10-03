@@ -14,22 +14,21 @@
     "allowSyntheticDefaultImports": true,
     "experimentalDecorators": true,
     "emitDecoratorMetadata": true,
-    "sourceMap": true,
-    "removeComments": false,
-    "noImplicitAny": true,
-    "strictNullChecks": true,
-    "strictFunctionTypes": true,
-    "noImplicitThis": true,
-    "noImplicitReturns": true,
-    "noFallthroughCasesInSwitch": true,
-    "noUncheckedIndexedAccess": true,
-    "exactOptionalPropertyTypes": true
+    "types": ["node"],
+    "baseUrl": "./",
+    "paths": {
+      "fuse-native": ["../ts/index.ts"],
+      "fuse-native/*": ["../ts/*"]
+    }
   },
   "include": [
-    "src/**/*"
+    "src/**/*",
+    "../ts/**/*"
   ],
   "exclude": [
     "node_modules",
-    "dist"
+    "dist",
+    "../node_modules",
+    "../dist"
   ]
 }

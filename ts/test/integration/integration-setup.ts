@@ -16,19 +16,18 @@ export const fuseIntegrationSessionSetup = async (
   ) => {
     let binding: any;
     try {
-      // Pfad bleibt relativ zu DIESER Datei
+      // Try to load from the build directory relative to the project root
       binding = requireCompat('../../../build/Release/fuse-native.node');
     } catch (error) {
-      console.error('Failed to load **release** native binding:');
+      console.error('Failed to load **release** native binding:', error instanceof Error ? error.message : String(error));
     }
     try {
-      // Pfad bleibt relativ zu DIESER Datei
-      if (binding !== undefined) {
+      // Try debug build if release not available
+      if (binding === undefined) {
+        binding = requireCompat('../../../build/Debug/fuse-native.node');
       }
-      binding = requireCompat('../../../build/Debug/fuse-native.node');
-    } catch
-      (error) {
-      console.error('Failed to load **debug** native binding:');
+    } catch (error) {
+      console.error('Failed to load **debug** native binding:', error instanceof Error ? error.message : String(error));
     }
     if (binding === undefined) {
       throw new Error('Failed to load native binding');
