@@ -24,12 +24,12 @@ import {
   getCurrentTimestamp,
 } from "../../index.ts";
 
-import { S_IFDIR, S_IFREG } from "../../constants.ts";
+import { S_IFDIR, S_IFREG, S_IFLNK } from "../../constants.ts";
 
 /**
  * Simplified inode type for test filesystem
  */
-export type SimpleInodeType = 'file' | 'directory';
+export type SimpleInodeType = 'file' | 'directory' | 'symlink';
 
 /**
  * Simplified inode interface
@@ -46,7 +46,7 @@ export interface SimpleInode {
   ctime: Timestamp;
   nlink: number;
   generation: bigint;
-  data: Buffer | Map<string, SimpleInode> | null;
+  data: Buffer | Map<string, SimpleInode> | string | null;
 }
 
 /**
@@ -234,6 +234,9 @@ export class FileSystem {
       case 'file':
         typeBits = S_IFREG;
         break;
+      case 'symlink':
+        typeBits = S_IFLNK;
+        break;
       default:
         typeBits = 0;
     }
@@ -271,7 +274,7 @@ export class FileSystem {
       ctime: now,
       nlink: type === 'directory' ? 2 : 1,
       generation: 0n,
-      data: type === 'directory' ? new Map() : null,
+      data: type === 'directory' ? new Map() : (type === 'symlink' ? '' : null),
     };
     return inode;
   }
@@ -339,8 +342,8 @@ export class FileSystem {
   }
 
   private computeMode(type: SimpleInodeType, mode?: number): number {
-    const permissions = mode ?? (type === 'directory' ? 0o755 : 0o644);
-    const typeBits = type === 'directory' ? S_IFDIR : S_IFREG;
+    const permissions = mode ?? (type === 'directory' ? 0o755 : (type === 'symlink' ? 0o777 : 0o644));
+    const typeBits = type === 'directory' ? S_IFDIR : (type === 'symlink' ? S_IFLNK : S_IFREG);
     return typeBits | permissions;
   }
 
@@ -395,6 +398,11 @@ export class FileSystem {
         inode.size = typeof entry.size === 'bigint'
           ? entry.size
           : BigInt(entry.size);
+      }
+    } else if (entry.type === 'symlink') {
+      if (typeof entry.content === 'string') {
+        inode.data = entry.content;
+        inode.size = BigInt(Buffer.from(entry.content).length);
       }
     }
   }
@@ -491,6 +499,43 @@ export class FileSystem {
     const newInode = this.createInodeInternal('file', this.computeMode('file', mode));
     newInode.data = Buffer.alloc(0);
     newInode.size = 0n;
+    newInode.uid = createUid(uid);
+    newInode.gid = createGid(gid);
+
+    (current.data as Map<string, SimpleInode>).set(name, newInode);
+    this.inodes.set(newInode.id, newInode);
+    return newInode;
+  }
+
+  public createSymlink(path: string, target: string, mode: number = 0o777, uid: number = 1000, gid: number = 1000): SimpleInode {
+    const parts = path.split('/').filter(p => p.length > 0);
+    if (parts.length === 0) {
+      throw new Error('Cannot create symlink at root');
+    }
+
+    let current = this.root;
+    for (let i = 0; i < parts.length - 1; i++) {
+      const part = parts[i];
+      if (current.type !== 'directory' || !(current.data instanceof Map)) {
+        throw new Error(`ENOTDIR: ${path}`);
+      }
+      let child = current.data.get(part);
+      if (!child) {
+        child = this.createInodeInternal('directory', this.computeMode('directory'));
+        (current.data as Map<string, SimpleInode>).set(part, child);
+        this.inodes.set(child.id, child);
+      }
+      current = child;
+    }
+
+    const name = parts[parts.length - 1];
+    if (current.type !== 'directory' || !(current.data instanceof Map)) {
+      throw new Error(`ENOTDIR: ${path}`);
+    }
+
+    const newInode = this.createInodeInternal('symlink', this.computeMode('symlink', mode));
+    newInode.data = target;
+    newInode.size = BigInt(Buffer.from(target).length);
     newInode.uid = createUid(uid);
     newInode.gid = createGid(gid);
 

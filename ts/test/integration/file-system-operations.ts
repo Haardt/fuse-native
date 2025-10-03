@@ -633,7 +633,18 @@ export class FileSystemOperations implements FuseOperationHandlers {
     if (this._overrides.readlink) {
       return this._overrides.readlink(ino, context, options);
     }
-    throw new FuseErrno('ENOSYS');
+    logFuseOp('readlink', 'default', { ino: ino.toString() });
+    const inode = this._fs.getInode(ino);
+    if (!inode) {
+      throw new FuseErrno('ENOENT');
+    }
+    if (inode.type !== 'symlink') {
+      throw new FuseErrno('EINVAL');
+    }
+    if (typeof inode.data !== 'string') {
+        throw new FuseErrno('EIO');
+    }
+    return inode.data;
   };
 
   link: LinkHandler = async (ino, newparent, newname, context, options) => {
