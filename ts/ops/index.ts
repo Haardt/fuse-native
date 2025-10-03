@@ -32,7 +32,6 @@ export type { BmapResult } from './bmap.ts';
 export { validateIoctl, ioctlWrapper } from './ioctl.ts';
 export type { IoctlResult } from './ioctl.ts';
 export { validatePoll, pollWrapper } from './poll.ts';
-export type { PollResult } from './poll.ts';
 export { validateFlock, flockWrapper } from './flock.ts';
 export { validateFallocate, fallocateWrapper } from './fallocate.ts';
 export { validateLseek, lseekWrapper } from './lseek.ts';

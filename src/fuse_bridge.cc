@@ -17,6 +17,7 @@
 #include <limits>
 #include <optional>
 #include <sys/statvfs.h>
+#include <inttypes.h>
 
 #include "errno_mapping.h"
 #include "session_manager.h"
@@ -729,6 +730,8 @@ void FuseRequestContext::ReplyGetlk(const struct flock& lock) {
 // Static member definitions
 std::mutex FuseBridge::handler_mutex_;
 std::unordered_map<FuseOpType, FuseBridge::HandlerRecord> FuseBridge::handler_registry_;
+std::mutex FuseBridge::poll_handle_mutex_;
+std::unordered_map<uint64_t, FuseBridge::PollHandleEntry> FuseBridge::poll_handle_registry_;
 
 FuseOpType StringToFuseOpType(const std::string& name) {
     std::string lowered;
@@ -792,6 +795,8 @@ void FuseBridge::Shutdown() {
     if (!initialized_) {
         return;
     }
+
+    CleanupPollHandles();
 
     initialized_ = false;
     env_ = nullptr;
@@ -1033,6 +1038,125 @@ void FuseBridge::DispatchReadBuf(std::shared_ptr<FuseRequestContext> context) {
                 ReplyWithErrorValue(env_inner, context, reason);
             });
     });
+}
+
+bool FuseBridge::RegisterPollHandle(struct fuse_pollhandle* handle) {
+    if (!handle) {
+        FUSE_LOG_WARN("poll: RegisterPollHandle called with null handle");
+        return false;
+    }
+    uint64_t key = reinterpret_cast<uint64_t>(handle);
+    std::lock_guard<std::mutex> lock(poll_handle_mutex_);
+    FUSE_LOG_DEBUG("poll: RegisterPollHandle handle=%p owner=%p", static_cast<void*>(handle), static_cast<void*>(this));
+    auto [it, inserted] = poll_handle_registry_.emplace(key, PollHandleEntry{this, handle});
+    if (!inserted) {
+        FUSE_LOG_WARN("poll: RegisterPollHandle duplicate key=%" PRIu64 " existing_owner=%p new_owner=%p",
+                      key,
+                      static_cast<void*>(it->second.owner),
+                      static_cast<void*>(this));
+        it->second = PollHandleEntry{this, handle};
+    }
+    FUSE_LOG_TRACE("poll: RegisterPollHandle registry_size=%zu", poll_handle_registry_.size());
+    return true;
+}
+
+void FuseBridge::ReleasePollHandle(struct fuse_pollhandle* handle, bool destroy_handle) {
+    if (!handle) {
+        FUSE_LOG_WARN("poll: ReleasePollHandle called with null handle (destroy=%d)", destroy_handle ? 1 : 0);
+        return;
+    }
+    uint64_t key = reinterpret_cast<uint64_t>(handle);
+    {
+        std::lock_guard<std::mutex> lock(poll_handle_mutex_);
+        FUSE_LOG_DEBUG("poll: ReleasePollHandle handle=%p destroy=%d", static_cast<void*>(handle), destroy_handle ? 1 : 0);
+        poll_handle_registry_.erase(key);
+        FUSE_LOG_TRACE("poll: ReleasePollHandle registry_size=%zu", poll_handle_registry_.size());
+    }
+    if (destroy_handle) {
+        FUSE_LOG_DEBUG("poll: fuse_pollhandle_destroy handle=%p", static_cast<void*>(handle));
+        fuse_pollhandle_destroy(handle);
+    }
+}
+
+void FuseBridge::CleanupPollHandles() {
+    std::vector<struct fuse_pollhandle*> handles;
+    {
+        std::lock_guard<std::mutex> lock(poll_handle_mutex_);
+        for (auto it = poll_handle_registry_.begin(); it != poll_handle_registry_.end(); ) {
+            if (it->second.owner == this) {
+                handles.push_back(it->second.handle);
+                it = poll_handle_registry_.erase(it);
+            } else {
+                ++it;
+            }
+        }
+    }
+
+    for (auto* handle : handles) {
+        if (handle) {
+            fuse_pollhandle_destroy(handle);
+        }
+    }
+}
+
+bool FuseBridge::NotifyPollHandle(uint64_t handle_value, bool destroy_after) {
+    FUSE_LOG_DEBUG("poll: NotifyPollHandle request value=%" PRIu64 " destroy_after=%d", handle_value, destroy_after ? 1 : 0);
+    struct fuse_pollhandle* handle = nullptr;
+    {
+        std::lock_guard<std::mutex> lock(poll_handle_mutex_);
+        FUSE_LOG_TRACE("poll: registry size=%zu", poll_handle_registry_.size());
+        auto it = poll_handle_registry_.find(handle_value);
+        if (it == poll_handle_registry_.end()) {
+            FUSE_LOG_WARN("poll: NotifyPollHandle missing handle value=%" PRIu64 " destroy_after=%d", handle_value, destroy_after ? 1 : 0);
+            return false;
+        }
+        handle = it->second.handle;
+        if (destroy_after) {
+            poll_handle_registry_.erase(it);
+            FUSE_LOG_TRACE("poll: NotifyPollHandle erase registry_size=%zu", poll_handle_registry_.size());
+        }
+    }
+
+    if (!handle) {
+        FUSE_LOG_WARN("poll: NotifyPollHandle resolved null handle value=%" PRIu64, handle_value);
+        return false;
+    }
+
+    FUSE_LOG_DEBUG("poll: NotifyPollHandle resolved handle=%p destroy_after=%d", static_cast<void*>(handle), destroy_after ? 1 : 0);
+    int rc = fuse_lowlevel_notify_poll(handle);
+    if (destroy_after) {
+        FUSE_LOG_DEBUG("poll: fuse_pollhandle_destroy after notify handle=%p rc=%d", static_cast<void*>(handle), rc);
+        fuse_pollhandle_destroy(handle);
+    }
+    if (rc != 0) {
+        FUSE_LOG_ERROR("poll: fuse_lowlevel_notify_poll failed rc=%d handle=%p", rc, static_cast<void*>(handle));
+    }
+    FUSE_LOG_DEBUG("poll: NotifyPollHandle result rc=%d", rc);
+    return rc == 0;
+}
+
+bool FuseBridge::DestroyPollHandle(uint64_t handle_value) {
+    struct fuse_pollhandle* handle = nullptr;
+    {
+        std::lock_guard<std::mutex> lock(poll_handle_mutex_);
+        auto it = poll_handle_registry_.find(handle_value);
+        if (it == poll_handle_registry_.end()) {
+            FUSE_LOG_WARN("poll: DestroyPollHandle missing handle value=%" PRIu64, handle_value);
+            return false;
+        }
+        handle = it->second.handle;
+        poll_handle_registry_.erase(it);
+        FUSE_LOG_TRACE("poll: DestroyPollHandle registry_size=%zu", poll_handle_registry_.size());
+    }
+
+    if (!handle) {
+        FUSE_LOG_WARN("poll: DestroyPollHandle resolved null handle value=%" PRIu64, handle_value);
+        return false;
+    }
+
+    FUSE_LOG_DEBUG("poll: DestroyPollHandle handle=%p", static_cast<void*>(handle));
+    fuse_pollhandle_destroy(handle);
+    return true;
 }
 
 std::shared_ptr<FuseRequestContext> FuseBridge::CreateContext(FuseOpType op_type, fuse_req_t req) {
@@ -2706,30 +2830,83 @@ void FuseBridge::HandlePoll(fuse_req_t req, fuse_ino_t ino, struct fuse_file_inf
         context->has_fi = true;
     }
 
-    ProcessRequest(context, [context, ph](Napi::Env env, Napi::Function handler) {
+    uint32_t requested_events = context->has_fi ? context->fi.poll_events : 0;
+    const uint64_t ino_value = ToUint64(context->ino);
+    FUSE_LOG_DEBUG("poll: HandlePoll start ino=%" PRIu64 " requested_events=%u has_fi=%d ph=%p",
+                   ino_value,
+                   requested_events,
+                   context->has_fi ? 1 : 0,
+                   static_cast<void*>(ph));
+
+    if (ph) {
+        FUSE_LOG_DEBUG("poll: HandlePoll pre-register on entry ph=%p", static_cast<void*>(ph));
+        context->bridge->RegisterPollHandle(ph);
+    }
+
+    ProcessRequest(context, [context, ph, requested_events](Napi::Env env, Napi::Function handler) {
         Napi::Value ino_value = NapiHelpers::CreateBigUint64(env, ToUint64(context->ino));
         Napi::Value fi_value = context->has_fi ? NapiHelpers::FileInfoToObject(env, context->fi) : env.Null();
         Napi::Object ph_obj = Napi::Object::New(env);
         if (ph) {
             ph_obj.Set("kh", NapiHelpers::CreateBigUint64(env, reinterpret_cast<uint64_t>(ph)));
+            if (context->has_fi) {
+                ph_obj.Set("fh", NapiHelpers::CreateBigUint64(env, context->fi.fh));
+            }
+            ph_obj.Set("events", Napi::Number::New(env, requested_events));
         }
         Napi::Object request_ctx = CreateRequestContextObject(env, *context);
         Napi::Object options = Napi::Object::New(env);
 
-        auto result = handler.Call({ino_value, fi_value, ph_obj, request_ctx, options});
+        auto result = handler.Call({ino_value, fi_value, ph_obj, Napi::Number::New(env, requested_events), request_ctx, options});
         ResolvePromiseOrValue(env, context, result, [context, ph](Napi::Env env_inner, Napi::Value value) {
+            bool keep_polling = false;
+            unsigned revents = 0;
+            bool has_revents = false;
+
             if (value.IsObject()) {
                 Napi::Object obj = value.As<Napi::Object>();
-                if (obj.Has("revents")) {
-                    unsigned revents = obj.Get("revents").As<Napi::Number>().Uint32Value();
-                    fuse_reply_poll(context->request, revents);
-                    if (ph) {
-                        fuse_pollhandle_destroy(ph);
-                    }
-                    return;
+                if (obj.Has("keepPolling")) {
+                    keep_polling = obj.Get("keepPolling").ToBoolean();
+                }
+                if (obj.Has("revents") && obj.Get("revents").IsNumber()) {
+                    revents = obj.Get("revents").As<Napi::Number>().Uint32Value();
+                    has_revents = true;
                 }
             }
-            context->ReplyError(EIO);
+
+            if (!has_revents) {
+                FUSE_LOG_ERROR("poll: HandlePoll missing revents keep_polling=%d ph=%p",
+                                keep_polling ? 1 : 0,
+                                static_cast<void*>(ph));
+                context->ReplyError(EIO);
+                if (ph) {
+                    context->bridge->ReleasePollHandle(ph, true);
+                }
+                return;
+            }
+
+            FUSE_LOG_DEBUG("poll: HandlePoll replying revents=%u keep_polling=%d ph=%p",
+                            revents,
+                            keep_polling ? 1 : 0,
+                            static_cast<void*>(ph));
+
+            fuse_reply_poll(context->request, revents);
+
+            if (ph) {
+                if (!keep_polling) {
+                    FUSE_LOG_DEBUG("poll: HandlePoll releasing handle=%p", static_cast<void*>(ph));
+                    context->bridge->ReleasePollHandle(ph, true);
+                } else {
+                    FUSE_LOG_TRACE("poll: HandlePoll keep polling handle=%p", static_cast<void*>(ph));
+                }
+            }
+        },
+        [context, ph](Napi::Env env_inner, Napi::Value reason) {
+            FUSE_LOG_ERROR("poll: HandlePoll rejected promise ph=%p", static_cast<void*>(ph));
+            if (ph) {
+                context->bridge->ReleasePollHandle(ph, true);
+            }
+            ReplyWithErrorValue(env_inner, context, reason);
         });
     });
 }

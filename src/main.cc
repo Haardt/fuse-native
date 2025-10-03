@@ -26,6 +26,67 @@
 
 namespace fuse_native {
 
+namespace {
+
+bool GetPollHandleFromValue(const Napi::Env& env, const Napi::Value& value, uint64_t* out_handle) {
+    if (!out_handle) {
+        return false;
+    }
+    if (value.IsBigInt()) {
+        bool lossless = false;
+        uint64_t handle = value.As<Napi::BigInt>().Uint64Value(&lossless);
+        if (!lossless) {
+            return false;
+        }
+        *out_handle = handle;
+        return true;
+    }
+    return false;
+}
+
+} // namespace
+
+Napi::Value NotifyPollHandleBinding(const Napi::CallbackInfo& info) {
+    Napi::Env env = info.Env();
+
+    if (info.Length() < 1) {
+        Napi::TypeError::New(env, "notifyPollHandle expects a handle argument").ThrowAsJavaScriptException();
+        return env.Undefined();
+    }
+
+    uint64_t handle_value = 0;
+    if (!GetPollHandleFromValue(env, info[0], &handle_value)) {
+        Napi::TypeError::New(env, "notifyPollHandle expects a BigInt handle").ThrowAsJavaScriptException();
+        return env.Undefined();
+    }
+
+    bool destroy_after = false;
+    if (info.Length() > 1 && info[1].IsBoolean()) {
+        destroy_after = info[1].As<Napi::Boolean>().Value();
+    }
+
+    bool result = FuseBridge::NotifyPollHandle(handle_value, destroy_after);
+    return Napi::Boolean::New(env, result);
+}
+
+Napi::Value DestroyPollHandleBinding(const Napi::CallbackInfo& info) {
+    Napi::Env env = info.Env();
+
+    if (info.Length() < 1) {
+        Napi::TypeError::New(env, "destroyPollHandle expects a handle argument").ThrowAsJavaScriptException();
+        return env.Undefined();
+    }
+
+    uint64_t handle_value = 0;
+    if (!GetPollHandleFromValue(env, info[0], &handle_value)) {
+        Napi::TypeError::New(env, "destroyPollHandle expects a BigInt handle").ThrowAsJavaScriptException();
+        return env.Undefined();
+    }
+
+    bool result = FuseBridge::DestroyPollHandle(handle_value);
+    return Napi::Boolean::New(env, result);
+}
+
 /**
  * Get version information
  */
@@ -60,6 +121,8 @@ napi_value Init(napi_env env, napi_value exports) {
     // Register operation management functions
     napiExports.Set("setOperationHandler", Napi::Function::New(napiEnv, SetOperationHandler));
     napiExports.Set("removeOperationHandler", Napi::Function::New(napiEnv, RemoveOperationHandler));
+    napiExports.Set("notifyPollHandle", Napi::Function::New(napiEnv, NotifyPollHandleBinding));
+    napiExports.Set("destroyPollHandle", Napi::Function::New(napiEnv, DestroyPollHandleBinding));
     
     // Register TSFN dispatcher functions
     napiExports.Set("initializeDispatcher", Napi::Function::New(napiEnv, InitializeDispatcher));

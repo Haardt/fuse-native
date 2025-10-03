@@ -88,6 +88,7 @@ import type {
     ShutdownTimeouts,
     ShutdownCallback,
     FuseOperationName,
+    PollHandle,
 } from './types.ts';
 
 import { createFuseSession } from './session.ts';
@@ -200,6 +201,19 @@ export type InitCallback = (
  */
 export class FuseNative {
     constructor(private binding: any) {
+    }
+
+    private getPollHandleValue(handle: bigint | PollHandle): bigint {
+        if (typeof handle === 'bigint') {
+            return handle;
+        }
+        if (handle?.kh !== undefined) {
+            return BigInt(handle.kh);
+        }
+        if (handle?.ph !== undefined) {
+            return BigInt(handle.ph);
+        }
+        throw new Error('Invalid poll handle');
     }
 
     /**
@@ -634,6 +648,16 @@ export class FuseNative {
                 reject(error);
             }
         });
+    }
+
+    notifyPollHandle(handle: bigint | PollHandle, destroyAfter = false): boolean {
+        const value = this.getPollHandleValue(handle);
+        return this.binding.notifyPollHandle(value, destroyAfter);
+    }
+
+    destroyPollHandle(handle: bigint | PollHandle): boolean {
+        const value = this.getPollHandleValue(handle);
+        return this.binding.destroyPollHandle(value);
     }
 
     /**

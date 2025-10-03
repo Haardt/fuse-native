@@ -175,6 +175,9 @@ public:
     static bool RemoveOperationHandler(FuseOpType op_type);
     static bool HasOperationHandler(FuseOpType op_type);
 
+    static bool NotifyPollHandle(uint64_t handle_value, bool destroy_after);
+    static bool DestroyPollHandle(uint64_t handle_value);
+
     static FuseBridge* GetBridgeFromRequest(fuse_req_t req);
 
 private:
@@ -189,12 +192,21 @@ private:
 
     static std::mutex handler_mutex_;
     static std::unordered_map<FuseOpType, HandlerRecord> handler_registry_;
+    struct PollHandleEntry {
+        FuseBridge* owner;
+        struct fuse_pollhandle* handle;
+    };
+    static std::mutex poll_handle_mutex_;
+    static std::unordered_map<uint64_t, PollHandleEntry> poll_handle_registry_;
 
     void InitializeFuseOperations();
     void ProcessRequest(std::shared_ptr<FuseRequestContext> context,
                         std::function<void(Napi::Env, Napi::Function)> js_invoker);
     std::shared_ptr<FuseRequestContext> CreateContext(FuseOpType op_type, fuse_req_t req);
     void DispatchReadBuf(std::shared_ptr<FuseRequestContext> context);
+    bool RegisterPollHandle(struct fuse_pollhandle* handle);
+    void ReleasePollHandle(struct fuse_pollhandle* handle, bool destroy_handle);
+    void CleanupPollHandles();
 
     // Instance-level handlers invoked from static callbacks
     void HandleLookup(fuse_req_t req, fuse_ino_t parent, const char* name);

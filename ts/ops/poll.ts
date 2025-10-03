@@ -5,20 +5,17 @@ import type {
   FileInfo,
   Ino,
   PollHandle,
+  PollResult,
   RequestContext,
 } from '../types.ts';
 
 const DEFAULT_OPTIONS: BaseOperationOptions = {};
 
-export type PollResult = {
-  revents: number;
-};
-
 export function validatePoll(
   ino: unknown,
   fi: unknown,
   ph: unknown,
-  revents: unknown
+  requestedEvents: unknown
 ): asserts ino is Ino {
   ValidationUtils.validateIno(ino);
 
@@ -37,12 +34,8 @@ export function validatePoll(
 
   // ph can be a partial PollHandle, so we don't validate all fields strictly
 
-  if (typeof revents !== 'number') {
-    throw new FuseErrno('EINVAL', 'Returned events must be a number');
-  }
-
-  if (!Number.isInteger(revents) || revents < 0) {
-    throw new FuseErrno('EINVAL', 'Returned events must be a non-negative integer');
+  if (typeof requestedEvents !== 'number' || requestedEvents < 0) {
+    throw new FuseErrno('EINVAL', 'Requested events must be a non-negative number');
   }
 }
 
@@ -54,8 +47,8 @@ export function validatePoll(
  *
  * @param fi - File information for the opened file
  * @param ph - Poll handle for kernel polling operations
- * @param revents - Returned events (bitmask of POLLIN, POLLOUT, etc.)
- * @returns The revents (returned events) indicating which events occurred
+ * @param requestedEvents - Events that the kernel is interested in
+ * @returns PollResult containing the ready events and optional keepPolling flag
  */
 export async function pollWrapper(
   handlers: {
@@ -63,26 +56,26 @@ export async function pollWrapper(
       ino: Ino,
       fi: FileInfo,
       ph: PollHandle,
-      revents: number,
+      requestedEvents: number,
       context: RequestContext,
       options?: BaseOperationOptions
-    ) => Promise<{ revents: number }>
+    ) => Promise<PollResult>
   },
   ino: Ino,
   fi: FileInfo,
   ph: PollHandle,
-  revents: number,
+  requestedEvents: number,
   context: RequestContext = {} as RequestContext,
   options: BaseOperationOptions = DEFAULT_OPTIONS
 ): Promise<PollResult> {
-  validatePoll(ino, fi, ph, revents);
+  validatePoll(ino, fi, ph, requestedEvents);
 
   const handler = handlers.poll;
   if (!handler) {
     throw new FuseErrno('ENOSYS');
   }
 
-  const result = await handler(ino, fi, ph, revents, context, options);
+  const result = await handler(ino, fi, ph, requestedEvents, context, options);
   if (!result || typeof result !== 'object') {
     throw new FuseErrno('EIO', 'poll handler returned invalid result');
   }
@@ -93,6 +86,10 @@ export async function pollWrapper(
 
   if (!Number.isInteger(result.revents) || result.revents < 0) {
     throw new FuseErrno('EIO', 'poll handler returned invalid revents value');
+  }
+
+  if (result.keepPolling !== undefined && typeof result.keepPolling !== 'boolean') {
+    throw new FuseErrno('EIO', 'poll handler keepPolling must be a boolean when provided');
   }
 
   return result;

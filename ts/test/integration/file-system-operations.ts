@@ -1078,9 +1078,9 @@ export class FileSystemOperations implements FuseOperationHandlers {
 
   // utimens is not in FuseOperationHandlers, so we don't implement it
 
-  poll: PollHandler = async (ino, fi, ph, reventsp, context, options) => {
+  poll: PollHandler = async (ino, fi, ph, requestedEvents, context, options) => {
     if (this._overrides.poll) {
-      return this._overrides.poll(ino, fi, ph, reventsp, context, options);
+      return this._overrides.poll(ino, fi, ph, requestedEvents, context, options);
     }
     throw new FuseErrno('ENOSYS');
   };

@@ -277,6 +277,14 @@ export interface PollHandle {
   active?: boolean;
 }
 
+/** Result returned from a poll handler */
+export interface PollResult {
+  /** Bitmask of events that are ready (POLLIN, POLLOUT, etc.) */
+  revents: number;
+  /** Keep the poll handle active to receive future notifications */
+  keepPolling?: boolean;
+}
+
 // =============================================================================
 // Buffer Vector Types (for write_buf operation)
 // =============================================================================
@@ -812,10 +820,10 @@ export type PollHandler = (
   ino: Ino,
   fi: FileInfo,
   ph: PollHandle,
-  reventsp: number,
+  requestedEvents: number,
   context: RequestContext,
   options?: BaseOperationOptions
-) => Promise<{ revents: number }>;
+) => Promise<PollResult>;
 
 /** Flush handler */
 export type FlushHandler = (
