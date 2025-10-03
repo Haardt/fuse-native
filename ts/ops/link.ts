@@ -3,6 +3,7 @@ import { ValidationUtils } from '../helpers.ts';
 import { ensureStatResult, normalizeTimeout } from './getattr.ts';
 import type {
   BaseOperationOptions,
+  EntryResult,
   Ino,
   LinkHandler,
   RequestContext,
@@ -19,10 +20,7 @@ const DEFAULT_CONTEXT: RequestContext = {
 
 const DEFAULT_OPTIONS: BaseOperationOptions = {};
 
-export type LinkResult = {
-  attr: StatResult;
-  timeout: Timeout;
-};
+export type LinkResult = EntryResult;
 
 export function validateLink(
   ino: unknown,
@@ -64,7 +62,52 @@ export async function linkWrapper(
   }
 
   const statResult = ensureStatResult(result.attr);
-  const timeout = normalizeTimeout(result.timeout);
 
-  return { attr: statResult, timeout };
+  const normalizeTimeoutField = (value: unknown, fallback: Timeout): Timeout => {
+    if (typeof value === 'number') {
+      return normalizeTimeout(value);
+    }
+    return fallback;
+  };
+
+  const entryTimeout = normalizeTimeoutField(
+    (result as any).entryTimeout ?? (result as any).entry_timeout ?? (result as any).timeout ?? 1.0,
+    1.0,
+  );
+  const attrTimeout = normalizeTimeoutField(
+    (result as any).attrTimeout ?? (result as any).attr_timeout ?? (result as any).timeout ?? entryTimeout,
+    entryTimeout,
+  );
+
+  let inoValue = (result as any).ino ?? statResult.ino;
+  if (typeof inoValue === 'number') {
+    if (!Number.isInteger(inoValue) || inoValue < 0) {
+      throw new FuseErrno('EIO', 'link result ino must be a non-negative integer');
+    }
+    inoValue = BigInt(inoValue);
+  }
+  if (typeof inoValue !== 'bigint') {
+    throw new FuseErrno('EIO', 'link result must include ino as bigint');
+  }
+
+  let generationValue = (result as any).generation ?? 0n;
+  if (typeof generationValue === 'number') {
+    if (!Number.isInteger(generationValue) || generationValue < 0) {
+      throw new FuseErrno('EIO', 'link result generation must be non-negative');
+    }
+    generationValue = BigInt(generationValue);
+  }
+  if (typeof generationValue !== 'bigint') {
+    throw new FuseErrno('EIO', 'link result must include generation as bigint');
+  }
+
+  const normalized: LinkResult = {
+    ino: inoValue as Ino,
+    generation: generationValue,
+    entry_timeout: entryTimeout,
+    attr_timeout: attrTimeout,
+    attr: statResult,
+  };
+
+  return normalized;
 }

@@ -194,6 +194,7 @@ private:
     void ProcessRequest(std::shared_ptr<FuseRequestContext> context,
                         std::function<void(Napi::Env, Napi::Function)> js_invoker);
     std::shared_ptr<FuseRequestContext> CreateContext(FuseOpType op_type, fuse_req_t req);
+    void DispatchReadBuf(std::shared_ptr<FuseRequestContext> context);
 
     // Instance-level handlers invoked from static callbacks
     void HandleLookup(fuse_req_t req, fuse_ino_t parent, const char* name);

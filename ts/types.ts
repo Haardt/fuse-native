@@ -305,6 +305,8 @@ export interface FuseBuf {
   fd?: number;
   /** Position in file (if IS_FD) */
   pos?: bigint;
+  /** Size of backing memory allocation (mirrors fuse_buf.mem_size) */
+  memSize?: number;
 }
 
 /** Buffer vector for scatter-gather I/O */

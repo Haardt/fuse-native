@@ -85,6 +85,11 @@ export function validateFuseBufvec(bufvec: unknown): asserts bufvec is FuseBufve
       if (buf.mem.byteLength < buf.size) {
         throw new FuseErrno('EINVAL', `Buffer ${i} mem size must be at least ${buf.size} bytes`);
       }
+      if ('memSize' in buf) {
+        if (typeof buf.memSize !== 'number' || buf.memSize < buf.size) {
+          throw new FuseErrno('EINVAL', `Buffer ${i} memSize must be >= size`);
+        }
+      }
     }
   }
 }
@@ -124,6 +129,7 @@ export async function readBufWrapper(
       size: buffer.byteLength,
       flags: FuseBufFlags.NONE,
       mem: buffer,
+      memSize: buffer.byteLength,
     }],
   };
 

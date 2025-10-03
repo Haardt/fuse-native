@@ -14,6 +14,7 @@
 #include <cmath>
 #include <cstring>
 #include <utility>
+#include <limits>
 #include <optional>
 #include <sys/statvfs.h>
 
@@ -21,6 +22,7 @@
 #include "session_manager.h"
 #include "napi_helpers.h"
 #include "tsfn_dispatcher.h"
+#include <fuse3/fuse_common.h>
 #include <vector>
 #include <unistd.h>   // pread
 #include <errno.h>
@@ -60,6 +62,208 @@ std::shared_ptr<void> CreateKeepaliveFromJsValue(const Napi::Value& value) {
         reference->Unref();
         delete reference;
     });
+}
+
+bool TryGetSizeT(const Napi::Value& value, size_t* out) {
+    if (!value.IsNumber()) {
+        return false;
+    }
+    double raw = value.As<Napi::Number>().DoubleValue();
+    if (!std::isfinite(raw) || raw < 0.0) {
+        return false;
+    }
+    double integral = std::floor(raw + 0.0);
+    if (integral != raw) {
+        return false;
+    }
+    if (integral > static_cast<double>(std::numeric_limits<size_t>::max())) {
+        return false;
+    }
+    *out = static_cast<size_t>(integral);
+    return true;
+}
+
+struct BufvecHolder {
+    std::shared_ptr<uint8_t[]> storage;
+    struct fuse_bufvec* bufvec{nullptr};
+    std::vector<std::shared_ptr<std::vector<uint8_t>>> mem_buffers;
+
+    explicit BufvecHolder(size_t count) {
+        size_t total_size = sizeof(struct fuse_bufvec);
+        if (count > 0) {
+            total_size += (count - 1) * sizeof(struct fuse_buf);
+        }
+        storage = std::shared_ptr<uint8_t[]>(new uint8_t[total_size], std::default_delete<uint8_t[]>());
+        std::memset(storage.get(), 0, total_size);
+        bufvec = reinterpret_cast<struct fuse_bufvec*>(storage.get());
+        bufvec->count = count;
+        bufvec->idx = 0;
+        bufvec->off = 0;
+    }
+};
+
+std::shared_ptr<BufvecHolder> ConvertJsFuseBufvec(Napi::Env env, const Napi::Value& value, std::string* error_message) {
+    if (!value.IsObject()) {
+        if (error_message) *error_message = "read_buf result must be an object";
+        return nullptr;
+    }
+
+    Napi::Object obj = value.As<Napi::Object>();
+
+    if (!obj.Has("count")) {
+        if (error_message) *error_message = "read_buf result missing 'count'";
+        return nullptr;
+    }
+
+    size_t count = 0;
+    if (!TryGetSizeT(obj.Get("count"), &count)) {
+        if (error_message) *error_message = "read_buf 'count' must be a non-negative integer";
+        return nullptr;
+    }
+
+    size_t idx = 0;
+    if (!obj.Has("idx") || !TryGetSizeT(obj.Get("idx"), &idx)) {
+        if (error_message) *error_message = "read_buf result missing integer 'idx'";
+        return nullptr;
+    }
+
+    size_t off = 0;
+    if (!obj.Has("off") || !TryGetSizeT(obj.Get("off"), &off)) {
+        if (error_message) *error_message = "read_buf result missing integer 'off'";
+        return nullptr;
+    }
+
+    if (!obj.Has("buf") || !obj.Get("buf").IsArray()) {
+        if (error_message) *error_message = "read_buf result missing 'buf' array";
+        return nullptr;
+    }
+
+    Napi::Array buf_array = obj.Get("buf").As<Napi::Array>();
+    if (buf_array.Length() < count) {
+        if (error_message) *error_message = "read_buf 'buf' array shorter than 'count'";
+        return nullptr;
+    }
+
+    auto holder = std::make_shared<BufvecHolder>(count);
+    holder->bufvec->idx = count == 0 ? 0 : idx;
+    holder->bufvec->off = off;
+
+    for (size_t i = 0; i < count; ++i) {
+        Napi::Value entry_val = buf_array.Get(i);
+        if (!entry_val.IsObject()) {
+            if (error_message) *error_message = "read_buf entries must be objects";
+            return nullptr;
+        }
+        Napi::Object entry = entry_val.As<Napi::Object>();
+
+        if (!entry.Has("size")) {
+            if (error_message) *error_message = "read_buf entry missing 'size'";
+            return nullptr;
+        }
+        size_t size = 0;
+        if (!TryGetSizeT(entry.Get("size"), &size)) {
+            if (error_message) *error_message = "read_buf entry 'size' must be a non-negative integer";
+            return nullptr;
+        }
+
+        uint32_t flags = 0;
+        if (entry.Has("flags")) {
+            if (!entry.Get("flags").IsNumber()) {
+                if (error_message) *error_message = "read_buf entry 'flags' must be a number";
+                return nullptr;
+            }
+            flags = entry.Get("flags").As<Napi::Number>().Uint32Value();
+        }
+
+        struct fuse_buf& native_buf = holder->bufvec->buf[i];
+        native_buf.size = size;
+        native_buf.flags = static_cast<enum fuse_buf_flags>(flags);
+
+        if (flags & FUSE_BUF_IS_FD) {
+            if (!entry.Has("fd") || !entry.Get("fd").IsNumber()) {
+                if (error_message) *error_message = "read_buf fd buffer missing numeric 'fd'";
+                return nullptr;
+            }
+            native_buf.fd = entry.Get("fd").As<Napi::Number>().Int32Value();
+            if (entry.Has("pos")) {
+                Napi::Value pos_val = entry.Get("pos");
+                int64_t pos = 0;
+                if (pos_val.IsBigInt()) {
+                    bool lossless = false;
+                    pos = pos_val.As<Napi::BigInt>().Int64Value(&lossless);
+                    if (!lossless) {
+                        if (error_message) *error_message = "read_buf entry 'pos' must fit int64";
+                        return nullptr;
+                    }
+                } else if (pos_val.IsNumber()) {
+                    pos = pos_val.As<Napi::Number>().Int64Value();
+                } else {
+                    if (error_message) *error_message = "read_buf entry 'pos' must be bigint or number";
+                    return nullptr;
+                }
+                native_buf.pos = static_cast<off_t>(pos);
+            } else {
+                native_buf.pos = 0;
+            }
+            native_buf.mem = nullptr;
+            native_buf.mem_size = 0;
+        } else {
+            if (!entry.Has("mem")) {
+                if (error_message) *error_message = "read_buf entry missing 'mem' ArrayBuffer";
+                return nullptr;
+            }
+
+            Napi::Value mem_val = entry.Get("mem");
+            const uint8_t* src_ptr = nullptr;
+            size_t available = 0;
+
+            if (mem_val.IsArrayBuffer()) {
+                Napi::ArrayBuffer ab = mem_val.As<Napi::ArrayBuffer>();
+                src_ptr = static_cast<const uint8_t*>(ab.Data());
+                available = ab.ByteLength();
+            } else if (mem_val.IsTypedArray()) {
+                Napi::TypedArray ta = mem_val.As<Napi::TypedArray>();
+                Napi::ArrayBuffer ab = ta.ArrayBuffer();
+                src_ptr = static_cast<const uint8_t*>(ab.Data()) + ta.ByteOffset();
+                available = ta.ByteLength();
+            } else {
+                if (error_message) *error_message = "read_buf entry 'mem' must be ArrayBuffer or TypedArray";
+                return nullptr;
+            }
+
+            if (available < size) {
+                if (error_message) *error_message = "read_buf entry 'mem' shorter than 'size'";
+                return nullptr;
+            }
+
+            auto data_vec = std::make_shared<std::vector<uint8_t>>(size);
+            if (size > 0 && src_ptr) {
+                std::memcpy(data_vec->data(), src_ptr, size);
+            }
+            holder->mem_buffers.push_back(data_vec);
+
+            native_buf.mem = data_vec->data();
+            native_buf.mem_size = data_vec->size();
+            native_buf.fd = -1;
+            native_buf.pos = 0;
+        }
+    }
+
+    if (count > 0) {
+        if (holder->bufvec->idx >= count) {
+            if (error_message) *error_message = "read_buf 'idx' out of range";
+            return nullptr;
+        }
+        if (holder->bufvec->off > holder->bufvec->buf[holder->bufvec->idx].size) {
+            if (error_message) *error_message = "read_buf 'off' larger than buffer size";
+            return nullptr;
+        }
+    } else {
+        holder->bufvec->idx = 0;
+        holder->bufvec->off = 0;
+    }
+
+    return holder;
 }
 
 #if defined(__APPLE__)
@@ -791,6 +995,44 @@ void FuseBridge::ProcessRequest(std::shared_ptr<FuseRequestContext> context,
     }
 
     context->request_id = request_id;
+}
+
+void FuseBridge::DispatchReadBuf(std::shared_ptr<FuseRequestContext> context) {
+    ProcessRequest(context, [context](Napi::Env env, Napi::Function handler) {
+        Napi::Value ino_value = NapiHelpers::CreateBigUint64(env, ToUint64(context->ino));
+        Napi::Object options = Napi::Object::New(env);
+        options.Set("offset", NapiHelpers::CreateBigUint64(env, context->offset));
+        options.Set("size", Napi::Number::New(env, static_cast<double>(context->size)));
+        if (context->has_fi) {
+            options.Set("fi", NapiHelpers::FileInfoToObject(env, context->fi));
+        }
+        Napi::Object request_ctx = CreateRequestContextObject(env, *context);
+
+        auto result = handler.Call({ino_value, request_ctx, options});
+        ResolvePromiseOrValue(env, context, result,
+            [context](Napi::Env env_inner, Napi::Value value) {
+                std::string error;
+                auto holder = ConvertJsFuseBufvec(env_inner, value, &error);
+                if (!holder) {
+                    if (!error.empty()) {
+                        Napi::TypeError::New(env_inner, error).ThrowAsJavaScriptException();
+                    }
+                    context->ReplyError(EINVAL);
+                    return;
+                }
+                context->keepalive = holder;
+                int rc = fuse_reply_data(context->request, holder->bufvec, static_cast<enum fuse_buf_copy_flags>(0));
+                if (rc != 0) {
+                    context->ReplyError(-rc);
+                    return;
+                }
+                context->TryMarkReplied();
+                context->keepalive.reset();
+            },
+            [context](Napi::Env env_inner, Napi::Value reason) {
+                ReplyWithErrorValue(env_inner, context, reason);
+            });
+    });
 }
 
 std::shared_ptr<FuseRequestContext> FuseBridge::CreateContext(FuseOpType op_type, fuse_req_t req) {
@@ -1687,6 +1929,20 @@ void FuseBridge::HandleRead(fuse_req_t req, fuse_ino_t ino, size_t size, off_t o
         context->has_fi = true;
     }
 
+    const bool has_read_buf = HasOperationHandler(FuseOpType::READ_BUF);
+    const bool has_read = HasOperationHandler(FuseOpType::READ);
+
+    if (has_read_buf) {
+        context->op_type = FuseOpType::READ_BUF;
+        DispatchReadBuf(context);
+        return;
+    }
+
+    if (!has_read) {
+        context->ReplyError(ENOSYS);
+        return;
+    }
+
     ProcessRequest(context, [context](Napi::Env env, Napi::Function handler) {
         Napi::Value ino_value = NapiHelpers::CreateBigUint64(env, ToUint64(context->ino));
         Napi::Object options = Napi::Object::New(env);
@@ -1732,10 +1988,83 @@ void FuseBridge::HandleWrite(fuse_req_t req, fuse_ino_t ino, const char* buf, si
                              reinterpret_cast<const uint8_t*>(buf) + size);
     }
 
+    const bool has_write_buf = HasOperationHandler(FuseOpType::WRITE_BUF);
+    const bool has_write = HasOperationHandler(FuseOpType::WRITE);
+
+    if (has_write_buf) {
+        context->op_type = FuseOpType::WRITE_BUF;
+        ProcessRequest(context, [context](Napi::Env env, Napi::Function handler) {
+            Napi::Value ino_value = NapiHelpers::CreateBigUint64(env, ToUint64(context->ino));
+
+            Napi::Object bufvec = Napi::Object::New(env);
+            bufvec.Set("count", Napi::Number::New(env, 1));
+            bufvec.Set("idx", Napi::Number::New(env, 0));
+            bufvec.Set("off", Napi::Number::New(env, 0));
+
+            Napi::Array buffers = Napi::Array::New(env, 1);
+            Napi::Object buf_obj = Napi::Object::New(env);
+            buf_obj.Set("size", Napi::Number::New(env, static_cast<double>(context->data.size())));
+            buf_obj.Set("flags", Napi::Number::New(env, 0));
+
+            Napi::ArrayBuffer payload = Napi::ArrayBuffer::New(env, context->data.size());
+            if (!context->data.empty()) {
+                std::memcpy(payload.Data(), context->data.data(), context->data.size());
+            }
+            buf_obj.Set("mem", payload);
+            buf_obj.Set("memSize", Napi::Number::New(env, static_cast<double>(context->data.size())));
+            buffers.Set(uint32_t{0}, buf_obj);
+
+            bufvec.Set("buf", buffers);
+
+            Napi::Object options = Napi::Object::New(env);
+            options.Set("offset", NapiHelpers::CreateBigUint64(env, context->offset));
+            if (context->has_fi) {
+                options.Set("fi", NapiHelpers::FileInfoToObject(env, context->fi));
+            }
+
+            Napi::Object request_ctx = CreateRequestContextObject(env, *context);
+            Napi::Value result = handler.Call({ino_value, bufvec, request_ctx, options});
+
+            ResolvePromiseOrValue(env, context, result,
+                [context](Napi::Env env_inner, Napi::Value value) {
+                    if (value.IsNumber()) {
+                        size_t written = static_cast<size_t>(value.As<Napi::Number>().Uint32Value());
+                        context->ReplyWrite(written);
+                        return;
+                    }
+                    if (value.IsObject()) {
+                        Napi::Object obj = value.As<Napi::Object>();
+                        if (obj.Has("bytes") && obj.Get("bytes").IsNumber()) {
+                            size_t written = static_cast<size_t>(obj.Get("bytes").As<Napi::Number>().Uint32Value());
+                            context->ReplyWrite(written);
+                            return;
+                        }
+                    }
+                    if (value.IsBigInt()) {
+                        bool lossless = false;
+                        uint64_t written = value.As<Napi::BigInt>().Uint64Value(&lossless);
+                        if (lossless) {
+                            context->ReplyWrite(static_cast<size_t>(written));
+                            return;
+                        }
+                    }
+                    context->ReplyUnsupported();
+                },
+                [context](Napi::Env env_inner, Napi::Value reason) {
+                    ReplyWithErrorValue(env_inner, context, reason);
+                });
+        });
+        return;
+    }
+
+    if (!has_write) {
+        context->ReplyError(ENOSYS);
+        return;
+    }
+
     ProcessRequest(context, [context](Napi::Env env, Napi::Function handler) {
         Napi::Value ino_value = NapiHelpers::CreateBigUint64(env, ToUint64(context->ino));
 
-        // Copy buffer data to new ArrayBuffer to ensure proper lifetime management
         Napi::ArrayBuffer buffer;
         if (context->data.empty()) {
             buffer = Napi::ArrayBuffer::New(env, 0);
@@ -2407,7 +2736,7 @@ void FuseBridge::HandlePoll(fuse_req_t req, fuse_ino_t ino, struct fuse_file_inf
 
 void FuseBridge::HandleInit(fuse_req_t req, struct fuse_conn_info* conn) {
     auto context = CreateContext(FuseOpType::INIT, req);
-    conn->want |= FUSE_CAP_ASYNC_READ | FUSE_CAP_WRITEBACK_CACHE;
+    conn->want |= FUSE_CAP_ASYNC_READ | FUSE_CAP_WRITEBACK_CACHE | FUSE_CAP_SPLICE_READ;
     conn->max_write = 4096 * 4;
     conn->max_readahead = 4096 * 4;
     ProcessRequest(context, [context, conn](Napi::Env env, Napi::Function handler) {
@@ -2449,9 +2778,9 @@ void FuseBridge::HandleForgetMulti(fuse_req_t req, size_t count, struct fuse_for
     if (req) fuse_reply_none(req);
 }
 
-void FuseBridge::HandleReadBuf(fuse_req_t req, fuse_ino_t, size_t, off_t, struct fuse_file_info*, struct fuse_bufvec**) {
-    auto context = CreateContext(FuseOpType::READ_BUF, req);
-    context->ReplyUnsupported();
+void FuseBridge::HandleReadBuf(fuse_req_t req, fuse_ino_t ino, size_t size, off_t off,
+                               struct fuse_file_info* fi, struct fuse_bufvec**) {
+    HandleRead(req, ino, size, off, fi);
 }
 
 void FuseBridge::HandleSetxattr(fuse_req_t req,
@@ -2875,30 +3204,150 @@ void FuseBridge::HandleWriteBuf(fuse_req_t req,
                                 struct fuse_file_info* fi) {
     auto context = CreateContext(FuseOpType::WRITE_BUF, req);
     context->ino = ino;
-    context->offset = off;
+    context->offset = static_cast<uint64_t>(off);
+    context->size = fuse_buf_size(bufv);
     if (fi) {
         context->fi = *fi;
         context->has_fi = true;
     }
 
-    // --- fuse_bufvec -> linearer Speicher ---
-    std::vector<uint8_t> linear;
-    size_t total_size = 0;
-    for (unsigned i = 0; i < bufv->count; ++i) {
-        total_size += static_cast<size_t>(bufv->buf[i].size);
-    }
-    linear.resize(total_size);
+    const bool has_write_buf = HasOperationHandler(FuseOpType::WRITE_BUF);
+    const bool has_write = HasOperationHandler(FuseOpType::WRITE);
 
-    size_t cursor = 0;
+    if (!has_write_buf && !has_write) {
+        context->ReplyError(ENOSYS);
+        return;
+    }
+
+    bool contains_fd = false;
+    for (unsigned i = 0; i < bufv->count; ++i) {
+        if (bufv->buf[i].flags & FUSE_BUF_IS_FD) {
+            contains_fd = true;
+            break;
+        }
+    }
+
+    auto handle_write_result = [context](Napi::Env env_inner, Napi::Value value) {
+        if (value.IsNumber()) {
+            int64_t n = value.As<Napi::Number>().Int64Value();
+            if (n < 0) {
+                context->ReplyError(static_cast<int>(-n));
+                return;
+            }
+            context->ReplyWrite(static_cast<size_t>(n));
+            return;
+        }
+        if (value.IsBigInt()) {
+            bool lossless = false;
+            uint64_t written = value.As<Napi::BigInt>().Uint64Value(&lossless);
+            if (lossless) {
+                context->ReplyWrite(static_cast<size_t>(written));
+                return;
+            }
+        }
+        if (value.IsObject()) {
+            Napi::Object obj = value.As<Napi::Object>();
+            if (obj.Has("bytes") && obj.Get("bytes").IsNumber()) {
+                int64_t n = obj.Get("bytes").As<Napi::Number>().Int64Value();
+                if (n < 0) {
+                    context->ReplyError(static_cast<int>(-n));
+                    return;
+                }
+                context->ReplyWrite(static_cast<size_t>(n));
+                return;
+            }
+        }
+        context->ReplyError(EIO);
+    };
+
+    if (has_write_buf && !contains_fd) {
+        std::vector<std::vector<uint8_t>> copies(bufv->count);
+        std::vector<size_t> sizes(bufv->count);
+        std::vector<uint32_t> flags(bufv->count);
+
+        for (unsigned i = 0; i < bufv->count; ++i) {
+            const fuse_buf& source = bufv->buf[i];
+            sizes[i] = static_cast<size_t>(source.size);
+            flags[i] = source.flags;
+
+            auto& data_vec = copies[i];
+            data_vec.resize(sizes[i]);
+            if (sizes[i] > 0) {
+                if (!source.mem) {
+                    context->ReplyError(EIO);
+                    return;
+                }
+                std::memcpy(data_vec.data(), source.mem, sizes[i]);
+            }
+        }
+
+        ProcessRequest(context,
+            [context,
+             copies = std::move(copies),
+             sizes = std::move(sizes),
+             flags = std::move(flags),
+             idx = bufv->idx,
+             off_val = bufv->off,
+             handle_write_result](Napi::Env env, Napi::Function handler) {
+                Napi::Value ino_value = NapiHelpers::CreateBigUint64(env, ToUint64(context->ino));
+
+                Napi::Object bufvec = Napi::Object::New(env);
+                bufvec.Set("count", Napi::Number::New(env, static_cast<double>(copies.size())));
+                bufvec.Set("idx", Napi::Number::New(env, static_cast<double>(idx)));
+                bufvec.Set("off", Napi::Number::New(env, static_cast<double>(off_val)));
+
+                Napi::Array buf_array = Napi::Array::New(env, copies.size());
+                for (size_t i = 0; i < copies.size(); ++i) {
+                    Napi::Object buf_obj = Napi::Object::New(env);
+                    buf_obj.Set("size", Napi::Number::New(env, static_cast<double>(sizes[i])));
+                    buf_obj.Set("flags", Napi::Number::New(env, static_cast<double>(flags[i])));
+
+                    Napi::ArrayBuffer payload = Napi::ArrayBuffer::New(env, sizes[i]);
+                    if (sizes[i] > 0) {
+                        std::memcpy(payload.Data(), copies[i].data(), sizes[i]);
+                    }
+
+                    buf_obj.Set("mem", payload);
+                    buf_obj.Set("memSize", Napi::Number::New(env, static_cast<double>(sizes[i])));
+                    buf_array.Set(static_cast<uint32_t>(i), buf_obj);
+                }
+
+                bufvec.Set("buf", buf_array);
+
+                Napi::Object options = Napi::Object::New(env);
+                options.Set("offset", NapiHelpers::CreateBigUint64(env, static_cast<uint64_t>(context->offset)));
+                if (context->has_fi) {
+                    options.Set("fi", NapiHelpers::FileInfoToObject(env, context->fi));
+                }
+
+                Napi::Object request_ctx = CreateRequestContextObject(env, *context);
+                Napi::Value result = handler.Call({ino_value, bufvec, request_ctx, options});
+
+                ResolvePromiseOrValue(env, context, result, handle_write_result,
+                    [context](Napi::Env env_inner, Napi::Value reason) {
+                        ReplyWithErrorValue(env_inner, context, reason);
+                    });
+            });
+        return;
+    }
+
+    // Fallback: linearisieren und WRITE-Handler nutzen.
+    context->op_type = FuseOpType::WRITE;
+
+    std::vector<uint8_t> linear;
+    linear.reserve(context->size);
     for (unsigned i = 0; i < bufv->count; ++i) {
         const fuse_buf& b = bufv->buf[i];
         const size_t sz = static_cast<size_t>(b.size);
-        if (sz == 0) continue;
-
+        if (sz == 0) {
+            continue;
+        }
+        size_t existing = linear.size();
+        linear.resize(existing + sz);
         if (b.flags & FUSE_BUF_IS_FD) {
             size_t done = 0;
             while (done < sz) {
-                ssize_t r = pread(b.fd, linear.data() + cursor + done,
+                ssize_t r = pread(b.fd, linear.data() + existing + done,
                                   sz - done, static_cast<off_t>(b.pos) + done);
                 if (r <= 0) {
                     context->ReplyError(EIO);
@@ -2907,30 +3356,15 @@ void FuseBridge::HandleWriteBuf(fuse_req_t req,
                 done += static_cast<size_t>(r);
             }
         } else {
-            if (b.mem == nullptr) {
+            if (!b.mem) {
                 context->ReplyError(EIO);
                 return;
             }
-            std::memcpy(linear.data() + cursor, b.mem, sz);
+            std::memcpy(linear.data() + existing, b.mem, sz);
         }
-        cursor += sz;
     }
 
-    // --- Handler-Auswahl ---
-    const bool has_write_buf = HasOperationHandler(FuseOpType::WRITE_BUF);
-    const bool has_write     = HasOperationHandler(FuseOpType::WRITE);
-
-    if (!has_write_buf && !has_write) {
-        context->ReplyError(ENOSYS);
-        return;
-    }
-
-    // Falls write_buf nicht registriert, auf write zurückfallen.
-    if (!has_write_buf && has_write) {
-        context->op_type = FuseOpType::WRITE;  // JS-Router soll den WRITE-Handler nehmen
-    }
-
-    ProcessRequest(context, [context, linear = std::move(linear)](Napi::Env env, Napi::Function handler) {
+    ProcessRequest(context, [context, linear = std::move(linear), handle_write_result](Napi::Env env, Napi::Function handler) {
         Napi::Value ino_value = NapiHelpers::CreateBigUint64(env, ToUint64(context->ino));
 
         Napi::ArrayBuffer data = Napi::ArrayBuffer::New(env, linear.size());
@@ -2952,25 +3386,7 @@ void FuseBridge::HandleWriteBuf(fuse_req_t req,
             env,
             context,
             result,
-            [context](Napi::Env env_inner, Napi::Value value) {
-                // Erwartet: Anzahl geschriebener Bytes (Number) oder {bytes:number}
-                if (value.IsNumber()) {
-                    int64_t n = value.As<Napi::Number>().Int64Value();
-                    if (n < 0) { context->ReplyError(static_cast<int>(-n)); return; }
-                    context->ReplyWrite(static_cast<size_t>(n));
-                    return;
-                }
-                if (value.IsObject()) {
-                    Napi::Object obj = value.As<Napi::Object>();
-                    if (obj.Has("bytes") && obj.Get("bytes").IsNumber()) {
-                        int64_t n = obj.Get("bytes").As<Napi::Number>().Int64Value();
-                        if (n < 0) { context->ReplyError(static_cast<int>(-n)); return; }
-                        context->ReplyWrite(static_cast<size_t>(n));
-                        return;
-                    }
-                }
-                context->ReplyError(EIO);
-            },
+            handle_write_result,
             [context](Napi::Env env_inner, Napi::Value reason) {
                 ReplyWithErrorValue(env_inner, context, reason);
             }

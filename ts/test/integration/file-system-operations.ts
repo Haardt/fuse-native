@@ -17,6 +17,8 @@ import type {
   OpenHandler,
   ReadHandler,
   WriteHandler,
+  ReadBufHandler,
+  WriteBufHandler,
   ReleaseHandler,
   MkdirHandler,
   MkdirResult,
@@ -52,6 +54,8 @@ import type {
   RequestContext,
   FileInfo,
   Ino,
+  ReadOptions,
+  WriteOptions,
   StatResult,
   DirentEntry,
   ReaddirResult,
@@ -59,6 +63,7 @@ import type {
   StatvfsResult,
   FlushHandler,
   SetattrOptions,
+  FuseBufvec,
 } from "../../index.ts";
 
 import type { SimpleInode } from "./filesystem.ts";
@@ -72,6 +77,7 @@ import {
   createFd,
   createFlags,
   getCurrentTimestamp,
+  FuseBufFlags,
 } from "../../index.ts";
 
 import { FuseErrno } from "../../errors.ts";
@@ -127,6 +133,120 @@ export class FileSystemOperations implements FuseOperationHandlers {
 
   public overrideOperationsWith(overrides: OperationOverrides) {
     this._overrides = overrides;
+  }
+
+  private toArrayBuffer(data: Buffer | ArrayBuffer): ArrayBuffer {
+    if (data instanceof ArrayBuffer) {
+      return data.slice(0);
+    }
+    if (Buffer.isBuffer(data)) {
+      const out = new ArrayBuffer(data.length);
+      new Uint8Array(out).set(data);
+      return out;
+    }
+    throw new FuseErrno('EINVAL', 'Unsupported buffer type');
+  }
+
+  private flattenFuseBufvecToBuffer(bufvec: FuseBufvec): Buffer {
+    const limit = Math.min(bufvec.count, bufvec.buf.length);
+    if (limit === 0) {
+      return Buffer.alloc(0);
+    }
+
+    let startIdx = bufvec.idx;
+    if (!Number.isInteger(startIdx) || startIdx < 0) {
+      startIdx = 0;
+    }
+    if (startIdx >= limit) {
+      startIdx = limit - 1;
+    }
+
+    const chunks: Buffer[] = [];
+    let total = 0;
+    for (let i = startIdx; i < limit; i++) {
+      const entry = bufvec.buf[i]!;
+      if ((entry.flags & FuseBufFlags.IS_FD) !== 0) {
+        throw new FuseErrno('ENOTSUP', 'FD-backed fuse_buf elements are not supported in tests');
+      }
+      if (!(entry.mem instanceof ArrayBuffer)) {
+        throw new FuseErrno('EINVAL', `Buffer ${i} mem must be an ArrayBuffer`);
+      }
+      const offset = i === startIdx ? bufvec.off : 0;
+      if (offset > entry.size) {
+        throw new FuseErrno('EINVAL', `Buffer ${i} offset exceeds size`);
+      }
+      const length = entry.size - offset;
+      if (length <= 0) {
+        continue;
+      }
+      const view = new Uint8Array(entry.mem, offset, length);
+      const chunk = Buffer.from(view);
+      chunks.push(chunk);
+      total += length;
+    }
+
+    return chunks.length === 1 ? chunks[0]! : Buffer.concat(chunks, total);
+  }
+
+  private async performRead(ino: Ino, options: ReadOptions): Promise<Buffer> {
+    logFuseOp('read', 'default', {
+      ino: ino.toString(),
+      offset: options.offset.toString(),
+      size: options.size,
+    });
+    const inode = this._fs.getInode(ino);
+    if (!inode) {
+      throw new FuseErrno('ENOENT');
+    }
+    if (inode.type !== 'file' || !(inode.data instanceof Buffer)) {
+      throw new FuseErrno('EISDIR');
+    }
+
+    const start = Number(options.offset);
+    const end = start + options.size;
+    const data = inode.data.slice(start, end);
+    inode.atime = getCurrentTimestamp();
+    return data;
+  }
+
+  private async performWrite(
+    ino: Ino,
+    data: ArrayBuffer,
+    context: RequestContext,
+    options: WriteOptions,
+    source: 'write' | 'write_buf',
+  ): Promise<number> {
+    logFuseOp(source, 'default', {
+      ino: ino.toString(),
+      offset: options.offset.toString(),
+      size: data.byteLength,
+    });
+    const inode = this._fs.getInode(ino);
+    if (!inode) {
+      throw new FuseErrno('ENOENT');
+    }
+    if (inode.type !== 'file' || !(inode.data instanceof Buffer)) {
+      throw new FuseErrno('EISDIR');
+    }
+
+    const offset = Number(options.offset);
+    const inputView = new Uint8Array(data);
+    const writeBuffer = Buffer.from(inputView);
+
+    if (offset + writeBuffer.length > inode.data.length) {
+      const newBuffer = Buffer.alloc(offset + writeBuffer.length);
+      inode.data.copy(newBuffer);
+      inode.data = newBuffer;
+    }
+
+    writeBuffer.copy(inode.data, offset);
+    inode.size = BigInt(inode.data.length);
+
+    const now = getCurrentTimestamp();
+    inode.mtime = now;
+    inode.ctime = now;
+
+    return writeBuffer.length;
   }
 
   init: InitHandler = async (connInfo, config, options) => {
@@ -305,61 +425,54 @@ export class FileSystemOperations implements FuseOperationHandlers {
     if (this._overrides.read) {
       return this._overrides.read(ino, context, options);
     }
-    logFuseOp('read', 'default', {
-      ino: ino.toString(),
-      offset: options.offset.toString(),
-      size: options.size,
-    });
-    const inode = this._fs.getInode(ino);
-    if (!inode) {
-      throw new FuseErrno('ENOENT');
-    }
-    if (inode.type !== 'file' || !(inode.data instanceof Buffer)) {
-      throw new FuseErrno('EISDIR'); // Or EBADF, depending on context
+    return this.performRead(ino, options);
+  };
+
+  read_buf: ReadBufHandler = async (ino, context, options) => {
+    if (this._overrides.read_buf) {
+      return this._overrides.read_buf(ino, context, options);
     }
 
-    const start = Number(options.offset);
-    const end = start + options.size;
-    const data = inode.data.slice(start, end);
-    inode.atime = getCurrentTimestamp();
-    return data;
+    const buffer = this._overrides.read
+      ? await this._overrides.read(ino, context, options)
+      : await this.performRead(ino, options);
+
+    const arrayBuffer = this.toArrayBuffer(buffer);
+    return {
+      count: 1,
+      idx: 0,
+      off: 0,
+      buf: [
+        {
+          size: arrayBuffer.byteLength,
+          flags: FuseBufFlags.NONE,
+          mem: arrayBuffer,
+          memSize: arrayBuffer.byteLength,
+        },
+      ],
+    } satisfies FuseBufvec;
   };
 
   write: WriteHandler = async (ino, data, context, options) => {
     if (this._overrides.write) {
       return this._overrides.write(ino, data, context, options);
     }
-    logFuseOp('write', 'default', {
-      ino: ino.toString(),
-      offset: options.offset.toString(),
-      size: data.byteLength,
-    });
-    const inode = this._fs.getInode(ino);
-    if (!inode) {
-      throw new FuseErrno('ENOENT');
-    }
-    if (inode.type !== 'file' || !(inode.data instanceof Buffer)) {
-      throw new FuseErrno('EISDIR');
+    return this.performWrite(ino, data, context, options, 'write');
+  };
+
+  write_buf: WriteBufHandler = async (ino, bufvec, context, options) => {
+    if (this._overrides.write_buf) {
+      return this._overrides.write_buf(ino, bufvec, context, options);
     }
 
-    const offset = Number(options.offset);
-    const newData = Buffer.from(data);
-    const newDataLength = newData.length;
+    const flattened = this.flattenFuseBufvecToBuffer(bufvec);
+    const arrayBuffer = this.toArrayBuffer(flattened);
 
-    if (offset + newDataLength > inode.data.length) {
-      const newBuffer = Buffer.alloc(offset + newDataLength);
-      inode.data.copy(newBuffer);
-      inode.data = newBuffer;
+    if (this._overrides.write) {
+      return this._overrides.write(ino, arrayBuffer, context, options);
     }
 
-    newData.copy(inode.data, offset);
-    inode.size = BigInt(inode.data.length);
-
-    const now = getCurrentTimestamp();
-    inode.mtime = now;
-    inode.ctime = now;
-
-    return newDataLength;
+    return this.performWrite(ino, arrayBuffer, context, options, 'write_buf');
   };
 
   release: ReleaseHandler = async (ino, fi, context, options) => {

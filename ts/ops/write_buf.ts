@@ -75,12 +75,60 @@ export function validateWriteBuf(
       if (buf.mem.byteLength < buf.size) {
         throw new FuseErrno('EINVAL', `Buffer ${i} mem size must be at least ${buf.size} bytes`);
       }
+      if ('memSize' in buf) {
+        if (typeof buf.memSize !== 'number' || buf.memSize < buf.size) {
+          throw new FuseErrno('EINVAL', `Buffer ${i} memSize must be >= size`);
+        }
+      }
     }
   }
 
   if (typeof offset !== 'bigint' || offset < 0n) {
     throw new FuseErrno('EINVAL', 'Offset must be a non-negative BigInt');
   }
+}
+
+function flattenBufvec(bufvec: FuseBufvec): ArrayBuffer {
+  let startIdx = bufvec.idx;
+  if (!Number.isInteger(startIdx) || startIdx < 0) {
+    startIdx = 0;
+  }
+  if (startIdx >= bufvec.buf.length) {
+    startIdx = bufvec.buf.length === 0 ? 0 : bufvec.buf.length - 1;
+  }
+
+  let totalSize = 0;
+  for (let i = startIdx; i < bufvec.buf.length; i++) {
+    const buf = bufvec.buf[i]!;
+    if ((buf.flags & FuseBufFlags.IS_FD) !== 0) {
+      throw new FuseErrno('ENOTSUP', 'File descriptor buffers are not supported in fallback write');
+    }
+    if (!(buf.mem instanceof ArrayBuffer)) {
+      throw new FuseErrno('EINVAL', `Buffer ${i} mem must be an ArrayBuffer`);
+    }
+    const available = buf.size - (i === startIdx ? bufvec.off : 0);
+    if (available < 0) {
+      throw new FuseErrno('EINVAL', `Buffer ${i} offset exceeds size`);
+    }
+    totalSize += available;
+  }
+
+  const output = new ArrayBuffer(totalSize);
+  const target = new Uint8Array(output);
+  let cursor = 0;
+  for (let i = startIdx; i < bufvec.buf.length; i++) {
+    const buf = bufvec.buf[i]!;
+    const skip = i === startIdx ? bufvec.off : 0;
+    const length = buf.size - skip;
+    if (length <= 0) {
+      continue;
+    }
+    const source = new Uint8Array(buf.mem!, skip, length);
+    target.set(source, cursor);
+    cursor += length;
+  }
+
+  return output;
 }
 
 export async function writeBufWrapper(
@@ -103,23 +151,7 @@ export async function writeBufWrapper(
     throw new FuseErrno('ENOSYS');
   }
 
-  // For simplicity, we'll handle only single memory buffers for now
-  // Complex scatter-gather would require concatenating or multiple writes
-  if (bufvec.count !== 1) {
-    throw new FuseErrno('ENOTSUP', 'Multi-buffer write_buf not yet supported');
-  }
-
-  const buf = bufvec.buf[0]!;
-  if ((buf.flags & FuseBufFlags.IS_FD) !== 0) {
-    throw new FuseErrno('ENOTSUP', 'File descriptor buffers not yet supported');
-  }
-
-  if (!(buf.mem instanceof ArrayBuffer)) {
-    throw new FuseErrno('EINVAL', 'Buffer memory is not an ArrayBuffer');
-  }
-
-  // Create a view of the buffer starting from the current offset
-  const buffer = buf.mem.slice(bufvec.off, bufvec.off + buf.size);
+  const buffer = flattenBufvec(bufvec);
 
   const result = await handlers.write(ino, buffer, context, options);
   return result;
