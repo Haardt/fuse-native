@@ -651,7 +651,25 @@ export class FileSystemOperations implements FuseOperationHandlers {
     if (this._overrides.link) {
       return this._overrides.link(ino, newparent, newname, context, options);
     }
-    throw new FuseErrno('ENOSYS');
+    logFuseOp('link', 'default', { ino: ino.toString(), newparent: newparent.toString(), newname });
+    const parentInode = this._fs.getInode(newparent);
+    if (!parentInode || parentInode.type !== 'directory') {
+      throw new FuseErrno('ENOTDIR');
+    }
+    const parentPath = this._fs.getPath(newparent);
+    if (parentPath === null) {
+        throw new FuseErrno('ENOENT');
+    }
+    const newPath = parentPath === '/' ? `/${newname}` : `${parentPath}/${newname}`;
+    const newInode = this._fs.createLink(newPath, ino);
+    const stat = this._fs.inodeToStat(newInode);
+    return {
+        ino: newInode.id,
+        generation: newInode.generation,
+        entry_timeout: 1.0,
+        attr_timeout: 1.0,
+        attr: stat,
+    };
   };
 
   statfs: StatfsHandler = async (ino, context, options):Promise<StatvfsResult> => {

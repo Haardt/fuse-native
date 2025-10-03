@@ -624,7 +624,7 @@ export type LinkHandler = (
   newname: string,
   context: RequestContext,
   options?: BaseOperationOptions
-) => Promise<{ attr: StatResult; timeout: Timeout }>;
+) => Promise<EntryResult>;
 
 /** Symlink operation handler */
 export type SymlinkHandler = (

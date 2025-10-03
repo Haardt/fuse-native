@@ -543,4 +543,40 @@ export class FileSystem {
     this.inodes.set(newInode.id, newInode);
     return newInode;
   }
+
+  public createLink(path: string, targetIno: Ino): SimpleInode {
+    const parts = path.split('/').filter(p => p.length > 0);
+    if (parts.length === 0) {
+      throw new Error('Cannot create link at root');
+    }
+
+    let current = this.root;
+    for (let i = 0; i < parts.length - 1; i++) {
+      const part = parts[i];
+      if (current.type !== 'directory' || !(current.data instanceof Map)) {
+        throw new Error(`ENOTDIR: ${path}`);
+      }
+      let child = current.data.get(part);
+      if (!child) {
+        child = this.createInodeInternal('directory', this.computeMode('directory'));
+        (current.data as Map<string, SimpleInode>).set(part, child);
+        this.inodes.set(child.id, child);
+      }
+      current = child;
+    }
+
+    const name = parts[parts.length - 1];
+    if (current.type !== 'directory' || !(current.data instanceof Map)) {
+      throw new Error(`ENOTDIR: ${path}`);
+    }
+
+    const targetInode = this.getInode(targetIno);
+    if (!targetInode) {
+        throw new Error('ENOENT');
+    }
+
+    (current.data as Map<string, SimpleInode>).set(name, targetInode);
+    targetInode.nlink++;
+    return targetInode;
+  }
 }
